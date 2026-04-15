@@ -1,0 +1,77 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices"
+  ],
+  "prConcurrentLimit": 3,
+  "schedule": [
+    "* 16-19 15 * *"
+  ],
+  "packageRules": [
+    {
+      "description": "Automerge patch and minor updates for stable Python dependencies",
+      "matchCategories": [
+        "python"
+      ],
+      "matchUpdateTypes": [
+        "patch",
+        "minor"
+      ],
+      "matchDepNames": [
+        "!python"
+      ],
+      "matchCurrentVersion": "!/^0/",
+      "groupName": "patch-minor-updates"
+    },
+    {
+      "description": "No python runtime update",
+      "matchCategories": [
+        "python"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "major"
+      ],
+      "matchDepNames": [
+        "python"
+      ],
+      "enabled": false,
+      "groupName": "python-runtime"
+    },
+    {
+      "description": "Group GitHub Actions updates",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "GitHub Actions",
+      "groupSlug": "github-actions"
+    },
+    {
+      "description": "Separate PR for Copier template updates",
+      "matchManagers": [
+        "copier"
+      ],
+      "groupName": "Copier template",
+      "groupSlug": "copier"
+    },
+    {
+      "description": "Disable minor and major Docker image updates",
+      "matchCategories": [
+        "docker"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "major"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Separate PR for devcontainer updates",
+      "matchManagers": [
+        "devcontainer"
+      ],
+      "groupName": "devcontainer",
+      "groupSlug": "devcontainer"
+    }
+  ]
+}

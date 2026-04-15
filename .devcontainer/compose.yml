@@ -1,0 +1,73 @@
+version: "3.8"
+
+services:
+  # Development container service
+  dev:
+    image: ghcr.io/stkr22/devcontainer-python-container:1.5.0@sha256:94c35390676241f49f65561340fc23b59d7db15cdd878ad73a8f459ebae23b2c
+    container_name: inky-image-display-dev
+    userns_mode: "keep-id"  # Podman: keeps your host UID
+    "workspaceFolder": "/workspaces/inky-image-display"
+    volumes:
+      - ..:/workspaces/inky-image-display:cached,U
+    command: sleep infinity
+    cap_add:
+      - NET_RAW
+    environment:
+      # PostgreSQL connection
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: assistant
+      POSTGRES_PASSWORD: assistant_dev_password
+      POSTGRES_DB: assistant
+      # MQTT connection
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      # MinIO connection
+      MINIO_ENDPOINT: "minio:9000"
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET_NAME: inky-images
+      MINIO_SECURE: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    networks:
+      - pa-inky-image-display-network
+
+  # PostgreSQL database for device registry
+  postgres:
+    image: docker.io/postgres:18.1-trixie@sha256:5773fe724c49c42a7a9ca70202e11e1dff21fb7235b335a73f39297d200b73a2
+    container_name: inky-image-display-postgres
+    environment:
+      POSTGRES_USER: assistant
+      POSTGRES_PASSWORD: assistant_dev_password
+      POSTGRES_DB: assistant
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U assistant -d assistant"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pa-inky-image-display-network
+
+  # MinIO object storage for images
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    container_name: wicture-display-skill-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - pa-inky-image-display-network
+
+networks:
+  pa-inky-image-display-network:
+    driver: bridge
