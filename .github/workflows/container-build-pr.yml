@@ -11,9 +11,6 @@ jobs:
     strategy:
       matrix:
         service:
-          - name: skill
-            context: .
-            file: packages/skill/Containerfile
           - name: sync
             context: .
             file: packages/sync/Containerfile
