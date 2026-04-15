@@ -10,9 +10,6 @@ jobs:
     strategy:
       matrix:
         service:
-          - name: skill
-            file: packages/skill/Containerfile
-            image: ghcr.io/${{ github.repository }}-skill
           - name: sync
             file: packages/sync/Containerfile
             image: ghcr.io/${{ github.repository }}-sync
