@@ -8,6 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from inky_image_display_api.routes import devices, images, sync_jobs
+from inky_image_display_api.routes.health import router as health_router
 from inky_image_display_api.websocket import ConnectionManager
 from inky_image_display_api.websocket import router as ws_router
 from inky_image_display_shared.models import Device, Image
@@ -79,6 +80,7 @@ def test_app(
     app.state.s3_service = mock_s3_service
     app.state.connection_manager = connection_manager
 
+    app.include_router(health_router)
     app.include_router(ws_router)
     app.include_router(images.router)
     app.include_router(devices.router)
