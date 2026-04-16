@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from inky_image_display_api.config import Settings
 from inky_image_display_api.database import create_engine, create_tables
 from inky_image_display_api.routes import devices, images, sync_jobs
+from inky_image_display_api.routes.health import router as health_router
 from inky_image_display_api.services.rotation import rotation_loop
 from inky_image_display_api.services.s3_service import S3Service
 from inky_image_display_api.websocket import ConnectionManager
@@ -56,6 +57,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Inky Image Display API", lifespan=lifespan)
+app.include_router(health_router)
 app.include_router(ws_router)
 app.include_router(images.router)
 app.include_router(devices.router)
