@@ -8,7 +8,7 @@ All variables are prefixed with `API_`.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `API_DATABASE_URL` | Yes | — | SQLAlchemy async URL, e.g. `postgresql+asyncpg://user:pass@host/db` |
+| `API_DATABASE_PATH` | Yes | — | Path to the SQLite database file, e.g. `/data/inky.db` |
 | `API_S3_ENDPOINT` | Yes | — | S3 endpoint, e.g. `garage.storage.svc:3900` |
 | `API_S3_WRITER_ACCESS_KEY` | Yes | — | Write-access S3 key (for image upload) |
 | `API_S3_WRITER_SECRET_KEY` | Yes | — | Write-access S3 secret |
@@ -77,11 +77,7 @@ display:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `POSTGRES_HOST` | No | `localhost` | PostgreSQL host |
-| `POSTGRES_PORT` | No | `5432` | PostgreSQL port |
-| `POSTGRES_DB` | No | `inky` | Database name |
-| `POSTGRES_USER` | No | `inky` | Database user |
-| `POSTGRES_PASSWORD` | Yes | — | Database password |
+| `DATABASE_PATH` | Yes | — | Path to the SQLite database file, e.g. `/data/inky.db` |
 
 ### Immich connection
 

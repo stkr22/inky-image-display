@@ -2,7 +2,7 @@
 
 ## External dependencies
 
-- **PostgreSQL** — shared database for all services
+- **SQLite** — embedded database; file path set via `API_DATABASE_PATH` / `DATABASE_PATH`. Mount a persistent volume in containerised deployments.
 - **S3-compatible storage** (MinIO, Garage, AWS S3) — image file storage
 - **Immich** — photo library source (required only for the sync service)
 
@@ -13,7 +13,7 @@ See [configuration.md](configuration.md) for the complete reference. A minimal s
 ### API
 
 ```env
-API_DATABASE_URL=postgresql+asyncpg://inky:secret@db.svc:5432/inky
+API_DATABASE_PATH=/data/inky.db
 API_S3_ENDPOINT=garage.storage.svc:3900
 API_S3_WRITER_ACCESS_KEY=<write-key>
 API_S3_WRITER_SECRET_KEY=<write-secret>
@@ -34,7 +34,7 @@ S3 credentials are delivered automatically at registration — the controller do
 ### Sync
 
 ```env
-POSTGRES_PASSWORD=secret
+DATABASE_PATH=/data/inky.db
 IMMICH_BASE_URL=https://photos.example.com
 IMMICH_API_KEY=<api-key>
 S3_WRITER_ENDPOINT=garage.storage.svc:3900
@@ -121,10 +121,8 @@ spec:
                 - secretRef:
                     name: inky-sync-secrets
               env:
-                - name: POSTGRES_HOST
-                  value: db.svc
-                - name: POSTGRES_DB
-                  value: inky
+                - name: DATABASE_PATH
+                  value: /data/inky.db
                 - name: IMMICH_BASE_URL
                   value: https://photos.example.com
                 - name: S3_WRITER_ENDPOINT
