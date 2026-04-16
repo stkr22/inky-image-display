@@ -17,9 +17,6 @@ jobs:
           - name: api
             file: packages/api/Containerfile
             image: ghcr.io/${{ github.repository }}-api
-          - name: controller
-            file: packages/controller/Containerfile
-            image: ghcr.io/${{ github.repository }}-controller
 
     permissions:
       packages: write

@@ -46,5 +46,5 @@
 			}
 		}
 	},
-	"postCreateCommand": "uv sync --all-packages --group dev && uv tool run pre-commit install"
+	"postCreateCommand": "uv sync --all-packages --all-extras --group dev && uv tool run pre-commit install"
 }
