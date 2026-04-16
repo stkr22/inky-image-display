@@ -452,7 +452,6 @@ name = "inky-image-display-sync"
 version = "0.14.0"
 source = { editable = "packages/sync" }
 dependencies = [
-    { name = "aiosqlite" },
     { name = "coloraide" },
     { name = "httpx" },
     { name = "inky-image-display-shared" },
@@ -467,7 +466,6 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiosqlite", specifier = "~=0.22.1" },
     { name = "coloraide", specifier = "~=8.8.1" },
     { name = "httpx", specifier = "~=0.28.1" },
     { name = "inky-image-display-shared", editable = "packages/shared" },
@@ -482,7 +480,7 @@ requires-dist = [
 
 [[package]]
 name = "inky-image-display-workspace"
-version = "0.1.1"
+version = "0.2.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]

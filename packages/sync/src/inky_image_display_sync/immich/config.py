@@ -8,25 +8,18 @@ from pydantic import BaseModel, Field, HttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class DatabaseConfig(BaseSettings):
-    """SQLite connection settings from environment variables.
+class APIClientConfig(BaseSettings):
+    """Display API connection settings from environment variables.
 
     Environment variables:
-        DATABASE_PATH: Path to the SQLite database file (e.g. ``/data/inky.db``)
+        DISPLAY_API_BASE_URL: Base URL for the Display API service
+        DISPLAY_API_TIMEOUT_SECONDS: Request timeout in seconds (default: 30)
     """
 
-    model_config = SettingsConfigDict(env_prefix="")
+    model_config = SettingsConfigDict(env_prefix="DISPLAY_API_")
 
-    database_path: str = Field(description="Path to the SQLite database file")
-
-    @property
-    def url(self) -> str:
-        """Construct async SQLite database URL from path.
-
-        Absolute paths (starting with ``/``) produce four leading slashes
-        in the URL, which is the correct SQLite URI convention.
-        """
-        return f"sqlite+aiosqlite:///{self.database_path}"
+    base_url: HttpUrl = Field(description="Base URL for the Display API service")
+    timeout_seconds: int = Field(default=30, description="HTTP request timeout")
 
 
 class ImmichConnectionConfig(BaseSettings):

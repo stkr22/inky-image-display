@@ -16,10 +16,16 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=list[SyncJobResponse])
-async def list_sync_jobs(request: Request) -> list[ImmichSyncJob]:
-    """List all sync jobs."""
+async def list_sync_jobs(
+    request: Request,
+    is_active: bool | None = None,
+) -> list[ImmichSyncJob]:
+    """List sync jobs with optional active filter."""
     async with AsyncSession(request.app.state.engine) as session:
-        result = await session.exec(select(ImmichSyncJob))
+        stmt = select(ImmichSyncJob)
+        if is_active is not None:
+            stmt = stmt.where(ImmichSyncJob.is_active == is_active)
+        result = await session.exec(stmt)
         return list(result.all())
 
 

@@ -34,7 +34,8 @@ ignore = [
 
 [lint.per-file-ignores]
 "__init__.py" = ["F401"]        # Unused imports (often re-exported)
-"tests/**/*.py" = ["S101", "PLR2004", "D"]  # assert, magic values, no docstrings
-"packages/*/tests/**/*.py" = ["S101", "PLR2004", "D"]  # assert, magic values, no docstrings
+"tests/**/*.py" = ["S101", "PLR2004", "D", "ARG002"]  # assert, magic values, no docstrings, pytest fixtures
+"packages/*/tests/**/*.py" = ["S101", "PLR2004", "D", "ARG002"]  # assert, magic values, no docstrings, pytest fixtures
 "scripts/**/*.py" = ["T201"]    # Allow print in scripts
 "**/migrations/*.py" = ["E501"] # Long lines in auto-generated migrations
+"**/routes/*.py" = ["PLR0913"]  # FastAPI routes legitimately use many query params
