@@ -17,9 +17,6 @@ jobs:
           - name: api
             context: .
             file: packages/api/Containerfile
-          - name: controller
-            context: .
-            file: packages/controller/Containerfile
     steps:
       - name: Checkout code
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
