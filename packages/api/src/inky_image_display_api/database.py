@@ -16,7 +16,7 @@ def create_engine(settings: Settings) -> AsyncEngine:
         Configured async engine.
 
     """
-    return create_async_engine(settings.database_url, pool_pre_ping=True)
+    return create_async_engine(settings.database_url)
 
 
 async def create_tables(engine: AsyncEngine) -> None:

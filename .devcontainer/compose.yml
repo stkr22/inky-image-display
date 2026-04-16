@@ -13,12 +13,9 @@ services:
     cap_add:
       - NET_RAW
     environment:
-      # PostgreSQL connection
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: assistant
-      POSTGRES_PASSWORD: assistant_dev_password
-      POSTGRES_DB: assistant
+      # SQLite database path (shared by API and sync services)
+      DATABASE_PATH: /workspaces/inky-image-display/data/inky.db
+      API_DATABASE_PATH: /workspaces/inky-image-display/data/inky.db
       # MQTT connection
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
@@ -29,26 +26,8 @@ services:
       MINIO_BUCKET_NAME: inky-images
       MINIO_SECURE: "false"
     depends_on:
-      postgres:
-        condition: service_healthy
       mosquitto:
         condition: service_healthy
-    networks:
-      - pa-inky-image-display-network
-
-  # PostgreSQL database for device registry
-  postgres:
-    image: docker.io/postgres:18.1-trixie@sha256:5773fe724c49c42a7a9ca70202e11e1dff21fb7235b335a73f39297d200b73a2
-    container_name: inky-image-display-postgres
-    environment:
-      POSTGRES_USER: assistant
-      POSTGRES_PASSWORD: assistant_dev_password
-      POSTGRES_DB: assistant
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U assistant -d assistant"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
     networks:
       - pa-inky-image-display-network
 
