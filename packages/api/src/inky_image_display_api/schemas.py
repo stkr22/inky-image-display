@@ -20,6 +20,40 @@ class ImageCreate(BaseModel):
     tags: str | None = None
 
 
+class ImageRegister(BaseModel):
+    """Register an image that was pre-uploaded directly to S3."""
+
+    source_name: str = "immich"
+    storage_path: str
+    source_url: str | None = None
+    title: str | None = None
+    description: str | None = None
+    author: str | None = None
+    tags: str | None = None
+    original_width: int | None = None
+    original_height: int | None = None
+    is_portrait: bool = False
+    display_duration_seconds: int = 600
+    priority: int = 5
+    expires_at: datetime | None = None
+
+
+class ImageUpdate(BaseModel):
+    """Fields accepted when updating image metadata (all optional)."""
+
+    source_name: str | None = None
+    title: str | None = None
+    description: str | None = None
+    author: str | None = None
+    tags: str | None = None
+    original_width: int | None = None
+    original_height: int | None = None
+    is_portrait: bool | None = None
+    display_duration_seconds: int | None = None
+    priority: int | None = None
+    expires_at: datetime | None = None
+
+
 class ImageResponse(BaseModel):
     """Image data returned by the API."""
 
@@ -28,6 +62,7 @@ class ImageResponse(BaseModel):
     id: UUID
     source_name: str
     storage_path: str
+    source_url: str | None
     title: str | None
     description: str | None
     author: str | None
@@ -37,6 +72,7 @@ class ImageResponse(BaseModel):
     display_duration_seconds: int
     priority: int
     last_displayed_at: datetime | None
+    expires_at: datetime | None
     created_at: datetime
     tags: str | None
 

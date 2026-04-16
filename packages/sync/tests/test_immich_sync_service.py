@@ -4,8 +4,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from inky_image_display_shared.models import Image, ImmichSyncJob
-from inky_image_display_shared.models.device import Device
+from inky_image_display_sync.immich.api_client import (
+    DeviceItem,
+    DisplayAPIClient,
+    ImageItem,
+    SyncJobItem,
+)
 from inky_image_display_sync.immich.config import DeviceRequirements, ImmichSyncConfig, S3WriterConfig
 from inky_image_display_sync.immich.models import ImmichAsset, ImmichExifInfo
 from inky_image_display_sync.immich.storage import S3StorageClient
@@ -105,300 +109,19 @@ class TestRetentionDaysConfig:
         assert config.retention_days == 30
 
 
-class TestCleanupExpiredImages:
-    def _make_service(self, retention_days: int = 7) -> ImmichSyncService:
-        engine = MagicMock()
-        logger = MagicMock()
-        sync_config = ImmichSyncConfig(
-            _env_file=None,  # ty: ignore[unknown-argument]
-            retention_days=retention_days,
-        )
-        s3_config = S3WriterConfig(
-            endpoint="localhost:9000",
-            bucket="test-bucket",
-            secure=False,
-            access_key="test-key",
-            secret_key="test-secret",
-        )
-        with patch("inky_image_display_sync.immich.sync_service.ImmichClient"):
-            service = ImmichSyncService(
-                engine=engine,
-                logger=logger,
-                connection_config=MagicMock(),
-                sync_config=sync_config,
-                s3_config=s3_config,
-            )
-        service.storage = MagicMock()
-        return service
-
-    def _make_image(
-        self,
-        source_url: str = "immich://test-asset",
-        expires_at: datetime | None = None,
-        storage_path: str = "immich/test-asset.jpg",
-    ) -> Image:
-        return Image(
-            id=uuid4(),
-            source_name="immich",
-            storage_path=storage_path,
-            source_url=source_url,
-            expires_at=expires_at,
-            created_at=datetime.now() - timedelta(days=10),
-        )
-
-    @pytest.mark.asyncio
-    async def test_no_expired_images_returns_empty_result(self) -> None:
-        service = self._make_service()
-
-        mock_session = AsyncMock()
-        mock_expired_result = MagicMock()
-        mock_expired_result.all.return_value = []
-        mock_session.exec = AsyncMock(return_value=mock_expired_result)
-
-        with patch("inky_image_display_sync.immich.sync_service.AsyncSession") as mock_session_cls:
-            mock_session_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            result = await service._cleanup_expired_images()
-
-        assert result.expired == 0
-        assert result.deleted == 0
-
-    @pytest.mark.asyncio
-    async def test_expired_images_deleted_from_db_and_minio(self) -> None:
-        service = self._make_service()
-        expired_image = self._make_image(expires_at=datetime.now() - timedelta(days=1))
-
-        mock_session = AsyncMock()
-        # First exec: expired images query; Second exec: protected IDs query
-        mock_expired_result = MagicMock()
-        mock_expired_result.all.return_value = [expired_image]
-        mock_protected_result = MagicMock()
-        mock_protected_result.all.return_value = []
-        mock_session.exec = AsyncMock(side_effect=[mock_expired_result, mock_protected_result])
-
-        with patch("inky_image_display_sync.immich.sync_service.AsyncSession") as mock_session_cls:
-            mock_session_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            result = await service._cleanup_expired_images()
-
-        assert result.expired == 1
-        assert result.deleted == 1
-        assert result.protected == 0
-        mock_session.delete.assert_called_once_with(expired_image)
-        service.storage.delete_object.assert_called_once_with(expired_image.storage_path)  # ty: ignore[unresolved-attribute]
-        mock_session.commit.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_currently_displayed_images_protected(self) -> None:
-        service = self._make_service()
-        expired_image = self._make_image(expires_at=datetime.now() - timedelta(days=1))
-
-        mock_session = AsyncMock()
-        mock_expired_result = MagicMock()
-        mock_expired_result.all.return_value = [expired_image]
-        mock_protected_result = MagicMock()
-        # The expired image's ID is in the protected set
-        mock_protected_result.all.return_value = [expired_image.id]
-        mock_session.exec = AsyncMock(side_effect=[mock_expired_result, mock_protected_result])
-
-        with patch("inky_image_display_sync.immich.sync_service.AsyncSession") as mock_session_cls:
-            mock_session_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            result = await service._cleanup_expired_images()
-
-        assert result.expired == 1
-        assert result.deleted == 0
-        assert result.protected == 1
-        mock_session.delete.assert_not_called()
-        service.storage.delete_object.assert_not_called()  # ty: ignore[unresolved-attribute]
-
-    @pytest.mark.asyncio
-    async def test_minio_failure_counts_storage_error(self) -> None:
-        service = self._make_service()
-        expired_image = self._make_image(expires_at=datetime.now() - timedelta(days=1))
-        service.storage.delete_object.side_effect = Exception("MinIO connection failed")  # ty: ignore[unresolved-attribute]
-
-        mock_session = AsyncMock()
-        mock_expired_result = MagicMock()
-        mock_expired_result.all.return_value = [expired_image]
-        mock_protected_result = MagicMock()
-        mock_protected_result.all.return_value = []
-        mock_session.exec = AsyncMock(side_effect=[mock_expired_result, mock_protected_result])
-
-        with patch("inky_image_display_sync.immich.sync_service.AsyncSession") as mock_session_cls:
-            mock_session_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            result = await service._cleanup_expired_images()
-
-        assert result.deleted == 1
-        assert result.storage_errors == 1
-        # DB record should still be deleted even though MinIO failed
-        mock_session.delete.assert_called_once_with(expired_image)
-        mock_session.commit.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_non_immich_images_ignored(self) -> None:
-        """The query filters by source_url LIKE 'immich://%', so non-Immich images are excluded at DB level."""
-        service = self._make_service()
-
-        mock_session = AsyncMock()
-        # The DB query itself filters by source_url, so it returns empty
-        mock_expired_result = MagicMock()
-        mock_expired_result.all.return_value = []
-        mock_session.exec = AsyncMock(return_value=mock_expired_result)
-
-        with patch("inky_image_display_sync.immich.sync_service.AsyncSession") as mock_session_cls:
-            mock_session_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            result = await service._cleanup_expired_images()
-
-        assert result.expired == 0
-        assert result.deleted == 0
-
-    @pytest.mark.asyncio
-    async def test_images_without_expires_at_not_touched(self) -> None:
-        """Images where expires_at is None are filtered out by the DB query."""
-        service = self._make_service()
-
-        mock_session = AsyncMock()
-        # Query excludes images with expires_at IS NULL, returns empty
-        mock_expired_result = MagicMock()
-        mock_expired_result.all.return_value = []
-        mock_session.exec = AsyncMock(return_value=mock_expired_result)
-
-        with patch("inky_image_display_sync.immich.sync_service.AsyncSession") as mock_session_cls:
-            mock_session_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            result = await service._cleanup_expired_images()
-
-        assert result.expired == 0
-        assert result.deleted == 0
-
-
-class TestExpiresAtPopulation:
-    def _make_image(self) -> Image:
-        return Image(
-            id=uuid4(),
-            source_name="immich",
-            storage_path="immich/test.jpg",
-            source_url="immich://test-asset",
-            created_at=datetime(2025, 1, 1, 12, 0, 0),
-        )
-
-    def test_expires_at_set_when_retention_days_positive(self) -> None:
-        image = self._make_image()
-        sync_config = ImmichSyncConfig(_env_file=None, retention_days=7)  # ty: ignore[unknown-argument]
-
-        if sync_config.retention_days > 0:
-            image.expires_at = image.created_at + timedelta(days=sync_config.retention_days)
-        else:
-            image.expires_at = None
-
-        assert image.expires_at == datetime(2025, 1, 8, 12, 0, 0)
-
-    def test_expires_at_none_when_retention_days_zero(self) -> None:
-        image = self._make_image()
-        sync_config = ImmichSyncConfig(_env_file=None, retention_days=0)  # ty: ignore[unknown-argument]
-
-        if sync_config.retention_days > 0:
-            image.expires_at = image.created_at + timedelta(days=sync_config.retention_days)
-        else:
-            image.expires_at = None
-
-        assert image.expires_at is None
-
-
-class TestCleanupInSyncFlow:
-    def _make_service(self, retention_days: int = 7) -> ImmichSyncService:
-        engine = MagicMock()
-        logger = MagicMock()
-        sync_config = ImmichSyncConfig(
-            _env_file=None,  # ty: ignore[unknown-argument]
-            retention_days=retention_days,
-            max_images=20,
-        )
-        s3_config = S3WriterConfig(
-            endpoint="localhost:9000",
-            bucket="test-bucket",
-            secure=False,
-            access_key="test-key",
-            secret_key="test-secret",
-        )
-        with patch("inky_image_display_sync.immich.sync_service.ImmichClient"):
-            service = ImmichSyncService(
-                engine=engine,
-                logger=logger,
-                connection_config=MagicMock(),
-                sync_config=sync_config,
-                s3_config=s3_config,
-            )
-        service.storage = MagicMock()
-        return service
-
-    @pytest.mark.asyncio
-    async def test_cleanup_skipped_when_retention_days_zero(self) -> None:
-        service = self._make_service(retention_days=0)
-
-        mock_session = AsyncMock()
-        mock_jobs_result = MagicMock()
-        mock_jobs_result.all.return_value = []
-        mock_session.exec = AsyncMock(return_value=mock_jobs_result)
-
-        with (
-            patch("inky_image_display_sync.immich.sync_service.AsyncSession") as mock_session_cls,
-            patch.object(service, "_cleanup_expired_images", new_callable=AsyncMock) as mock_cleanup,
-        ):
-            mock_session_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            await service.sync_all_active_jobs()
-
-        mock_cleanup.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_cleanup_runs_when_retention_days_positive(self) -> None:
-        service = self._make_service(retention_days=7)
-
-        mock_session = AsyncMock()
-        # First call: load jobs (returns empty so sync exits early)
-        mock_jobs_result = MagicMock()
-        mock_jobs_result.all.return_value = []
-        mock_session.exec = AsyncMock(return_value=mock_jobs_result)
-
-        with (
-            patch("inky_image_display_sync.immich.sync_service.AsyncSession") as mock_session_cls,
-            patch.object(service, "_cleanup_expired_images", new_callable=AsyncMock) as mock_cleanup,
-        ):
-            mock_session_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_cleanup.return_value = CleanupResult(expired=2, deleted=2)
-
-            # The method will return early because no jobs found,
-            # but cleanup should have been called before the jobs check
-            # Actually, looking at the code, cleanup runs AFTER jobs are loaded
-            # but BEFORE max_images check. Since no jobs are found, it returns early
-            # before cleanup. Let me verify the order...
-
-        # With no active jobs, the method returns before reaching cleanup.
-        # This is correct - no point cleaning up if there are no sync jobs.
-        # The cleanup call only happens when there are active jobs to process.
-
-
-@pytest.mark.asyncio
-async def test_cleanup_called_before_capacity_check() -> None:
-    """Verify cleanup runs before the max_images capacity check."""
-    engine = MagicMock()
+def _make_service(
+    api_client: DisplayAPIClient | MagicMock | None = None,
+    retention_days: int = 7,
+    max_images: int = 20,
+) -> ImmichSyncService:
+    """Create an ImmichSyncService with mocked dependencies."""
+    if api_client is None:
+        api_client = AsyncMock(spec=DisplayAPIClient)
     logger = MagicMock()
     sync_config = ImmichSyncConfig(
         _env_file=None,  # ty: ignore[unknown-argument]
-        retention_days=7,
-        max_images=5,
+        retention_days=retention_days,
+        max_images=max_images,
     )
     s3_config = S3WriterConfig(
         endpoint="localhost:9000",
@@ -409,15 +132,175 @@ async def test_cleanup_called_before_capacity_check() -> None:
     )
     with patch("inky_image_display_sync.immich.sync_service.ImmichClient"):
         service = ImmichSyncService(
-            engine=engine,
+            api_client=api_client,
             logger=logger,
             connection_config=MagicMock(),
             sync_config=sync_config,
             s3_config=s3_config,
         )
     service.storage = MagicMock()
+    return service
 
-    # Track call order
+
+def _make_image_item(
+    source_url: str = "immich://test-asset",
+    storage_path: str = "immich/test-asset.jpg",
+    expires_at: datetime | None = None,
+) -> ImageItem:
+    return ImageItem(
+        id=uuid4(),
+        source_url=source_url,
+        storage_path=storage_path,
+        expires_at=expires_at,
+    )
+
+
+def _make_device_item(
+    current_image_id=None,
+) -> DeviceItem:
+    return DeviceItem(
+        id=uuid4(),
+        device_id="test-display",
+        display_width=1600,
+        display_height=1200,
+        display_orientation="landscape",
+        display_model="test-model",
+        current_image_id=current_image_id,
+    )
+
+
+class TestCleanupExpiredImages:
+    @pytest.mark.asyncio
+    async def test_no_expired_images_returns_empty_result(self) -> None:
+        api_client = AsyncMock(spec=DisplayAPIClient)
+        api_client.list_images.return_value = []
+        service = _make_service(api_client=api_client)
+
+        result = await service._cleanup_expired_images()
+
+        assert result.expired == 0
+        assert result.deleted == 0
+
+    @pytest.mark.asyncio
+    async def test_expired_images_deleted_via_api(self) -> None:
+        api_client = AsyncMock(spec=DisplayAPIClient)
+        expired_image = _make_image_item(expires_at=datetime.now() - timedelta(days=1))
+        api_client.list_images.return_value = [expired_image]
+        api_client.get_devices.return_value = []
+        service = _make_service(api_client=api_client)
+
+        result = await service._cleanup_expired_images()
+
+        assert result.expired == 1
+        assert result.deleted == 1
+        assert result.protected == 0
+        api_client.delete_image.assert_called_once_with(expired_image.id)
+
+    @pytest.mark.asyncio
+    async def test_currently_displayed_images_protected(self) -> None:
+        api_client = AsyncMock(spec=DisplayAPIClient)
+        expired_image = _make_image_item(expires_at=datetime.now() - timedelta(days=1))
+        api_client.list_images.return_value = [expired_image]
+        # The expired image's ID is in use by a device
+        api_client.get_devices.return_value = [_make_device_item(current_image_id=expired_image.id)]
+        service = _make_service(api_client=api_client)
+
+        result = await service._cleanup_expired_images()
+
+        assert result.expired == 1
+        assert result.deleted == 0
+        assert result.protected == 1
+        api_client.delete_image.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_api_failure_counts_storage_error(self) -> None:
+        api_client = AsyncMock(spec=DisplayAPIClient)
+        expired_image = _make_image_item(expires_at=datetime.now() - timedelta(days=1))
+        api_client.list_images.return_value = [expired_image]
+        api_client.get_devices.return_value = []
+        api_client.delete_image.side_effect = Exception("API connection failed")
+        service = _make_service(api_client=api_client)
+
+        result = await service._cleanup_expired_images()
+
+        assert result.deleted == 0
+        assert result.storage_errors == 1
+
+    @pytest.mark.asyncio
+    async def test_non_immich_images_excluded_by_prefix_filter(self) -> None:
+        api_client = AsyncMock(spec=DisplayAPIClient)
+        # list_images with source_url_prefix returns empty (non-Immich excluded)
+        api_client.list_images.return_value = []
+        service = _make_service(api_client=api_client)
+
+        result = await service._cleanup_expired_images()
+
+        assert result.expired == 0
+        api_client.list_images.assert_called_once()
+        call_kwargs = api_client.list_images.call_args
+        assert call_kwargs.kwargs.get("source_url_prefix") == "immich://"
+
+
+class TestExpiresAtPopulation:
+    def test_expires_at_set_when_retention_days_positive(self) -> None:
+        sync_config = ImmichSyncConfig(_env_file=None, retention_days=7)  # ty: ignore[unknown-argument]
+        now = datetime.now()
+
+        expires_at: datetime | None = None
+        if sync_config.retention_days > 0:
+            expires_at = now + timedelta(days=sync_config.retention_days)
+
+        assert expires_at is not None
+        assert abs((expires_at - now).days) == 7
+
+    def test_expires_at_none_when_retention_days_zero(self) -> None:
+        sync_config = ImmichSyncConfig(_env_file=None, retention_days=0)  # ty: ignore[unknown-argument]
+
+        expires_at: datetime | None = None
+        if sync_config.retention_days > 0:
+            expires_at = datetime.now() + timedelta(days=sync_config.retention_days)
+
+        assert expires_at is None
+
+
+class TestCleanupInSyncFlow:
+    @pytest.mark.asyncio
+    async def test_cleanup_skipped_when_retention_days_zero(self) -> None:
+        api_client = AsyncMock(spec=DisplayAPIClient)
+        api_client.get_active_sync_jobs.return_value = []
+        service = _make_service(api_client=api_client, retention_days=0)
+
+        with patch.object(service, "_cleanup_expired_images", new_callable=AsyncMock) as mock_cleanup:
+            await service.sync_all_active_jobs()
+
+        mock_cleanup.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_runs_when_retention_days_positive(self) -> None:
+        api_client = AsyncMock(spec=DisplayAPIClient)
+        # Return one job so cleanup is triggered, then return empty image list
+        job = MagicMock(spec=SyncJobItem)
+        job.name = "test-job"
+        api_client.get_active_sync_jobs.return_value = [job]
+        api_client.list_images.return_value = []
+        service = _make_service(api_client=api_client, retention_days=7)
+
+        with patch.object(service, "_cleanup_expired_images", new_callable=AsyncMock) as mock_cleanup:
+            mock_cleanup.return_value = CleanupResult()
+            with patch.object(service, "_count_existing_immich_images", new_callable=AsyncMock, return_value=20):
+                await service.sync_all_active_jobs()
+
+        mock_cleanup.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_called_before_capacity_check() -> None:
+    """Verify cleanup runs before the max_images capacity check."""
+    api_client = AsyncMock(spec=DisplayAPIClient)
+    job = MagicMock(spec=SyncJobItem)
+    job.name = "test-job"
+    api_client.get_active_sync_jobs.return_value = [job]
+
     call_order: list[str] = []
 
     async def mock_cleanup() -> CleanupResult:
@@ -428,22 +311,12 @@ async def test_cleanup_called_before_capacity_check() -> None:
         call_order.append("count")
         return 5  # At limit
 
-    mock_job = MagicMock()
-    mock_job.name = "test-job"
-
-    mock_session = AsyncMock()
-    mock_jobs_result = MagicMock()
-    mock_jobs_result.all.return_value = [mock_job]
-    mock_session.exec = AsyncMock(return_value=mock_jobs_result)
+    service = _make_service(api_client=api_client, retention_days=7, max_images=5)
 
     with (
-        patch("inky_image_display_sync.immich.sync_service.AsyncSession") as mock_session_cls,
         patch.object(service, "_cleanup_expired_images", side_effect=mock_cleanup),
         patch.object(service, "_count_existing_immich_images", side_effect=mock_count),
     ):
-        mock_session_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
         await service.sync_all_active_jobs()
 
     assert call_order[0] == "cleanup"
@@ -455,28 +328,23 @@ class TestGetDeviceRequirementsPortrait:
 
     @pytest.mark.asyncio
     async def test_landscape_preserves_dimensions(self) -> None:
-        """Landscape device keeps width=1600, height=1200."""
-        device_id = uuid4()
-        device = MagicMock(spec=Device)
-        device.display_width = 1600
-        device.display_height = 1200
-        device.display_orientation = "landscape"
-        device.display_model = "test-model"
-
-        mock_result = MagicMock()
-        mock_result.first.return_value = device
-        mock_session = AsyncMock()
-        mock_session.exec = AsyncMock(return_value=mock_result)
-
-        engine = MagicMock()
+        api_client = AsyncMock(spec=DisplayAPIClient)
+        api_client.get_devices.return_value = [
+            DeviceItem(
+                id=uuid4(),
+                device_id="test",
+                display_width=1600,
+                display_height=1200,
+                display_orientation="landscape",
+                display_model="test-model",
+                current_image_id=None,
+            )
+        ]
         service = ImmichSyncService.__new__(ImmichSyncService)
-        service.engine = engine
+        service.api_client = api_client
         service.logger = MagicMock()
 
-        with patch("inky_image_display_sync.immich.sync_service.AsyncSession") as mock_session_cls:
-            mock_session_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-            reqs = await service._get_device_requirements(device_id)
+        reqs = await service._get_device_requirements(uuid4())
 
         assert reqs.width == 1600
         assert reqs.height == 1200
@@ -484,32 +352,38 @@ class TestGetDeviceRequirementsPortrait:
 
     @pytest.mark.asyncio
     async def test_portrait_swaps_dimensions(self) -> None:
-        """Portrait device swaps to width=1200, height=1600."""
-        device_id = uuid4()
-        device = MagicMock(spec=Device)
-        device.display_width = 1600
-        device.display_height = 1200
-        device.display_orientation = "portrait"
-        device.display_model = "test-model"
-
-        mock_result = MagicMock()
-        mock_result.first.return_value = device
-        mock_session = AsyncMock()
-        mock_session.exec = AsyncMock(return_value=mock_result)
-
-        engine = MagicMock()
+        api_client = AsyncMock(spec=DisplayAPIClient)
+        api_client.get_devices.return_value = [
+            DeviceItem(
+                id=uuid4(),
+                device_id="test",
+                display_width=1600,
+                display_height=1200,
+                display_orientation="portrait",
+                display_model="test-model",
+                current_image_id=None,
+            )
+        ]
         service = ImmichSyncService.__new__(ImmichSyncService)
-        service.engine = engine
+        service.api_client = api_client
         service.logger = MagicMock()
 
-        with patch("inky_image_display_sync.immich.sync_service.AsyncSession") as mock_session_cls:
-            mock_session_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-            reqs = await service._get_device_requirements(device_id)
+        reqs = await service._get_device_requirements(uuid4())
 
         assert reqs.width == 1200
         assert reqs.height == 1600
         assert reqs.orientation == "portrait"
+
+    @pytest.mark.asyncio
+    async def test_device_not_found_raises(self) -> None:
+        api_client = AsyncMock(spec=DisplayAPIClient)
+        api_client.get_devices.return_value = []
+        service = ImmichSyncService.__new__(ImmichSyncService)
+        service.api_client = api_client
+        service.logger = MagicMock()
+
+        with pytest.raises(ValueError, match="Target device not found"):
+            await service._get_device_requirements(uuid4())
 
 
 class TestFilterAssets:
@@ -518,10 +392,10 @@ class TestFilterAssets:
     def _make_service(self) -> ImmichSyncService:
         with patch("inky_image_display_sync.immich.sync_service.ImmichClient"):
             service = ImmichSyncService(
-                engine=MagicMock(),
+                api_client=AsyncMock(spec=DisplayAPIClient),
                 logger=MagicMock(),
                 connection_config=MagicMock(),
-                sync_config=ImmichSyncConfig(_env_file=None),  # ty: ignore[unknown-argument]
+                sync_config=ImmichSyncConfig(),
                 s3_config=S3WriterConfig(
                     endpoint="localhost:9000",
                     bucket="test",
@@ -544,23 +418,41 @@ class TestFilterAssets:
         exif = None
         if exif_width is not None or exif_height is not None:
             exif = ImmichExifInfo(exif_image_width=exif_width, exif_image_height=exif_height)
-        return ImmichAsset(  # ty: ignore[missing-argument]
+        return ImmichAsset(
             id=asset_id,
             type="IMAGE",
-            original_file_name="test.jpg",  # ty: ignore[unknown-argument]
-            original_mime_type="image/jpeg",  # ty: ignore[unknown-argument]
+            originalFileName="test.jpg",
+            originalMimeType="image/jpeg",
             checksum="abc",
-            file_created_at=datetime.now(),  # ty: ignore[unknown-argument]
+            fileCreatedAt=datetime.now(),
             width=width,
             height=height,
             exif_info=exif,
         )
 
-    def _make_job(self, count: int = 10) -> ImmichSyncJob:
-        return ImmichSyncJob(
+    def _make_job(self, count: int = 10) -> SyncJobItem:
+        return SyncJobItem(
+            id=uuid4(),
             name="test-job",
+            is_active=True,
             target_device_id=uuid4(),
+            strategy="RANDOM",
+            query=None,
             count=count,
+            random_pick=False,
+            overfetch_multiplier=3,
+            album_ids=None,
+            person_ids=None,
+            tag_ids=None,
+            is_favorite=None,
+            city=None,
+            state=None,
+            country=None,
+            taken_after=None,
+            taken_before=None,
+            rating=None,
+            min_color_score=0.5,
+            min_vibrancy_score=0.2,
         )
 
     def _landscape_reqs(self) -> DeviceRequirements:
@@ -570,7 +462,6 @@ class TestFilterAssets:
         return DeviceRequirements(width=1080, height=1920, orientation="portrait")
 
     def test_top_level_landscape_dimensions_used(self) -> None:
-        """Assets with top-level width/height are filtered correctly."""
         service = self._make_service()
         assets = [
             self._make_asset("landscape", width=4000, height=3000),
@@ -581,7 +472,6 @@ class TestFilterAssets:
         assert result[0].id == "landscape"
 
     def test_top_level_portrait_dimensions_used(self) -> None:
-        """Portrait filter selects only portrait assets."""
         service = self._make_service()
         assets = [
             self._make_asset("landscape", width=4000, height=3000),
@@ -592,7 +482,6 @@ class TestFilterAssets:
         assert result[0].id == "portrait"
 
     def test_exif_fallback_when_no_top_level_dims(self) -> None:
-        """Falls back to EXIF dimensions when top-level fields are absent."""
         service = self._make_service()
         assets = [
             self._make_asset("exif-landscape", exif_width=4000, exif_height=3000),
@@ -602,14 +491,12 @@ class TestFilterAssets:
         assert result[0].id == "exif-landscape"
 
     def test_skips_asset_without_any_dimensions(self) -> None:
-        """Assets with no dimensions at all are skipped."""
         service = self._make_service()
         assets = [self._make_asset("no-dims")]
         result = service._filter_assets(assets, self._make_job(), self._landscape_reqs())
         assert len(result) == 0
 
     def test_skips_undersized_assets(self) -> None:
-        """Assets smaller than device requirements are skipped."""
         service = self._make_service()
         assets = [
             self._make_asset("too-small", width=800, height=600),
@@ -618,21 +505,18 @@ class TestFilterAssets:
         assert len(result) == 0
 
     def test_limits_to_job_count(self) -> None:
-        """Result is limited to job.count."""
         service = self._make_service()
         assets = [self._make_asset(f"a{i}", width=4000, height=3000) for i in range(20)]
         result = service._filter_assets(assets, self._make_job(count=5), self._landscape_reqs())
         assert len(result) == 5
 
     def test_top_level_preferred_over_exif(self) -> None:
-        """Top-level dimensions are used even when EXIF is also available."""
         service = self._make_service()
-        # Top-level says landscape, EXIF says portrait
         assets = [
             self._make_asset("mixed", width=4000, height=3000, exif_width=3000, exif_height=4000),
         ]
         result = service._filter_assets(assets, self._make_job(), self._landscape_reqs())
-        assert len(result) == 1  # Uses top-level (landscape) -> passes landscape filter
+        assert len(result) == 1
 
 
 class TestVibrancyFiltering:
@@ -641,10 +525,10 @@ class TestVibrancyFiltering:
     def _make_service(self) -> ImmichSyncService:
         with patch("inky_image_display_sync.immich.sync_service.ImmichClient"):
             service = ImmichSyncService(
-                engine=MagicMock(),
+                api_client=AsyncMock(spec=DisplayAPIClient),
                 logger=MagicMock(),
                 connection_config=MagicMock(),
-                sync_config=ImmichSyncConfig(_env_file=None),  # ty: ignore[unknown-argument]
+                sync_config=ImmichSyncConfig(),
                 s3_config=S3WriterConfig(
                     endpoint="localhost:9000",
                     bucket="test",
@@ -658,23 +542,40 @@ class TestVibrancyFiltering:
         return service
 
     def _make_asset(self) -> ImmichAsset:
-        return ImmichAsset(  # ty: ignore[missing-argument]
+        return ImmichAsset(
             id="test-asset",
             type="IMAGE",
-            original_file_name="test.jpg",  # ty: ignore[unknown-argument]
-            original_mime_type="image/jpeg",  # ty: ignore[unknown-argument]
+            originalFileName="test.jpg",
+            originalMimeType="image/jpeg",
             checksum="abc",
-            file_created_at=datetime.now(),  # ty: ignore[unknown-argument]
+            fileCreatedAt=datetime.now(),
             width=4000,
             height=3000,
         )
 
-    def _make_job(self, min_vibrancy: float = 0.0, min_color: float = 0.0) -> ImmichSyncJob:
-        return ImmichSyncJob(
+    def _make_job(self, min_vibrancy: float = 0.0, min_color: float = 0.0) -> SyncJobItem:
+        return SyncJobItem(
+            id=uuid4(),
             name="test-job",
+            is_active=True,
             target_device_id=uuid4(),
-            min_vibrancy_score=min_vibrancy,
+            strategy="RANDOM",
+            query=None,
+            count=10,
+            random_pick=False,
+            overfetch_multiplier=3,
+            album_ids=None,
+            person_ids=None,
+            tag_ids=None,
+            is_favorite=None,
+            city=None,
+            state=None,
+            country=None,
+            taken_after=None,
+            taken_before=None,
+            rating=None,
             min_color_score=min_color,
+            min_vibrancy_score=min_vibrancy,
         )
 
     def _landscape_reqs(self) -> DeviceRequirements:
@@ -682,7 +583,6 @@ class TestVibrancyFiltering:
 
     @pytest.mark.asyncio
     async def test_vibrancy_skip_below_threshold(self) -> None:
-        """Asset with low vibrancy score is skipped."""
         service = self._make_service()
         service.immich = MagicMock()
 
@@ -710,7 +610,6 @@ class TestVibrancyFiltering:
 
     @pytest.mark.asyncio
     async def test_vibrancy_pass_above_threshold(self) -> None:
-        """Asset with sufficient vibrancy score passes."""
         service = self._make_service()
         service.immich = MagicMock()
 
@@ -743,7 +642,6 @@ class TestVibrancyFiltering:
 
     @pytest.mark.asyncio
     async def test_vibrancy_disabled_when_zero(self) -> None:
-        """Vibrancy check is skipped when min_vibrancy_score is 0.0."""
         service = self._make_service()
         service.immich = MagicMock()
 
@@ -771,13 +669,11 @@ class TestVibrancyFiltering:
         mock_vibrancy.assert_not_called()
 
     def test_update_result_counters_vibrancy(self) -> None:
-        """SKIPPED_LOW_VIBRANCY increments the correct counter."""
         result = SyncResult()
         ImmichSyncService._update_result_counters(result, ProcessResult.SKIPPED_LOW_VIBRANCY)
         assert result.skipped_low_vibrancy == 1
 
     def test_sync_result_str_includes_vibrancy(self) -> None:
-        """SyncResult __str__ includes vibrancy counter."""
         result = SyncResult(skipped_low_vibrancy=3)
         text = str(result)
         assert "skipped_vibrancy=3" in text

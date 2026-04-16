@@ -2,6 +2,7 @@
 
 import logging
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from inky_image_display_shared.models import Device, Image
@@ -25,6 +26,7 @@ async def list_devices(
     request: Request,
     room: Annotated[str | None, Query(description="Filter by room name")] = None,
     is_online: Annotated[bool | None, Query(description="Filter by online status")] = None,
+    id: Annotated[UUID | None, Query(description="Filter by device primary-key UUID")] = None,
 ) -> list[Device]:
     """List registered devices with optional filters."""
     async with AsyncSession(request.app.state.engine) as session:
@@ -33,6 +35,8 @@ async def list_devices(
             stmt = stmt.where(Device.room == room)
         if is_online is not None:
             stmt = stmt.where(Device.is_online == is_online)
+        if id is not None:
+            stmt = stmt.where(col(Device.id) == id)
         result = await session.exec(stmt)
         return list(result.all())
 
