@@ -39,12 +39,12 @@
 				"python.defaultInterpreterPath": "/workspaces/.venv/bin/python",
 				"python.testing.unittestEnabled": false,
 				"python.testing.pytestEnabled": true,
-				"python.languageServer": "None", // needed for ty
+				"python.languageServer": "None",
 				"cSpell.files": [
 					"src"
 				]
 			}
 		}
 	},
-	"postCreateCommand": "uv sync --group dev && uv tool run pre-commit install"
+	"postCreateCommand": "uv sync --all-packages --group dev && uv tool run pre-commit install"
 }
