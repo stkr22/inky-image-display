@@ -2,7 +2,7 @@
 
 ## External dependencies
 
-- **SQLite** — embedded database; file path set via `API_DATABASE_PATH` / `DATABASE_PATH`. Mount a persistent volume in containerised deployments.
+- **SQLite** — embedded database; file path set via `API_DATABASE_PATH`. Mount a persistent volume in containerised deployments. The sync service accesses the database only through the API — it does not need a direct database path.
 - **S3-compatible storage** (MinIO, Garage, AWS S3) — image file storage
 - **Immich** — photo library source (required only for the sync service)
 
@@ -34,7 +34,7 @@ S3 credentials are delivered automatically at registration — the controller do
 ### Sync
 
 ```env
-DATABASE_PATH=/data/inky.db
+DISPLAY_API_BASE_URL=http://api.svc:8000
 IMMICH_BASE_URL=https://photos.example.com
 IMMICH_API_KEY=<api-key>
 S3_WRITER_ENDPOINT=garage.storage.svc:3900
@@ -44,13 +44,13 @@ S3_WRITER_SECRET_KEY=<write-secret>
 
 ## Database tables
 
-Tables are created automatically on startup (API and Sync both call `CREATE TABLE IF NOT EXISTS`):
+Tables are created automatically by the API on startup:
 
 | Table | Created by | Description |
 |-------|-----------|-------------|
 | `devices` | API | Registered controller devices |
-| `images` | API / Sync | Image metadata and S3 paths |
-| `immich_sync_jobs` | API / Sync | Sync job configuration |
+| `images` | API | Image metadata and S3 paths |
+| `immich_sync_jobs` | API | Sync job configuration |
 
 ## S3 bucket layout
 
@@ -121,8 +121,8 @@ spec:
                 - secretRef:
                     name: inky-sync-secrets
               env:
-                - name: DATABASE_PATH
-                  value: /data/inky.db
+                - name: DISPLAY_API_BASE_URL
+                  value: http://inky-image-display-api.svc:8000
                 - name: IMMICH_BASE_URL
                   value: https://photos.example.com
                 - name: S3_WRITER_ENDPOINT

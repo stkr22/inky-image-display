@@ -73,11 +73,12 @@ display:
 
 ## Sync (`inky-image-display-sync`)
 
-### Database
+### Display API connection
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `DATABASE_PATH` | Yes | — | Path to the SQLite database file, e.g. `/data/inky.db` |
+| `DISPLAY_API_BASE_URL` | Yes | — | Base URL of the Display API, e.g. `http://api.svc:8000` |
+| `DISPLAY_API_TIMEOUT_SECONDS` | No | `30` | HTTP request timeout |
 
 ### Immich connection
 
