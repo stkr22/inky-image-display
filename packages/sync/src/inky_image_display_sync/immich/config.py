@@ -9,28 +9,24 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class DatabaseConfig(BaseSettings):
-    """PostgreSQL connection settings from environment variables.
+    """SQLite connection settings from environment variables.
 
     Environment variables:
-        POSTGRES_HOST: Database host (default: localhost)
-        POSTGRES_PORT: Database port (default: 5432)
-        POSTGRES_DB: Database name (default: inky)
-        POSTGRES_USER: Database user (default: inky)
-        POSTGRES_PASSWORD: Database password
+        DATABASE_PATH: Path to the SQLite database file (e.g. ``/data/inky.db``)
     """
 
-    model_config = SettingsConfigDict(env_prefix="POSTGRES_")
+    model_config = SettingsConfigDict(env_prefix="")
 
-    host: str = Field(default="localhost", description="Database host")
-    port: int = Field(default=5432, description="Database port")
-    db: str = Field(default="inky", description="Database name")
-    user: str = Field(default="inky", description="Database user")
-    password: str = Field(description="Database password")
+    database_path: str = Field(description="Path to the SQLite database file")
 
     @property
     def url(self) -> str:
-        """Construct async database URL."""
-        return f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.port}/{self.db}"
+        """Construct async SQLite database URL from path.
+
+        Absolute paths (starting with ``/``) produce four leading slashes
+        in the URL, which is the correct SQLite URI convention.
+        """
+        return f"sqlite+aiosqlite:///{self.database_path}"
 
 
 class ImmichConnectionConfig(BaseSettings):

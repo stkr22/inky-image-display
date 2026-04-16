@@ -19,11 +19,10 @@ if config.config_file_name is not None:
 target_metadata = SQLModel.metadata
 
 # Override sqlalchemy.url from env var when available
-database_url = os.environ.get("API_DATABASE_URL")
-if database_url:
-    # Alembic runs synchronously — swap asyncpg for psycopg2
-    sync_url = database_url.replace("+asyncpg", "+psycopg2")
-    config.set_main_option("sqlalchemy.url", sync_url)
+database_path = os.environ.get("API_DATABASE_PATH")
+if database_path:
+    # Alembic runs synchronously — use plain sqlite:/// (no aiosqlite driver)
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
 
 # Keep references so the models are registered on the metadata
 _models = (Device, Image, ImmichSyncJob)

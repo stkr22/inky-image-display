@@ -32,7 +32,7 @@ def main(
     - IMMICH_BASE_URL: Immich server URL
     - IMMICH_API_KEY: API key for authentication
     - S3_WRITER_*: S3-compatible connection for image storage
-    - POSTGRES_*: Database connection
+    - DATABASE_PATH: Path to the SQLite database file
     """
     asyncio.run(run_immich_sync(dry_run))
 
