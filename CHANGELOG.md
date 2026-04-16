@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/stkr22/inky-image-display/compare/v0.2.0...v0.2.1) (2026-04-16)
+
+
+### Documentation
+
+* :memo: update configuration and deployment docs for SQLite migration ([c6c6053](https://github.com/stkr22/inky-image-display/commit/c6c6053244b54fd3b844e00bacd32839846b60ad))
+
 ## [0.2.0](https://github.com/stkr22/inky-image-display/compare/v0.1.1...v0.2.0) (2026-04-16)
 
 
