@@ -1,4 +1,5 @@
 {
   ".": "0.4.0",
+  "packages/shared": "0.1.0",
   "packages/controller": "0.16.0"
 }
