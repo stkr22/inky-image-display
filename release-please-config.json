@@ -5,6 +5,11 @@
       "release-type": "python",
       "changelog-path": "CHANGELOG.md"
     },
+    "packages/shared": {
+      "release-type": "python",
+      "changelog-path": "packages/shared/CHANGELOG.md",
+      "component": "shared"
+    },
     "packages/controller": {
       "release-type": "python",
       "changelog-path": "packages/controller/CHANGELOG.md",
