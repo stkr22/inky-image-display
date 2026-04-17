@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1](https://github.com/stkr22/inky-image-display/compare/v0.5.0...v0.5.1) (2026-04-17)
+
+
+### Bug Fixes
+
+* :bug: add websockets support via uvicorn[standard] ([4b90b02](https://github.com/stkr22/inky-image-display/commit/4b90b02398aa111ccc15ceba4d98ae07141b9900))
+* :bug: add websockets support via uvicorn[standard] ([5b80fac](https://github.com/stkr22/inky-image-display/commit/5b80fac5db32fbcde9221d10a6c332fbf3675fd8))
+
 ## [0.5.0](https://github.com/stkr22/inky-image-display/compare/v0.4.0...v0.5.0) (2026-04-17)
 
 
