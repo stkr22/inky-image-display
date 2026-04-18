@@ -20,8 +20,8 @@ COPY packages/sync/ packages/sync/
 RUN --mount=type=cache,target=/root/.cache \
     uv sync --package inky-image-display-sync --no-dev --no-editable
 
-# Runtime stage: Python 3.14.4-alpine
-FROM docker.io/library/python:3.14.4-alpine@sha256:dd4d2bd5b53d9b25a51da13addf2be586beebd5387e289e798e4083d94ca837a
+# Runtime stage: Python 3.14.4-slim-trixie
+FROM docker.io/library/python:3.14.4-slim-trixie@sha256:538a18f1db92b4210a0b71aca2d14c156a96dedbe8867465c8ff4dce04d2ec39
 
 ENV PYTHONUNBUFFERED=1
 
