@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/stkr22/inky-image-display/compare/v0.5.1...v0.6.0) (2026-04-18)
+
+
+### Features
+
+* :sparkles: add shared rich logging and fix sync service silent failures ([7b77ff3](https://github.com/stkr22/inky-image-display/commit/7b77ff30a7e97cc6fde52a7478e9b8e07e924735))
+
 ## [0.5.1](https://github.com/stkr22/inky-image-display/compare/v0.5.0...v0.5.1) (2026-04-17)
 
 
