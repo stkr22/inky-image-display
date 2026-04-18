@@ -591,9 +591,24 @@ class ImmichSyncService:
                 continue
 
             if not self._matches_orientation(width, height, device_reqs.orientation):
+                self.logger.debug(
+                    "Skipping asset %s: orientation mismatch (%dx%d vs %s)",
+                    asset.id,
+                    width,
+                    height,
+                    device_reqs.orientation,
+                )
                 continue
 
             if width < device_reqs.width or height < device_reqs.height:
+                self.logger.debug(
+                    "Skipping asset %s: too small (%dx%d, need %dx%d)",
+                    asset.id,
+                    width,
+                    height,
+                    device_reqs.width,
+                    device_reqs.height,
+                )
                 continue
 
             filtered.append(asset)

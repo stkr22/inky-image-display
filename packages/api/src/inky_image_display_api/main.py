@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
+from inky_image_display_shared.logging import setup_logging
 
 from inky_image_display_api.config import Settings
 from inky_image_display_api.database import create_engine, create_tables
@@ -66,4 +67,5 @@ app.include_router(sync_jobs.router)
 
 def main() -> None:
     """Run the API server via uvicorn."""
+    setup_logging()
     uvicorn.run("inky_image_display_api.main:app", host="0.0.0.0", port=8000)
