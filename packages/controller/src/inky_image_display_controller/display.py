@@ -72,7 +72,7 @@ class InkyDisplay(DisplayInterface):
 
         # Eager init - get dimensions from hardware
         try:
-            from inky.auto import auto  # noqa: PLC0415
+            from inky.auto import auto  # noqa: PLC0415  # ty: ignore[unresolved-import]
 
             self._display = auto()
             self._width: int = self._display.width
