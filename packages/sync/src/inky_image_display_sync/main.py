@@ -5,6 +5,7 @@ import logging
 from typing import Annotated
 
 import typer
+from inky_image_display_shared.logging import setup_logging
 
 from inky_image_display_sync.immich import DisplayAPIClient, ImmichSyncService
 from inky_image_display_sync.immich.config import APIClientConfig
@@ -37,6 +38,7 @@ async def run_immich_sync(dry_run: bool) -> None:
         dry_run: If True, only show what would be synced
 
     """
+    setup_logging()
     logger = logging.getLogger("inky_image_display_sync")
 
     api_config = APIClientConfig()  # ty: ignore[missing-argument]

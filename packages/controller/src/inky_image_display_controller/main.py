@@ -3,11 +3,11 @@
 import asyncio
 import logging
 import signal
-import sys
 from pathlib import Path
 from typing import Annotated
 
 import typer
+from inky_image_display_shared.logging import setup_logging
 
 from inky_image_display_controller.config import load_settings
 from inky_image_display_controller.controller import DisplayController
@@ -17,21 +17,6 @@ app = typer.Typer(
     help="Inky Display Controller - E-ink display management daemon for Raspberry Pi.",
     add_completion=False,
 )
-
-
-def setup_logging(verbose: bool = False) -> None:
-    """Configure logging for the application.
-
-    Args:
-        verbose: If True, set log level to DEBUG.
-
-    """
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[logging.StreamHandler(sys.stdout)],
-    )
 
 
 @app.command()
@@ -70,7 +55,7 @@ def main(
     The controller connects to the Inky Image Display API via WebSocket,
     registers with the server, and displays images received via commands.
     """
-    setup_logging(verbose=verbose)
+    setup_logging(level=logging.DEBUG if verbose else None)
     logger = logging.getLogger(__name__)
 
     # Load settings
