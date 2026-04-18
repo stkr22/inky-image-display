@@ -81,8 +81,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
-"tests/**/*.py" = ["S101", "PLR2004", "D", "ARG002"]
-"packages/*/tests/**/*.py" = ["S101", "PLR2004", "D", "ARG002"]
+"tests/**/*.py" = ["S101", "PLR2004", "D", "ARG002", "ASYNC240"]
+"packages/*/tests/**/*.py" = ["S101", "PLR2004", "D", "ARG002", "ASYNC240"]
 "scripts/**/*.py" = ["T201"]
 "**/migrations/*.py" = ["E501"]
 "**/routes/*.py" = ["PLR0913"]

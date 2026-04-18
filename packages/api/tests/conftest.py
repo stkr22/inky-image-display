@@ -1,6 +1,10 @@
 """Shared test fixtures for the API package."""
 
+import os
+import tempfile
 from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
+from pathlib import Path
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -13,28 +17,26 @@ from inky_image_display_api.websocket import ConnectionManager
 from inky_image_display_api.websocket import router as ws_router
 from inky_image_display_shared.models import Device, Image
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 
 @pytest.fixture
 async def async_engine() -> AsyncIterator[AsyncEngine]:
-    """Create an in-memory SQLite async engine for testing.
+    """Create a file-based SQLite async engine for testing.
 
-    Uses ``StaticPool`` so every connection sees the same in-memory
-    database. Only creates the tables owned by the API.
+    Uses ``NullPool`` so connections are opened and closed per-operation,
+    avoiding event-loop entanglement when TestClient (anyio) tears down.
     """
-    engine = create_async_engine(
-        "sqlite+aiosqlite://",
-        echo=False,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    fd, db_path_str = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    db_path = Path(db_path_str)
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     async with engine.begin() as conn:
         for table in [Image.__table__, Device.__table__]:  # ty: ignore[unresolved-attribute]
             await conn.run_sync(table.create, checkfirst=True)
     yield engine
-    await engine.dispose()
+    db_path.unlink(missing_ok=True)
 
 
 @pytest.fixture
@@ -74,7 +76,13 @@ def test_app(
     connection_manager: ConnectionManager,
 ) -> FastAPI:
     """Create a FastAPI test app with mocked state."""
-    app = FastAPI()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):  # type: ignore[misc]
+        yield
+        await async_engine.dispose()
+
+    app = FastAPI(lifespan=lifespan)
     app.state.engine = async_engine
     app.state.settings = mock_settings
     app.state.s3_service = mock_s3_service
