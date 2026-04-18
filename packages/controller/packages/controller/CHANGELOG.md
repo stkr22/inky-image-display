@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/stkr22/inky-image-display/compare/controller-v1.0.0...controller-v1.0.1) (2026-04-18)
+
+
+### Bug Fixes
+
+* :bug: pin inky-image-display-shared&gt;=0.3.0 in controller ([b852249](https://github.com/stkr22/inky-image-display/commit/b85224984b228fc4d2f5050ac48be783a998a471))
+* :bug: pin inky-image-display-shared&gt;=0.3.0 in controller ([e6fdabe](https://github.com/stkr22/inky-image-display/commit/e6fdabe267f22b52a8d5445bf54e2a63e5f9176f))
+
 ## [1.0.0](https://github.com/stkr22/inky-image-display/compare/controller-v0.17.0...controller-v1.0.0) (2026-04-18)
 
 
