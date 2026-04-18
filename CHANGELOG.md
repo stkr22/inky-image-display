@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/stkr22/inky-image-display/compare/v1.0.0...v1.0.1) (2026-04-18)
+
+
+### Bug Fixes
+
+* :bug: use slim-trixie runtime to match build stage libc ([e07dbda](https://github.com/stkr22/inky-image-display/commit/e07dbda34ef5d75763e07b62753b972e422db464))
+* :bug: use slim-trixie runtime to match build stage libc ([548079b](https://github.com/stkr22/inky-image-display/commit/548079b3a8f9e40f4cfe2f26ce0160f91c0f6fc0))
+
 ## [1.0.0](https://github.com/stkr22/inky-image-display/compare/v0.6.0...v1.0.0) (2026-04-18)
 
 
