@@ -1,5 +1,5 @@
-# Build stage: Python 3.13.9-trixie
-FROM docker.io/library/python:3.13.9-trixie@sha256:5af92a47f819b7a6ec0bb3806862fe2cef7ea345e463be1a56c2830152cbac65 AS build-python
+# Build stage: Python 3.14.4-trixie
+FROM docker.io/library/python:3.14.4-trixie@sha256:8f84f00e6981bff45ce0ed100019142e13a397412bc130425f34ece42906cd48 AS build-python
 
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
@@ -7,7 +7,7 @@ ENV UV_LINK_MODE=copy \
     PYTHONUNBUFFERED=1
 
 # Install uv.
-COPY --from=ghcr.io/astral-sh/uv:0.9.17@sha256:5cb6b54d2bc3fe2eb9a8483db958a0b9eebf9edff68adedb369df8e7b98711a2 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.7@sha256:240fb85ab0f263ef12f492d8476aa3a2e4e1e333f7d67fbdd923d00a506a516a /uv /uvx /bin/
 
 # Set working directory
 WORKDIR /app
@@ -20,8 +20,8 @@ COPY packages/api/ packages/api/
 RUN --mount=type=cache,target=/root/.cache \
     uv sync --package inky-image-display-api --no-dev --no-editable
 
-# Runtime stage: Python 3.13.9-slim-trixie
-FROM docker.io/library/python:3.13.9-slim-trixie@sha256:326df678c20c78d465db501563f3492d17c42a4afe33a1f2bf5406a1d56b0e86
+# Runtime stage: Python 3.14.4-alpine
+FROM docker.io/library/python:3.14.4-alpine@sha256:dd4d2bd5b53d9b25a51da13addf2be586beebd5387e289e798e4083d94ca837a
 
 ENV PYTHONUNBUFFERED=1
 

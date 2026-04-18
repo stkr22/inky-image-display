@@ -10,7 +10,6 @@ authors = [
     { name = "stkr22", email = "stkr22@github.com" }
 ]
 license = "GPL-3.0-only"
-requires-python = ">=3.12,<3.14"
 dependencies = [
     "inky-image-display-shared",
     "fastapi~=0.135.3",

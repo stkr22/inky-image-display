@@ -10,7 +10,6 @@ authors = [
     { name = "stkr22", email = "stkr22@github.com" }
 ]
 license = "GPL-3.0-only"
-requires-python = ">=3.12,<3.14"
 dependencies = [
     "pydantic~=2.12.5",
     "rich~=15.0.0",
