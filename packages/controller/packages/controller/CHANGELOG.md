@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.0.0](https://github.com/stkr22/inky-image-display/compare/controller-v0.17.0...controller-v1.0.0) (2026-04-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* drop support for python 3.12 and add python 3.14 support
+
+### Features
+
+* drop support for python 3.12 and add python 3.14 support ([e25fef7](https://github.com/stkr22/inky-image-display/commit/e25fef734d435a45734189ad0192840c658c62fd))
+* drop support for python 3.12 and add python 3.14 support ([fbc18e0](https://github.com/stkr22/inky-image-display/commit/fbc18e090c8f19a125aad99c034407a9c4281f3b))
+
+
+### Bug Fixes
+
+* :bug: resolve websocket test hang with NullPool and temp-file SQLite ([38b2f60](https://github.com/stkr22/inky-image-display/commit/38b2f607efc320c3ad74a5c5b49cd139ec5b8d8d))
+
 ## [0.17.0](https://github.com/stkr22/inky-image-display/compare/controller-v0.16.0...controller-v0.17.0) (2026-04-18)
 
 

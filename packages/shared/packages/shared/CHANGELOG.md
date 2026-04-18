@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.0](https://github.com/stkr22/inky-image-display/compare/shared-v0.3.0...shared-v1.0.0) (2026-04-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* drop support for python 3.12 and add python 3.14 support
+
+### Features
+
+* drop support for python 3.12 and add python 3.14 support ([e25fef7](https://github.com/stkr22/inky-image-display/commit/e25fef734d435a45734189ad0192840c658c62fd))
+* drop support for python 3.12 and add python 3.14 support ([fbc18e0](https://github.com/stkr22/inky-image-display/commit/fbc18e090c8f19a125aad99c034407a9c4281f3b))
+
 ## [0.3.0](https://github.com/stkr22/inky-image-display/compare/shared-v0.2.0...shared-v0.3.0) (2026-04-18)
 
 

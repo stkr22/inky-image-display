@@ -4,7 +4,7 @@ This package provides a daemon that receives WebSocket commands from the
 inky-image-display API and displays images on an Inky Impression e-ink display.
 """
 
-__version__ = "0.17.0"
+__version__ = "1.0.0"
 
 from inky_image_display_shared.schemas import (
     DeviceAcknowledge,
