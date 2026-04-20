@@ -54,6 +54,10 @@ uv run immich-sync
 uv run immich-sync --dry-run
 ```
 
+## PlayWright MCP
+
+claude mcp add playwright npx @playwright/mcp@latest -- --browser chromium --headless --isolated --no-sandbox
+
 ## Documentation
 
 - [Architecture and component overview](docs/main.md)

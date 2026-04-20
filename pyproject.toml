@@ -36,6 +36,7 @@ testpaths = [
     "packages/sync/tests",
     "packages/controller/tests",
     "packages/api/tests",
+    "packages/ui/tests",
     "integration",
 ]
 markers = [
