@@ -1,17 +1,13 @@
-version: "3.8"
-
 services:
   # Development container service
   dev:
     image: ghcr.io/stkr22/devcontainer-python-container:1.5.0@sha256:94c35390676241f49f65561340fc23b59d7db15cdd878ad73a8f459ebae23b2c
     container_name: inky-image-display-dev
     userns_mode: "keep-id"  # Podman: keeps your host UID
-    "workspaceFolder": "/workspaces/inky-image-display"
+    working_dir: /workspaces/inky-image-display
     volumes:
       - ..:/workspaces/inky-image-display:cached,U
     command: sleep infinity
-    cap_add:
-      - NET_RAW
     environment:
       # SQLite database path (shared by API and sync services)
       DATABASE_PATH: /workspaces/inky-image-display/data/inky.db
@@ -19,33 +15,57 @@ services:
       # MQTT connection
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
-      # MinIO connection
-      MINIO_ENDPOINT: "minio:9000"
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET_NAME: inky-images
-      MINIO_SECURE: "false"
+      # S3 (Garage) — shared by API, UI, and sync
+      API_S3_ENDPOINT: "garage:3900"
+      API_S3_BUCKET: inky-images
+      API_S3_SECURE: "false"
+      API_S3_REGION: garage
+      API_S3_WRITER_ACCESS_KEY: GK00112233445566778899aabb
+      API_S3_WRITER_SECRET_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      API_S3_READER_ACCESS_KEY: GK00112233445566778899aabb
+      API_S3_READER_SECRET_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      UI_API_BASE_URL: "http://api:8000"
+      UI_S3_ENDPOINT: "garage:3900"
+      UI_S3_BUCKET: inky-images
+      UI_S3_SECURE: "false"
+      UI_S3_REGION: garage
+      UI_S3_READER_ACCESS_KEY: GK00112233445566778899aabb
+      UI_S3_READER_SECRET_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      S3_WRITER_ENDPOINT: "garage:3900"
+      S3_WRITER_BUCKET: inky-images
+      S3_WRITER_SECURE: "false"
+      S3_WRITER_REGION: garage
+      S3_WRITER_ACCESS_KEY: GK00112233445566778899aabb
+      S3_WRITER_SECRET_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     depends_on:
-      mosquitto:
-        condition: service_healthy
+      - garage
     networks:
       - pa-inky-image-display-network
 
-  # MinIO object storage for images
-  minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
-    container_name: wicture-display-skill-minio
-    command: server /data --console-address ":9001"
+  # Garage S3-compatible object storage for images.
+  # `--single-node` auto-creates a cluster layout on first boot.
+  # `--default-access-key` provisions the access key from the GARAGE_DEFAULT_*
+  # env vars. `--default-bucket` auto-creates the bucket on boot and grants
+  # the default access key read+write access to it.
+  garage:
+    image: docker.io/dxflrs/garage:v2.3.0
+    container_name: inky-image-display-garage
+    command: >-
+      /garage server --single-node --default-access-key --default-bucket
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+      GARAGE_DEFAULT_ACCESS_KEY: GK00112233445566778899aabb
+      GARAGE_DEFAULT_SECRET_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      GARAGE_DEFAULT_BUCKET: inky-images
+    volumes:
+      - ./config/garage.toml:/etc/garage.toml:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
     networks:
       - pa-inky-image-display-network
+
+volumes:
+  garage-meta:
+  garage-data:
 
 networks:
   pa-inky-image-display-network:

@@ -7,7 +7,10 @@
     "features": {
         "ghcr.io/stkr22/devcontainer-features/claude-code:2.0.3": {},
         "ghcr.io/stkr22/devcontainer-features/uv:1.0.0": {},
-		"ghcr.io/devcontainer-community/devcontainer-features/starship.rs:1": {}
+		"ghcr.io/devcontainer-community/devcontainer-features/starship.rs:1": {},
+		"ghcr.io/devcontainers/features/node:1": {
+		"version": "lts"
+		}
     },
 	"customizations": {
 		"vscode": {
@@ -46,5 +49,9 @@
 			}
 		}
 	},
-	"postCreateCommand": "uv sync --all-packages --all-extras --group dev && uv tool run pre-commit install"
+	"postCreateCommand": {
+		"uv-sync": "uv sync --all-packages --group dev",
+		"uv-pre-commit": "uv tool run pre-commit install",
+		"playwright-install": "npx -y playwright install-deps chromium && npx -y playwright install chromium"
+	}
 }

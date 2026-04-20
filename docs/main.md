@@ -1,6 +1,6 @@
 # Inky Image Display — Architecture
 
-Three components work together to display images on Inky e-ink displays.
+Four components work together to display images on Inky e-ink displays.
 
 ## Components
 
@@ -26,6 +26,10 @@ Python daemon that runs on the Raspberry Pi hosting an Inky display. It:
 5. Sends a `DeviceAcknowledge` back to the API after each command.
 
 Reconnects automatically with exponential backoff if the WebSocket drops.
+
+### UI (`inky-image-display-ui`)
+
+Flet-based web UI mounted inside a FastAPI app. Lets an operator browse, upload, and edit images, command devices (display next, pick a specific image, clear), and manage sync jobs. Images are proxied to the browser via a `/media/{object_key:path}` route using reader S3 credentials, so the browser never talks to S3 directly. No authentication — trusted LAN only. See [ui.md](ui.md).
 
 ### Sync (`inky-image-display-sync`)
 

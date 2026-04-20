@@ -19,6 +19,25 @@ All variables are prefixed with `API_`.
 | `API_S3_REGION` | No | — | S3 region (omit for MinIO/Garage) |
 | `API_DEFAULT_DISPLAY_DURATION` | No | `3600` | Default image display duration (seconds) |
 
+## UI (`inky-image-display-ui`)
+
+All variables are prefixed with `UI_`.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `UI_API_BASE_URL` | Yes | — | Base URL of the API, e.g. `http://api.svc:8000` |
+| `UI_API_TIMEOUT_SECONDS` | No | `30` | HTTP request timeout when calling the API |
+| `UI_S3_ENDPOINT` | Yes | — | S3 endpoint, e.g. `garage.storage.svc:3900` |
+| `UI_S3_READER_ACCESS_KEY` | Yes | — | Read-only S3 key (used by the `/media` proxy) |
+| `UI_S3_READER_SECRET_KEY` | Yes | — | Read-only S3 secret |
+| `UI_S3_BUCKET` | No | `inky-images` | S3 bucket name |
+| `UI_S3_SECURE` | No | `false` | Use HTTPS for S3 |
+| `UI_S3_REGION` | No | — | S3 region (omit for MinIO/Garage) |
+| `UI_HOST` | No | `0.0.0.0` | Bind address |
+| `UI_PORT` | No | `8001` | Listen port |
+| `UI_ROOT_PATH` | No | `""` | Reverse-proxy sub-path (e.g. `/ui`) |
+| `UI_MEDIA_CACHE_MAX_AGE` | No | `86400` | `Cache-Control: max-age` for `/media` responses |
+
 ## Controller (`inky-image-display-controller`)
 
 The controller supports both a YAML file and environment variables. Environment variables take precedence; nested fields use `__` as a delimiter (e.g. `DEVICE__ID`).
