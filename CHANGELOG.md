@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/stkr22/inky-image-display/compare/v1.0.2...v1.1.0) (2026-04-20)
+
+
+### Features
+
+* **ui:** :sparkles: add Flet web UI for image/device/sync-job management ([0937e30](https://github.com/stkr22/inky-image-display/commit/0937e30e4534bc1ca6eae97c49da083ab047bd82))
+
 ## [1.0.2](https://github.com/stkr22/inky-image-display/compare/v1.0.1...v1.0.2) (2026-04-18)
 
 
