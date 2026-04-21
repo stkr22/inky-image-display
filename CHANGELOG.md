@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/stkr22/inky-image-display/compare/v1.1.0...v1.2.0) (2026-04-21)
+
+
+### Features
+
+* **sync:** :sparkles: track source_id and sync_job_name on images ([dff583b](https://github.com/stkr22/inky-image-display/commit/dff583b3195593bf38a5d3a0797b2437a8410524))
+
+
+### Bug Fixes
+
+* **sync:** :bug: apply EXIF orientation before resize/crop ([cffd6a6](https://github.com/stkr22/inky-image-display/commit/cffd6a62cc4024069ba875f932dfd05468af78d7))
+
 ## [1.1.0](https://github.com/stkr22/inky-image-display/compare/v1.0.2...v1.1.0) (2026-04-20)
 
 
