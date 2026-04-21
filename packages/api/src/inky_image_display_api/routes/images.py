@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 async def list_images(
     request: Request,
     source_name: str | None = None,
+    source_id: str | None = None,
     is_portrait: bool | None = None,
     source_url: str | None = None,
     source_url_prefix: str | None = None,
@@ -34,7 +35,8 @@ async def list_images(
 
     Args:
         request: Incoming HTTP request.
-        source_name: Filter by source.
+        source_name: Filter by source type (e.g. "immich", "manual").
+        source_id: Filter by stable source identifier (e.g. an Immich asset UUID).
         is_portrait: Filter by orientation.
         source_url: Filter by exact source URL.
         source_url_prefix: Filter by source URL prefix (LIKE match).
@@ -47,6 +49,8 @@ async def list_images(
         query = select(Image)
         if source_name is not None:
             query = query.where(Image.source_name == source_name)
+        if source_id is not None:
+            query = query.where(Image.source_id == source_id)
         if is_portrait is not None:
             query = query.where(Image.is_portrait == is_portrait)
         if source_url is not None:
@@ -73,6 +77,8 @@ async def register_image(request: Request, body: ImageRegister) -> Image:
     """
     image = Image(
         source_name=body.source_name,
+        source_id=body.source_id,
+        sync_job_name=body.sync_job_name,
         storage_path=body.storage_path,
         source_url=body.source_url,
         title=body.title,

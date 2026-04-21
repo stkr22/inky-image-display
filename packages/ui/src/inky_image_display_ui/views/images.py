@@ -199,16 +199,42 @@ def _open_detail(page: ft.Page, image: dict[str, Any], api: ApiClient, on_change
     last_displayed = format_datetime(image.get("last_displayed_at"))
     dims = f"{image.get('original_width') or '?'}x{image.get('original_height') or '?'}"
 
-    meta = ft.Column(
+    source_url = image.get("source_url")
+    source_row: ft.Control
+    if source_url and source_url.startswith(("http://", "https://")):
+        source_row = ft.Row(
+            [
+                ft.Text("Source URL:", size=12),
+                ft.TextButton(
+                    source_url,
+                    url=source_url,
+                    style=ft.ButtonStyle(padding=0),
+                ),
+            ],
+            tight=True,
+            wrap=True,
+        )
+    else:
+        source_row = ft.Text(f"Source URL: {source_url or '-'}", size=12, selectable=True)
+
+    meta_lines: list[ft.Control] = [
+        ft.Text(f"ID: {image['id']}", size=12, selectable=True, color=ft.Colors.ON_SURFACE_VARIANT),
+        ft.Text(f"Source: {image.get('source_name', '?')}", size=12),
+    ]
+    if image.get("source_id"):
+        meta_lines.append(ft.Text(f"Source ID: {image['source_id']}", size=12, selectable=True))
+    if image.get("sync_job_name"):
+        meta_lines.append(ft.Text(f"Sync job: {image['sync_job_name']}", size=12))
+    meta_lines.extend(
         [
-            ft.Text(f"ID: {image['id']}", size=12, selectable=True, color=ft.Colors.ON_SURFACE_VARIANT),
-            ft.Text(f"Source: {image.get('source_name', '?')}", size=12),
+            source_row,
             ft.Text(f"Dimensions: {dims}", size=12),
             ft.Text(f"Created: {created}", size=12),
             ft.Text(f"Last displayed: {last_displayed}", size=12),
-        ],
-        tight=True,
+        ]
     )
+
+    meta = ft.Column(meta_lines, tight=True)
 
     sheet = ft.BottomSheet(
         ft.Container(

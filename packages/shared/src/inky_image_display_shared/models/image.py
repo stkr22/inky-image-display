@@ -15,12 +15,14 @@ class Image(SQLModel, table=True):
 
     Attributes:
         id: Unique identifier for the image
-        source_name: Source identifier (e.g., "manual", "immich", "unsplash")
+        source_name: Source type (e.g., "manual", "immich", "unsplash")
+        source_id: Stable identifier at the source (e.g. Immich asset UUID)
+        sync_job_name: Name of the sync job that created this record, if any
         storage_path: Path to image in MinIO bucket
         title: Optional title for voice responses
         description: Optional description for "what am I seeing?" queries
         author: Optional author/photographer name
-        source_url: Optional URL to original source
+        source_url: Optional HTTPS URL back to the original asset on its source
         display_duration_seconds: How long to show this image (default 3600)
         priority: Weight for future priority-based selection (default 0)
         original_width: Image width in pixels
@@ -36,14 +38,23 @@ class Image(SQLModel, table=True):
     __tablename__ = "images"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    source_name: str = Field(index=True, description="Source identifier (e.g. manual, unsplash)")
+    source_name: str = Field(index=True, description="Source type (e.g. manual, immich, unsplash)")
+    source_id: str | None = Field(
+        default=None,
+        index=True,
+        description="Stable identifier at the source (e.g. Immich asset UUID)",
+    )
+    sync_job_name: str | None = Field(
+        default=None,
+        description="Name of the sync job that created this record, if any",
+    )
     storage_path: str = Field(description="MinIO object path")
 
     # Metadata for voice responses
     title: str | None = Field(default=None, description="Image title for voice responses")
     description: str | None = Field(default=None, description="Description for 'what am I seeing?'")
     author: str | None = Field(default=None, description="Author/photographer name")
-    source_url: str | None = Field(default=None, description="Original source URL")
+    source_url: str | None = Field(default=None, description="HTTPS URL to the original asset")
 
     # Display settings
     display_duration_seconds: int = Field(default=600, description="Display duration in seconds")

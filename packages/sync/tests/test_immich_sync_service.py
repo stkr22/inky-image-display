@@ -143,12 +143,16 @@ def _make_service(
 
 
 def _make_image_item(
-    source_url: str = "immich://test-asset",
+    source_name: str = "immich",
+    source_id: str | None = "test-asset",
+    source_url: str | None = "https://immich.example.com/photos/test-asset",
     storage_path: str = "immich/test-asset.jpg",
     expires_at: datetime | None = None,
 ) -> ImageItem:
     return ImageItem(
         id=uuid4(),
+        source_name=source_name,
+        source_id=source_id,
         source_url=source_url,
         storage_path=storage_path,
         expires_at=expires_at,
@@ -227,9 +231,9 @@ class TestCleanupExpiredImages:
         assert result.storage_errors == 1
 
     @pytest.mark.asyncio
-    async def test_non_immich_images_excluded_by_prefix_filter(self) -> None:
+    async def test_non_immich_images_excluded_by_source_name_filter(self) -> None:
         api_client = AsyncMock(spec=DisplayAPIClient)
-        # list_images with source_url_prefix returns empty (non-Immich excluded)
+        # list_images with source_name returns empty (non-Immich excluded)
         api_client.list_images.return_value = []
         service = _make_service(api_client=api_client)
 
@@ -238,7 +242,7 @@ class TestCleanupExpiredImages:
         assert result.expired == 0
         api_client.list_images.assert_called_once()
         call_kwargs = api_client.list_images.call_args
-        assert call_kwargs.kwargs.get("source_url_prefix") == "immich://"
+        assert call_kwargs.kwargs.get("source_name") == "immich"
 
 
 class TestExpiresAtPopulation:
