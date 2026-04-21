@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/stkr22/inky-image-display/compare/shared-v1.0.0...shared-v1.1.0) (2026-04-21)
+
+
+### Features
+
+* **sync:** :sparkles: track source_id and sync_job_name on images ([dff583b](https://github.com/stkr22/inky-image-display/commit/dff583b3195593bf38a5d3a0797b2437a8410524))
+
 ## [1.0.0](https://github.com/stkr22/inky-image-display/compare/shared-v0.3.0...shared-v1.0.0) (2026-04-18)
 
 
