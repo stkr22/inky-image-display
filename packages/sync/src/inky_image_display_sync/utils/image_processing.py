@@ -3,7 +3,7 @@
 from io import BytesIO
 
 import pillow_heif
-from PIL import Image
+from PIL import Image, ImageOps
 from PIL.Image import Resampling
 
 # Register HEIF/HEIC format support with Pillow
@@ -53,8 +53,14 @@ class ImageProcessor:
         """
         try:
             with Image.open(BytesIO(image_data)) as original:
+                # Apply EXIF orientation so portrait phone photos (which store
+                # landscape pixels + an Orientation tag) are rotated upright
+                # before we resize/crop. Without this, the pipeline would
+                # center-crop the wrong axis.
+                oriented = ImageOps.exif_transpose(original) or original
+
                 # Convert to RGB if needed (for JPEG output), otherwise copy
-                processed = original.convert("RGB") if original.mode in ("RGBA", "P", "LA", "L") else original.copy()
+                processed = oriented.convert("RGB") if oriented.mode in ("RGBA", "P", "LA", "L") else oriented.copy()
 
                 orig_width, orig_height = processed.size
 

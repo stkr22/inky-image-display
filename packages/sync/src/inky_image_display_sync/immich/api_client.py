@@ -58,6 +58,9 @@ class ImageItem(BaseModel):
     """Image data returned by the API."""
 
     id: UUID
+    source_name: str
+    source_id: str | None = None
+    sync_job_name: str | None = None
     source_url: str | None
     storage_path: str
     expires_at: datetime | None
@@ -67,6 +70,8 @@ class ImageRegisterPayload(BaseModel):
     """Payload for POST /api/images/register."""
 
     source_name: str = "immich"
+    source_id: str | None = None
+    sync_job_name: str | None = None
     storage_path: str
     source_url: str | None = None
     title: str | None = None
@@ -149,22 +154,26 @@ class DisplayAPIClient:
 
     # --- Images ---
 
-    async def find_image_by_source_url(self, source_url: str) -> ImageItem | None:
-        """Return the image matching source_url, or None."""
-        response = await self._request("GET", "/api/images", params={"source_url": source_url, "limit": 1})
+    async def find_image_by_source(self, source_name: str, source_id: str) -> ImageItem | None:
+        """Return the image matching (source_name, source_id), or None."""
+        response = await self._request(
+            "GET",
+            "/api/images",
+            params={"source_name": source_name, "source_id": source_id, "limit": 1},
+        )
         items = response.json()
         return ImageItem.model_validate(items[0]) if items else None
 
     async def list_images(
         self,
-        source_url_prefix: str | None = None,
+        source_name: str | None = None,
         expires_before: datetime | None = None,
         limit: int = 1000,
     ) -> list[ImageItem]:
         """List images with optional filters."""
         params: dict[str, str | int] = {"limit": limit}
-        if source_url_prefix is not None:
-            params["source_url_prefix"] = source_url_prefix
+        if source_name is not None:
+            params["source_name"] = source_name
         if expires_before is not None:
             params["expires_before"] = expires_before.isoformat()
         response = await self._request("GET", "/api/images", params=params)

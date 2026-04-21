@@ -24,6 +24,8 @@ class ImageRegister(BaseModel):
     """Register an image that was pre-uploaded directly to S3."""
 
     source_name: str = "immich"
+    source_id: str | None = None
+    sync_job_name: str | None = None
     storage_path: str
     source_url: str | None = None
     title: str | None = None
@@ -61,6 +63,8 @@ class ImageResponse(BaseModel):
 
     id: UUID
     source_name: str
+    source_id: str | None
+    sync_job_name: str | None
     storage_path: str
     source_url: str | None
     title: str | None

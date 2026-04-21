@@ -28,6 +28,9 @@ from inky_image_display_sync.utils.color_analysis import ColorProfileAnalyzer
 from inky_image_display_sync.utils.image_processing import ImageProcessor
 from inky_image_display_sync.utils.metadata_builder import MetadataBuilder
 
+# Canonical source name marker for Immich records (matches Image.source_name).
+IMMICH_SOURCE_NAME = "immich"
+
 
 class ProcessResult(Enum):
     """Result of processing a single asset."""
@@ -206,7 +209,7 @@ class ImmichSyncService:
         now = datetime.now()
 
         expired_images = await self.api_client.list_images(
-            source_url_prefix="immich://",
+            source_name=IMMICH_SOURCE_NAME,
             expires_before=now,
         )
         result.expired = len(expired_images)
@@ -365,10 +368,10 @@ class ImmichSyncService:
         """Count images already synced from Immich.
 
         Returns:
-            Number of images with source_url starting with 'immich://'
+            Number of images with source_name == 'immich'
 
         """
-        images = await self.api_client.list_images(source_url_prefix="immich://")
+        images = await self.api_client.list_images(source_name=IMMICH_SOURCE_NAME)
         return len(images)
 
     async def _process_asset(
@@ -392,7 +395,7 @@ class ImmichSyncService:
 
         existing = None
         if self.sync_config.skip_existing:
-            existing = await self._find_existing_image(source_url)
+            existing = await self._find_existing_image(asset.id)
             if existing:
                 self.logger.debug("Skipping existing asset: %s", asset.id)
                 return ProcessResult.SKIPPED_EXISTING
@@ -451,16 +454,16 @@ class ImmichSyncService:
 
         return ProcessResult.DOWNLOADED
 
-    async def _find_existing_image(self, source_url: str) -> ImageItem | None:
-        """Find existing image by source URL via the API."""
-        return await self.api_client.find_image_by_source_url(source_url)
+    async def _find_existing_image(self, asset_id: str) -> ImageItem | None:
+        """Find existing image by (source_name='immich', source_id=asset_id) via the API."""
+        return await self.api_client.find_image_by_source(IMMICH_SOURCE_NAME, asset_id)
 
     async def _upsert_image_record(  # noqa: PLR0913
         self,
         asset: ImmichAsset,
         storage_path: str,
         source_url: str,
-        source_name: str,
+        sync_job_name: str,
         processed_dimensions: tuple[int, int],
         existing_id: UUID | None = None,
     ) -> None:
@@ -487,7 +490,9 @@ class ImmichSyncService:
             await self.api_client.update_image(existing_id, payload)
         else:
             payload = ImageRegisterPayload(
-                source_name=source_name,
+                source_name=IMMICH_SOURCE_NAME,
+                source_id=asset.id,
+                sync_job_name=sync_job_name,
                 storage_path=storage_path,
                 source_url=source_url,
                 title=title,
@@ -638,5 +643,6 @@ class ImmichSyncService:
         return b"".join(chunks)
 
     def _build_source_url(self, asset_id: str) -> str:
-        """Build unique source URL for deduplication."""
-        return f"immich://{asset_id}"
+        """Build a user-facing HTTPS URL to the asset on the Immich web UI."""
+        base = str(self.connection_config.base_url).rstrip("/")
+        return f"{base}/photos/{asset_id}"
