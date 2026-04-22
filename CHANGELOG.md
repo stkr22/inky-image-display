@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.2](https://github.com/stkr22/inky-image-display/compare/v1.2.1...v1.2.2) (2026-04-22)
+
+
+### Bug Fixes
+
+* **api,sync,ui:** :bug: align image orientation on device-natural dims ([f97dd06](https://github.com/stkr22/inky-image-display/commit/f97dd06b4e38353ca7b132ab410e7fe9eb164792))
+* **api,sync,ui:** :bug: align image orientation on device-natural dims ([6cc1cbf](https://github.com/stkr22/inky-image-display/commit/6cc1cbf80024e315c78b444d6a0fb53a84f7e56d))
+
 ## [1.2.1](https://github.com/stkr22/inky-image-display/compare/v1.2.0...v1.2.1) (2026-04-22)
 
 
