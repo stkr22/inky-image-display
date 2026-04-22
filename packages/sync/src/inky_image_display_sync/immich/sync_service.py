@@ -349,17 +349,23 @@ class ImmichSyncService:
             raise ValueError(f"Target device not found: {device_id}")
 
         device = devices[0]
-        width = device.display_width
-        height = device.display_height
+        display_width = device.display_width
+        display_height = device.display_height
         orientation = device.display_orientation
 
-        # Portrait devices have the panel physically rotated, so swap dimensions
+        # Portrait devices have the panel physically rotated, so swap the
+        # raster target used for resize/crop. Device-natural dimensions are
+        # kept separately for recording against the Image row.
         if orientation == "portrait":
-            width, height = height, width
+            width, height = display_height, display_width
+        else:
+            width, height = display_width, display_height
 
         return DeviceRequirements(
             width=width,
             height=height,
+            display_width=display_width,
+            display_height=display_height,
             orientation=orientation,
             display_model=device.display_model,
         )
@@ -448,7 +454,7 @@ class ImmichSyncService:
             storage_path,
             source_url,
             job.name,
-            processed_dimensions=(target_width, target_height),
+            device_reqs=device_reqs,
             existing_id=existing.id if existing else None,
         )
 
@@ -464,26 +470,33 @@ class ImmichSyncService:
         storage_path: str,
         source_url: str,
         sync_job_name: str,
-        processed_dimensions: tuple[int, int],
+        device_reqs: DeviceRequirements,
         existing_id: UUID | None = None,
     ) -> None:
-        """Create or update Image record via the Display API."""
+        """Create or update Image record via the Display API.
+
+        Recorded ``original_width``/``original_height`` are the device's
+        natural (unswapped) dimensions and ``is_portrait`` tracks the
+        device orientation. This lets orientation-aware queries match
+        regardless of how the raster file is stored on disk.
+        """
         title, description, tags = await self._build_image_metadata(asset)
 
         expires_at: datetime | None = None
         if self.sync_config.retention_days > 0:
             expires_at = datetime.now() + timedelta(days=self.sync_config.retention_days)
 
-        width, height = processed_dimensions
-        is_portrait = height > width
+        original_width = device_reqs.display_width
+        original_height = device_reqs.display_height
+        is_portrait = device_reqs.orientation == "portrait"
 
         if existing_id is not None:
             payload = ImageUpdatePayload(
                 title=title,
                 description=description,
                 tags=tags,
-                original_width=width,
-                original_height=height,
+                original_width=original_width,
+                original_height=original_height,
                 is_portrait=is_portrait,
                 expires_at=expires_at,
             )
@@ -498,8 +511,8 @@ class ImmichSyncService:
                 title=title,
                 description=description,
                 tags=tags,
-                original_width=width,
-                original_height=height,
+                original_width=original_width,
+                original_height=original_height,
                 is_portrait=is_portrait,
                 expires_at=expires_at,
             )

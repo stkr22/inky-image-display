@@ -110,12 +110,17 @@ class ImmichSyncConfig(BaseSettings):
 class DeviceRequirements(BaseModel):
     """Display requirements derived from target device.
 
-    These values come from the device's device_attributes JSON field
-    in the global_devices table. All fields are required - sync jobs
-    must have a valid target device with display specifications.
+    ``width``/``height`` are the raster target for image processing -
+    these are swapped relative to the device record for portrait panels,
+    because the panel driver addresses pixels in its native landscape
+    orientation. ``display_width``/``display_height`` remain the device's
+    natural (unswapped) dimensions and are what gets recorded against
+    synced Image rows so orientation-aware queries work consistently.
     """
 
     width: int
     height: int
+    display_width: int
+    display_height: int
     orientation: str  # "landscape" | "portrait" | "square"
     display_model: str | None = None  # e.g., "inky_impression_spectra_6"
