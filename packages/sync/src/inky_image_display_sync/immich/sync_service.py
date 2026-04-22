@@ -349,23 +349,19 @@ class ImmichSyncService:
             raise ValueError(f"Target device not found: {device_id}")
 
         device = devices[0]
-        display_width = device.display_width
-        display_height = device.display_height
         orientation = device.display_orientation
 
-        # Portrait devices have the panel physically rotated, so swap the
-        # raster target used for resize/crop. Device-natural dimensions are
-        # kept separately for recording against the Image row.
+        # device.display_width/height are the panel's native (always landscape)
+        # dims. Swap for portrait so width/height describe the orientation-aware
+        # raster target and are what gets recorded against the Image row.
         if orientation == "portrait":
-            width, height = display_height, display_width
+            width, height = device.display_height, device.display_width
         else:
-            width, height = display_width, display_height
+            width, height = device.display_width, device.display_height
 
         return DeviceRequirements(
             width=width,
             height=height,
-            display_width=display_width,
-            display_height=display_height,
             orientation=orientation,
             display_model=device.display_model,
         )
@@ -475,10 +471,10 @@ class ImmichSyncService:
     ) -> None:
         """Create or update Image record via the Display API.
 
-        Recorded ``original_width``/``original_height`` are the device's
-        natural (unswapped) dimensions and ``is_portrait`` tracks the
-        device orientation. This lets orientation-aware queries match
-        regardless of how the raster file is stored on disk.
+        Recorded ``original_width``/``original_height`` are the raster target
+        (orientation-aware: narrow-first for portrait) and ``is_portrait``
+        tracks the device orientation. This lets orientation-aware queries
+        match using a simple equality on both dims + flag.
         """
         title, description, tags = await self._build_image_metadata(asset)
 
@@ -486,8 +482,8 @@ class ImmichSyncService:
         if self.sync_config.retention_days > 0:
             expires_at = datetime.now() + timedelta(days=self.sync_config.retention_days)
 
-        original_width = device_reqs.display_width
-        original_height = device_reqs.display_height
+        original_width = device_reqs.width
+        original_height = device_reqs.height
         is_portrait = device_reqs.orientation == "portrait"
 
         if existing_id is not None:

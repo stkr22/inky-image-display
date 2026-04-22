@@ -28,11 +28,18 @@ async def get_next_image_for_device(session: AsyncSession, device: Device) -> Im
     """
     is_portrait = device.display_orientation == "portrait"
 
+    # device.display_width/height are the panel's native (always landscape)
+    # dims. Image rows store orientation-aware dims, so swap for portrait.
+    if is_portrait:
+        expected_width, expected_height = device.display_height, device.display_width
+    else:
+        expected_width, expected_height = device.display_width, device.display_height
+
     query = (
         select(Image)
         .where(
-            col(Image.original_width) == device.display_width,
-            col(Image.original_height) == device.display_height,
+            col(Image.original_width) == expected_width,
+            col(Image.original_height) == expected_height,
             Image.is_portrait == is_portrait,
         )
         .order_by(col(Image.last_displayed_at).asc().nullsfirst())

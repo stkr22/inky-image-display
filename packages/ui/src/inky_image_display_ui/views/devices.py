@@ -203,8 +203,12 @@ async def _open_image_picker(
     on_selected: Any,
 ) -> None:
     is_portrait = device["display_orientation"] == "portrait"
-    target_w = device["display_width"]
-    target_h = device["display_height"]
+    # display_width/height are panel-native (always landscape); swap for portrait
+    # so we match against orientation-aware image dims.
+    if is_portrait:
+        target_w, target_h = device["display_height"], device["display_width"]
+    else:
+        target_w, target_h = device["display_width"], device["display_height"]
     try:
         images = await api.list_images(is_portrait=is_portrait, limit=100)
     except ApiError as exc:

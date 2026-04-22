@@ -110,17 +110,13 @@ class ImmichSyncConfig(BaseSettings):
 class DeviceRequirements(BaseModel):
     """Display requirements derived from target device.
 
-    ``width``/``height`` are the raster target for image processing -
-    these are swapped relative to the device record for portrait panels,
-    because the panel driver addresses pixels in its native landscape
-    orientation. ``display_width``/``display_height`` remain the device's
-    natural (unswapped) dimensions and are what gets recorded against
-    synced Image rows so orientation-aware queries work consistently.
+    ``width``/``height`` are the orientation-aware raster target: narrow-first
+    for portrait devices (the device row stores panel-native landscape dims,
+    so these are swapped for portrait). Used both as the resize/crop target
+    and as what gets recorded against synced Image rows.
     """
 
     width: int
     height: int
-    display_width: int
-    display_height: int
     orientation: str  # "landscape" | "portrait" | "square"
     display_model: str | None = None  # e.g., "inky_impression_spectra_6"

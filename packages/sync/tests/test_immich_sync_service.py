@@ -352,8 +352,6 @@ class TestGetDeviceRequirementsPortrait:
 
         assert reqs.width == 1600
         assert reqs.height == 1200
-        assert reqs.display_width == 1600
-        assert reqs.display_height == 1200
         assert reqs.orientation == "landscape"
 
     @pytest.mark.asyncio
@@ -378,8 +376,6 @@ class TestGetDeviceRequirementsPortrait:
 
         assert reqs.width == 1200
         assert reqs.height == 1600
-        assert reqs.display_width == 1600
-        assert reqs.display_height == 1200
         assert reqs.orientation == "portrait"
 
     @pytest.mark.asyncio
@@ -464,14 +460,10 @@ class TestFilterAssets:
         )
 
     def _landscape_reqs(self) -> DeviceRequirements:
-        return DeviceRequirements(
-            width=1920, height=1080, display_width=1920, display_height=1080, orientation="landscape"
-        )
+        return DeviceRequirements(width=1920, height=1080, orientation="landscape")
 
     def _portrait_reqs(self) -> DeviceRequirements:
-        return DeviceRequirements(
-            width=1080, height=1920, display_width=1080, display_height=1920, orientation="portrait"
-        )
+        return DeviceRequirements(width=1080, height=1920, orientation="portrait")
 
     def test_top_level_landscape_dimensions_used(self) -> None:
         service = self._make_service()
@@ -591,9 +583,7 @@ class TestVibrancyFiltering:
         )
 
     def _landscape_reqs(self) -> DeviceRequirements:
-        return DeviceRequirements(
-            width=1920, height=1080, display_width=1920, display_height=1080, orientation="landscape"
-        )
+        return DeviceRequirements(width=1920, height=1080, orientation="landscape")
 
     @pytest.mark.asyncio
     async def test_vibrancy_skip_below_threshold(self) -> None:
