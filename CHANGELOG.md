@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.3](https://github.com/stkr22/inky-image-display/compare/v1.2.2...v1.2.3) (2026-04-22)
+
+
+### Bug Fixes
+
+* **api,sync,ui:** :bug: swap device dims for portrait image matching ([cb4f219](https://github.com/stkr22/inky-image-display/commit/cb4f219a4a5853821e1c95626d423c5d84fcf745))
+* **api,sync,ui:** :bug: swap device dims for portrait image matching ([d35a4f1](https://github.com/stkr22/inky-image-display/commit/d35a4f1074680f8eb3051fe147b592b180879b2c))
+
 ## [1.2.2](https://github.com/stkr22/inky-image-display/compare/v1.2.1...v1.2.2) (2026-04-22)
 
 
