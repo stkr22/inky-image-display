@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1](https://github.com/stkr22/inky-image-display/compare/v1.2.0...v1.2.1) (2026-04-22)
+
+
+### Bug Fixes
+
+* **ui:** :bug: register FilePicker as service instead of overlay ([37784ee](https://github.com/stkr22/inky-image-display/commit/37784ee5f86ae305aae3d9a12db5f856039dcfcd))
+* **ui:** :bug: register FilePicker as service instead of overlay ([c5a051c](https://github.com/stkr22/inky-image-display/commit/c5a051cdf2c7fc6e975c8a5150fd0f0b81d12a59))
+
 ## [1.2.0](https://github.com/stkr22/inky-image-display/compare/v1.1.0...v1.2.0) (2026-04-21)
 
 
