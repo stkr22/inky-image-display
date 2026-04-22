@@ -540,7 +540,7 @@ provides-extras = ["rpi"]
 
 [[package]]
 name = "inky-image-display-shared"
-version = "1.0.0"
+version = "1.1.0"
 source = { editable = "packages/shared" }
 dependencies = [
     { name = "pydantic" },
@@ -617,7 +617,7 @@ requires-dist = [
 
 [[package]]
 name = "inky-image-display-workspace"
-version = "1.1.0"
+version = "1.2.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
