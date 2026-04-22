@@ -16,7 +16,7 @@ async def get_next_image_for_device(session: AsyncSession, device: Device) -> Im
     Selection criteria:
     1. Images never displayed (``last_displayed_at IS NULL``) first.
     2. Then by least recently displayed (``last_displayed_at ASC``).
-    3. Filtered by exact dimension match and orientation.
+    3. Filtered by exact device-natural dimension match and orientation.
 
     Args:
         session: Active async database session.
@@ -27,16 +27,12 @@ async def get_next_image_for_device(session: AsyncSession, device: Device) -> Im
 
     """
     is_portrait = device.display_orientation == "portrait"
-    if is_portrait:
-        width, height = device.display_height, device.display_width
-    else:
-        width, height = device.display_width, device.display_height
 
     query = (
         select(Image)
         .where(
-            col(Image.original_width) == width,
-            col(Image.original_height) == height,
+            col(Image.original_width) == device.display_width,
+            col(Image.original_height) == device.display_height,
             Image.is_portrait == is_portrait,
         )
         .order_by(col(Image.last_displayed_at).asc().nullsfirst())

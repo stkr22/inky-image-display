@@ -288,6 +288,7 @@ def _open_upload_dialog(page: ft.Page, *, on_uploaded: Any) -> None:
     tags_field = ft.TextField(label="Tags (comma-separated)")
     duration_field = ft.TextField(label="Display duration (seconds)", value="600", keyboard_type=ft.KeyboardType.NUMBER)
     priority_slider = ft.Slider(min=1, max=10, divisions=9, value=5, label="Priority: {value}")
+    portrait_switch = ft.Switch(label="Portrait (for portrait-oriented devices)", value=False)
     status = ft.Text("", color=ft.Colors.ON_SURFACE_VARIANT)
 
     picker = ft.FilePicker()
@@ -321,6 +322,7 @@ def _open_upload_dialog(page: ft.Page, *, on_uploaded: Any) -> None:
             "tags": tags_field.value or None,
             "display_duration_seconds": duration,
             "priority": int(priority_slider.value or 5),
+            "is_portrait": bool(portrait_switch.value),
         }
         status.value = "Uploading…"
         page.update()
@@ -346,6 +348,7 @@ def _open_upload_dialog(page: ft.Page, *, on_uploaded: Any) -> None:
                 tags_field,
                 duration_field,
                 priority_slider,
+                portrait_switch,
                 status,
             ],
             tight=True,

@@ -9,7 +9,12 @@ from pydantic import BaseModel, ConfigDict
 
 
 class ImageCreate(BaseModel):
-    """Metadata supplied when uploading an image (multipart form)."""
+    """Metadata supplied when uploading an image (multipart form).
+
+    When ``is_portrait`` is omitted, the upload handler derives it from the
+    actual pixel shape of the file. Provide it explicitly to mark an image
+    as intended for a portrait-oriented device regardless of raster shape.
+    """
 
     source_name: str = "manual"
     title: str | None = None
@@ -18,6 +23,7 @@ class ImageCreate(BaseModel):
     display_duration_seconds: int = 600
     priority: int = 5
     tags: str | None = None
+    is_portrait: bool | None = None
 
 
 class ImageRegister(BaseModel):

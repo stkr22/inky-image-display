@@ -128,10 +128,11 @@ async def upload_image(
     image_uuid = uuid4()
     storage_path = f"{parsed.source_name}/{image_uuid}.jpg"
 
-    # Determine dimensions from the uploaded image
+    # Determine dimensions from the uploaded image; the orientation flag
+    # reflects the intended target device and may be overridden by metadata.
     pil_image = PILImage.open(BytesIO(data))
     width, height = pil_image.size
-    is_portrait = height > width
+    is_portrait = parsed.is_portrait if parsed.is_portrait is not None else height > width
 
     # Upload to S3
     s3 = request.app.state.s3_service
