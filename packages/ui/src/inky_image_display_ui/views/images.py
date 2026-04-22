@@ -291,7 +291,7 @@ def _open_upload_dialog(page: ft.Page, *, on_uploaded: Any) -> None:
     status = ft.Text("", color=ft.Colors.ON_SURFACE_VARIANT)
 
     picker = ft.FilePicker()
-    page.overlay.append(picker)
+    page.services.append(picker)
     page.update()
 
     async def choose() -> None:
