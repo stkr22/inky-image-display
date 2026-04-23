@@ -280,7 +280,7 @@ def _open_detail(page: ft.Page, image: dict[str, Any], api: ApiClient, on_change
     page.show_dialog(sheet)
 
 
-def _open_upload_dialog(page: ft.Page, *, on_uploaded: Any) -> None:
+def _open_upload_dialog(page: ft.Page, *, on_uploaded: Any) -> None:  # noqa: PLR0915
     api = get_api_client(page)
     title_field = ft.TextField(label="Title")
     description_field = ft.TextField(label="Description", multiline=True, min_lines=2, max_lines=4)
@@ -295,13 +295,10 @@ def _open_upload_dialog(page: ft.Page, *, on_uploaded: Any) -> None:
     page.services.append(picker)
     page.update()
 
+    selected: dict[str, Any] = {"bytes": None, "name": None}
+    upload_button = ft.FilledButton("Upload", icon=ft.Icons.UPLOAD, disabled=True)
+
     async def choose() -> None:
-        try:
-            duration = int(duration_field.value or 600)
-        except ValueError:
-            status.value = "Duration must be an integer"
-            page.update()
-            return
         files = await picker.pick_files(
             allow_multiple=False,
             allowed_extensions=["jpg", "jpeg", "png", "webp", "heic"],
@@ -312,6 +309,23 @@ def _open_upload_dialog(page: ft.Page, *, on_uploaded: Any) -> None:
         upload_file = files[0]
         if not upload_file.bytes:
             status.value = "File data not available"
+            page.update()
+            return
+        selected["bytes"] = upload_file.bytes
+        selected["name"] = upload_file.name
+        status.value = f"Selected: {upload_file.name}"
+        upload_button.disabled = False
+        page.update()
+
+    async def upload() -> None:
+        if not selected["bytes"] or not selected["name"]:
+            status.value = "Choose a file first"
+            page.update()
+            return
+        try:
+            duration = int(duration_field.value or 600)
+        except ValueError:
+            status.value = "Duration must be an integer"
             page.update()
             return
         metadata = {
@@ -325,17 +339,21 @@ def _open_upload_dialog(page: ft.Page, *, on_uploaded: Any) -> None:
             "is_portrait": bool(portrait_switch.value),
         }
         status.value = "Uploading…"
+        upload_button.disabled = True
         page.update()
         try:
-            await api.upload_image(upload_file.bytes, upload_file.name, metadata)
+            await api.upload_image(selected["bytes"], selected["name"], metadata)
         except ApiError as exc:
             status.value = f"Upload failed: {exc.detail or exc}"
+            upload_button.disabled = False
             page.update()
             return
         status.value = "Uploaded"
         page.update()
         page.pop_dialog()
         await on_uploaded()
+
+    upload_button.on_click = lambda _e: asyncio.create_task(upload())
 
     dialog = ft.AlertDialog(
         modal=True,
@@ -357,7 +375,12 @@ def _open_upload_dialog(page: ft.Page, *, on_uploaded: Any) -> None:
         ),
         actions=[
             ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
-            ft.FilledButton("Choose file & upload", on_click=lambda _e: asyncio.create_task(choose())),
+            ft.OutlinedButton(
+                "Choose file",
+                icon=ft.Icons.ATTACH_FILE,
+                on_click=lambda _e: asyncio.create_task(choose()),
+            ),
+            upload_button,
         ],
     )
     page.show_dialog(dialog)
