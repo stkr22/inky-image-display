@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.4](https://github.com/stkr22/inky-image-display/compare/v1.2.3...v1.2.4) (2026-04-23)
+
+
+### Bug Fixes
+
+* **ui:** :bug: split manual upload into choose-file and upload steps ([f6e691f](https://github.com/stkr22/inky-image-display/commit/f6e691f1631fa7315a9df59a0cb532bf2b9e2dac))
+* **ui:** :bug: split manual upload into choose-file and upload steps ([c0e93bf](https://github.com/stkr22/inky-image-display/commit/c0e93bfcc6e5239b81dbefddde405e8b3953be16))
+
 ## [1.2.3](https://github.com/stkr22/inky-image-display/compare/v1.2.2...v1.2.3) (2026-04-22)
 
 
