@@ -617,7 +617,7 @@ requires-dist = [
 
 [[package]]
 name = "inky-image-display-workspace"
-version = "1.2.3"
+version = "1.2.4"
 source = { virtual = "." }
 
 [package.dev-dependencies]
