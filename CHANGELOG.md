@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.5](https://github.com/stkr22/inky-image-display/compare/v1.2.4...v1.2.5) (2026-04-26)
+
+
+### Bug Fixes
+
+* **controller:** :bug: bound MinIO HTTP timeouts ([e49d62a](https://github.com/stkr22/inky-image-display/commit/e49d62ae430e8c34eedeb11cc20e79889c44d619))
+* **controller:** :bug: bound MinIO HTTP timeouts ([c4c423b](https://github.com/stkr22/inky-image-display/commit/c4c423bb35a477bbe392116f13e10f46204aafee))
+
 ## [1.2.4](https://github.com/stkr22/inky-image-display/compare/v1.2.3...v1.2.4) (2026-04-23)
 
 
