@@ -6,12 +6,19 @@ from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from typing import Any
 
+import urllib3
 from minio import Minio
 from PIL import Image
 
 from inky_image_display_controller.exceptions import CommunicationError
 
 logger = logging.getLogger(__name__)
+
+# MinIO's default urllib3 PoolManager has no read timeout, which lets a stale
+# pooled connection hang an image fetch indefinitely when the proxy or Garage
+# silently half-closes the socket. Bound it explicitly.
+_HTTP_TIMEOUT = urllib3.Timeout(connect=5.0, read=30.0)
+_HTTP_RETRIES = urllib3.Retry(total=3, backoff_factor=0.5)
 
 
 class S3ImageClient:
@@ -58,6 +65,11 @@ class S3ImageClient:
             "access_key": access_key,
             "secret_key": secret_key,
             "secure": secure,
+            "http_client": urllib3.PoolManager(
+                timeout=_HTTP_TIMEOUT,
+                retries=_HTTP_RETRIES,
+                maxsize=4,
+            ),
         }
         if region is not None:
             kwargs["region"] = region
