@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.0](https://github.com/stkr22/inky-image-display/compare/v1.2.5...v1.3.0) (2026-04-28)
+
+
+### Features
+
+* **ui:** :sparkles: rewrite UI from Flet to NiceGUI ([e33e328](https://github.com/stkr22/inky-image-display/commit/e33e328964e8c96bcc8d75c92f8b42076e849ca1))
+* **ui:** :sparkles: rewrite UI from Flet to NiceGUI ([d564606](https://github.com/stkr22/inky-image-display/commit/d5646069dfcb20f7520d0fb37e451d44514d8e5a))
+
 ## [1.2.5](https://github.com/stkr22/inky-image-display/compare/v1.2.4...v1.2.5) (2026-04-26)
 
 
