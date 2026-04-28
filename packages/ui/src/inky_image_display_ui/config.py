@@ -23,10 +23,13 @@ class Settings(BaseSettings):
     s3_reader_secret_key: str
 
     host: str = "0.0.0.0"
-    port: int = 8001
+    port: int = 8080
     root_path: str = ""
 
     media_cache_max_age: int = 86400
+
+    # Required by NiceGUI's app.storage.tab to sign session cookies.
+    storage_secret: str = "inky-image-display-ui-dev-secret"
 
     @field_validator("api_base_url")
     @classmethod

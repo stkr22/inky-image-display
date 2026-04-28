@@ -2,270 +2,237 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID
 
-import flet as ft
+from nicegui import events, ui
 
-from inky_image_display_ui.api_client import ApiError
+from inky_image_display_ui.api_client import ApiClient, ApiError
 from inky_image_display_ui.formatting import format_datetime
-from inky_image_display_ui.session import get_api_client
-
-if TYPE_CHECKING:
-    from inky_image_display_ui.api_client import ApiClient
+from inky_image_display_ui.session import require_api_client
+from inky_image_display_ui.views._layout import frame
 
 logger = logging.getLogger(__name__)
 
 _STRATEGIES = ["RANDOM", "SMART"]
 _MIN_COUNT = 1
 _MAX_COUNT = 1000
-_FAVORITE_OPTIONS = [("", "Any"), ("true", "Favorites only"), ("false", "Non-favorites only")]
-_RATING_OPTIONS = [("", "Any"), *[(str(i), f">= {i}") for i in range(6)]]
+_FAVORITE_OPTIONS: dict[str, str] = {"": "Any", "true": "Favorites only", "false": "Non-favorites only"}
+_RATING_OPTIONS: dict[str, str] = {"": "Any", **{str(i): f">= {i}" for i in range(6)}}
 
 
-async def build_list(page: ft.Page) -> ft.Control:
-    """Build the sync-jobs list view."""
-    api = get_api_client(page)
+def register() -> None:
+    """Register sync-job page routes."""
+
+    @ui.page("/sync-jobs")
+    async def list_page() -> None:
+        with frame("/sync-jobs"):
+            await _render_list()
+
+    @ui.page("/sync-jobs/new")
+    async def create_page() -> None:
+        with frame("/sync-jobs"):
+            await _render_form(job_id=None)
+
+    @ui.page("/sync-jobs/{job_id}")
+    async def edit_page(job_id: str) -> None:
+        with frame("/sync-jobs"):
+            await _render_form(job_id=job_id)
+
+
+async def _render_list() -> None:
+    api = require_api_client()
     device_map = await _load_device_map(api)
-    container = ft.Column(expand=True, spacing=8, scroll=ft.ScrollMode.AUTO)
+
+    with ui.row().classes("w-full items-center"):
+        ui.label("Sync jobs").classes("text-2xl font-medium")
+        ui.space()
+        refresh_button = ui.button(icon="refresh").props("flat round").tooltip("Refresh")
+        ui.button("New job", icon="add", on_click=lambda: ui.navigate.to("/sync-jobs/new")).props("color=primary")
+
+    container = ui.column().classes("w-full gap-2")
 
     async def reload() -> None:
         try:
             jobs = await api.list_sync_jobs()
         except ApiError as exc:
-            _snack(page, f"Failed to load sync jobs: {exc.detail or exc}")
+            ui.notify(f"Failed to load sync jobs: {exc.detail or exc}", type="negative")
             return
-        container.controls.clear()
-        if not jobs:
-            container.controls.append(ft.Text("No sync jobs yet.", italic=True))
-        else:
+        container.clear()
+        with container:
+            if not jobs:
+                ui.label("No sync jobs yet.").classes("italic text-gray-500")
+                return
             for job in jobs:
-                container.controls.append(_row(page, api, job, device_map, reload))
-        page.update()
+                _render_row(api, job, device_map, reload)
 
-    new_button = ft.FilledButton(
-        "New job",
-        icon=ft.Icons.ADD,
-        on_click=lambda _e: page.go("/sync-jobs/new"),
-    )
-    refresh_button = ft.IconButton(
-        icon=ft.Icons.REFRESH,
-        tooltip="Refresh",
-        on_click=lambda _e: asyncio.create_task(reload()),
-    )
-
+    refresh_button.on_click(reload)
     await reload()
 
-    return ft.Column(
-        [
-            ft.Row(
-                [
-                    ft.Text("Sync jobs", size=22, weight=ft.FontWeight.BOLD),
-                    ft.Container(expand=True),
-                    refresh_button,
-                    new_button,
-                ]
-            ),
-            container,
-        ],
-        expand=True,
-    )
 
-
-def _row(
-    page: ft.Page,
-    api: ApiClient,
-    job: dict[str, Any],
-    device_map: dict[str, str],
-    on_changed: Any,
-) -> ft.Control:
+def _render_row(api: ApiClient, job: dict[str, Any], device_map: dict[str, str], on_changed: Any) -> None:
     job_id = UUID(job["id"])
-    active_switch = ft.Switch(value=bool(job.get("is_active")), tooltip="Active")
+    target_name = device_map.get(job["target_device_id"], job["target_device_id"])
 
-    async def toggle_active() -> None:
-        new_value = bool(active_switch.value)
+    async def toggle_active(e: events.ValueChangeEventArguments) -> None:
+        new_value = bool(e.value)
         try:
             await api.update_sync_job(job_id, {"is_active": new_value})
         except ApiError as exc:
-            _snack(page, f"Toggle failed: {exc.detail or exc}")
-            active_switch.value = not new_value
-            page.update()
+            ui.notify(f"Toggle failed: {exc.detail or exc}", type="negative")
+            switch.value = not new_value
             return
-        _snack(page, "Updated")
+        ui.notify("Updated", type="positive")
 
     async def delete() -> None:
-        if not await _confirm(page, f"Delete sync job '{job['name']}'?"):
+        if not await _confirm(f"Delete sync job '{job['name']}'?"):
             return
         try:
             await api.delete_sync_job(job_id)
         except ApiError as exc:
-            _snack(page, f"Delete failed: {exc.detail or exc}")
+            ui.notify(f"Delete failed: {exc.detail or exc}", type="negative")
             return
+        ui.notify("Deleted", type="positive")
         await on_changed()
 
-    active_switch.on_change = lambda _e: asyncio.create_task(toggle_active())
-
-    target_name = device_map.get(job["target_device_id"], job["target_device_id"])
-
-    return ft.Card(
-        content=ft.Container(
-            ft.Row(
-                [
-                    ft.Column(
-                        [
-                            ft.Text(job["name"], size=16, weight=ft.FontWeight.BOLD),
-                            ft.Text(
-                                f"{job['strategy']} · count={job['count']} · → {target_name}",
-                                size=12,
-                                color=ft.Colors.ON_SURFACE_VARIANT,
-                            ),
-                            ft.Text(f"Updated: {format_datetime(job.get('updated_at'))}", size=11),
-                        ],
-                        tight=True,
-                        expand=True,
-                    ),
-                    active_switch,
-                    ft.IconButton(
-                        icon=ft.Icons.EDIT,
-                        tooltip="Edit",
-                        on_click=lambda _e: page.go(f"/sync-jobs/{job['id']}"),
-                    ),
-                    ft.IconButton(
-                        icon=ft.Icons.DELETE,
-                        tooltip="Delete",
-                        on_click=lambda _e: asyncio.create_task(delete()),
-                    ),
-                ],
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            padding=12,
-        )
-    )
+    with ui.card().classes("w-full"), ui.row().classes("w-full items-center gap-3"):
+        with ui.column().classes("flex-1 gap-0 min-w-0"):
+            ui.label(job["name"]).classes("text-base font-medium truncate")
+            ui.label(f"{job['strategy']} · count={job['count']} · → {target_name}").classes("text-xs text-gray-500")
+            ui.label(f"Updated: {format_datetime(job.get('updated_at'))}").classes("text-xs text-gray-500")
+        switch = ui.switch(value=bool(job.get("is_active"))).tooltip("Active")
+        switch.on_value_change(toggle_active)
+        ui.button(icon="edit", on_click=lambda jid=job["id"]: ui.navigate.to(f"/sync-jobs/{jid}")).props(
+            "flat round"
+        ).tooltip("Edit")
+        ui.button(icon="delete", on_click=delete).props("flat round color=negative").tooltip("Delete")
 
 
-async def build_form(page: ft.Page, *, job_id: str | None) -> ft.Control:  # noqa: PLR0915
-    """Build the create/edit form. ``job_id=None`` means create."""
-    api = get_api_client(page)
+async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
+    api = require_api_client()
     devices = await _load_devices(api)
-    device_options = [ft.dropdown.Option(key=d["id"], text=d.get("device_id") or d["id"]) for d in devices]
+    device_options: dict[str, str] = {d["id"]: d.get("device_id") or d["id"] for d in devices}
 
     job: dict[str, Any] = {}
     if job_id is not None:
         try:
             job = await api.get_sync_job(UUID(job_id))
         except ApiError as exc:
-            _snack(page, f"Load failed: {exc.detail or exc}")
-            return ft.Text("Could not load sync job.", color=ft.Colors.ERROR)
+            ui.notify(f"Load failed: {exc.detail or exc}", type="negative")
+            ui.label("Could not load sync job.").classes("text-red-500")
+            return
 
-    name_field = ft.TextField(label="Name", value=job.get("name") or "")
-    strategy_field = ft.Dropdown(
-        label="Strategy",
-        value=job.get("strategy") or "RANDOM",
-        options=[ft.dropdown.Option(s) for s in _STRATEGIES],
-    )
-    query_field = ft.TextField(
-        label="Query (SMART strategy)",
-        value=job.get("query") or "",
-        disabled=(strategy_field.value != "SMART"),
-    )
+    title = "New sync job" if job_id is None else "Edit sync job"
+    with ui.row().classes("w-full items-center"):
+        ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/sync-jobs")).props("flat round")
+        ui.label(title).classes("text-2xl font-medium")
 
-    def on_strategy_change() -> None:
-        query_field.disabled = strategy_field.value != "SMART"
-        page.update()
+    with ui.expansion("Basics", icon="settings", value=True).classes("w-full"):
+        name_field = ui.input("Name", value=job.get("name") or "").classes("w-full")
+        with ui.row().classes("w-full gap-3 flex-wrap"):
+            strategy_field = ui.select(_STRATEGIES, value=job.get("strategy") or "RANDOM", label="Strategy").classes(
+                "min-w-[160px]"
+            )
+            query_field = ui.input("Query (SMART only)", value=job.get("query") or "").classes("flex-1 min-w-[200px]")
+        target_field = ui.select(
+            device_options,
+            value=job.get("target_device_id") or (devices[0]["id"] if devices else None),
+            label="Target device",
+        ).classes("w-full")
+        with ui.row().classes("w-full gap-3 items-center flex-wrap"):
+            count_field = ui.number(
+                "Count (1-1000)", value=int(job.get("count") or 10), min=_MIN_COUNT, max=_MAX_COUNT, step=1
+            ).classes("w-40")
+            random_pick = ui.switch("Random pick", value=bool(job.get("random_pick")))
+        with ui.column().classes("w-full gap-0"):
+            ui.label("Overfetch multiplier").classes("text-xs text-gray-500")
+            overfetch_slider = ui.slider(min=1, max=10, step=1, value=int(job.get("overfetch_multiplier") or 3)).props(
+                "label-always"
+            )
+        active_switch = ui.switch("Active", value=bool(job.get("is_active", True)))
 
-    strategy_field.on_select = lambda _e: on_strategy_change()
+    def _refresh_query_enabled() -> None:
+        query_field.set_enabled(strategy_field.value == "SMART")
 
-    target_dropdown = ft.Dropdown(
-        label="Target device",
-        options=device_options,
-        value=job.get("target_device_id") or (devices[0]["id"] if devices else None),
-    )
-    count_field = ft.TextField(
-        label="Count (1-1000)",
-        value=str(job.get("count") or 10),
-        keyboard_type=ft.KeyboardType.NUMBER,
-        width=180,
-    )
-    random_pick = ft.Switch(label="Random pick", value=bool(job.get("random_pick")))
-    overfetch_slider = ft.Slider(
-        min=1, max=10, divisions=9, value=float(job.get("overfetch_multiplier") or 3), label="Overfetch x{value}"
-    )
-    albums_field = ft.TextField(
-        label="Album IDs (one per line)",
-        value="\n".join(job.get("album_ids") or []),
-        multiline=True,
-        min_lines=1,
-        max_lines=4,
-    )
-    persons_field = ft.TextField(
-        label="Person IDs (one per line)",
-        value="\n".join(job.get("person_ids") or []),
-        multiline=True,
-        min_lines=1,
-        max_lines=4,
-    )
-    tags_field = ft.TextField(
-        label="Tag IDs (one per line)",
-        value="\n".join(job.get("tag_ids") or []),
-        multiline=True,
-        min_lines=1,
-        max_lines=4,
-    )
-    favorite_field = ft.Dropdown(
-        label="Favorite filter",
-        value=_bool_to_option(job.get("is_favorite")),
-        options=[ft.dropdown.Option(key=k, text=t) for k, t in _FAVORITE_OPTIONS],
-    )
-    city_field = ft.TextField(label="City", value=job.get("city") or "")
-    state_field = ft.TextField(label="State/Region", value=job.get("state") or "")
-    country_field = ft.TextField(label="Country", value=job.get("country") or "")
-    taken_after_field = ft.TextField(label="Taken after (YYYY-MM-DD)", value=_date_str(job.get("taken_after")))
-    taken_before_field = ft.TextField(label="Taken before (YYYY-MM-DD)", value=_date_str(job.get("taken_before")))
-    rating_field = ft.Dropdown(
-        label="Rating",
-        value=str(job["rating"]) if isinstance(job.get("rating"), int) else "",
-        options=[ft.dropdown.Option(key=k, text=t) for k, t in _RATING_OPTIONS],
-    )
-    color_slider = ft.Slider(
-        min=0.0, max=1.0, divisions=20, value=float(job.get("min_color_score") or 0.5), label="Color ≥ {value}"
-    )
-    vibrancy_slider = ft.Slider(
-        min=0.0, max=1.0, divisions=20, value=float(job.get("min_vibrancy_score") or 0.2), label="Vibrancy ≥ {value}"
-    )
-    active_switch = ft.Switch(label="Active", value=bool(job.get("is_active", True)))
+    strategy_field.on_value_change(lambda _e: _refresh_query_enabled())
+    _refresh_query_enabled()
 
-    error_text = ft.Text("", color=ft.Colors.ERROR)
+    with ui.expansion("Immich filters", icon="tune").classes("w-full"):
+        albums_field = (
+            ui.textarea("Album IDs (one per line)", value="\n".join(job.get("album_ids") or []))
+            .classes("w-full")
+            .props("autogrow")
+        )
+        persons_field = (
+            ui.textarea("Person IDs (one per line)", value="\n".join(job.get("person_ids") or []))
+            .classes("w-full")
+            .props("autogrow")
+        )
+        tags_field = (
+            ui.textarea("Tag IDs (one per line)", value="\n".join(job.get("tag_ids") or []))
+            .classes("w-full")
+            .props("autogrow")
+        )
+        with ui.row().classes("w-full gap-3 flex-wrap"):
+            favorite_field = ui.select(
+                _FAVORITE_OPTIONS, value=_bool_to_option(job.get("is_favorite")), label="Favorite filter"
+            ).classes("min-w-[180px]")
+            rating_field = ui.select(
+                _RATING_OPTIONS,
+                value=str(job["rating"]) if isinstance(job.get("rating"), int) else "",
+                label="Rating",
+            ).classes("min-w-[140px]")
+        with ui.row().classes("w-full gap-3 flex-wrap"):
+            city_field = ui.input("City", value=job.get("city") or "").classes("flex-1 min-w-[160px]")
+            state_field = ui.input("State/Region", value=job.get("state") or "").classes("flex-1 min-w-[160px]")
+            country_field = ui.input("Country", value=job.get("country") or "").classes("flex-1 min-w-[160px]")
+        with ui.row().classes("w-full gap-3 flex-wrap"):
+            taken_after_field = ui.input("Taken after (YYYY-MM-DD)", value=_date_str(job.get("taken_after"))).classes(
+                "flex-1 min-w-[180px]"
+            )
+            taken_before_field = ui.input(
+                "Taken before (YYYY-MM-DD)", value=_date_str(job.get("taken_before"))
+            ).classes("flex-1 min-w-[180px]")
+        with ui.column().classes("w-full gap-0"):
+            ui.label("Minimum color score").classes("text-xs text-gray-500")
+            color_slider = ui.slider(min=0.0, max=1.0, step=0.05, value=float(job.get("min_color_score") or 0.5)).props(
+                "label-always"
+            )
+        with ui.column().classes("w-full gap-0"):
+            ui.label("Minimum vibrancy score").classes("text-xs text-gray-500")
+            vibrancy_slider = ui.slider(
+                min=0.0, max=1.0, step=0.05, value=float(job.get("min_vibrancy_score") or 0.2)
+            ).props("label-always")
+
+    error_label = ui.label("").classes("text-red-500 text-sm")
 
     async def save() -> None:
         body = _collect_form(
-            name_field=name_field,
-            strategy_field=strategy_field,
-            query_field=query_field,
-            target_dropdown=target_dropdown,
-            count_field=count_field,
-            random_pick=random_pick,
-            overfetch_slider=overfetch_slider,
-            albums_field=albums_field,
-            persons_field=persons_field,
-            tags_field=tags_field,
-            favorite_field=favorite_field,
-            city_field=city_field,
-            state_field=state_field,
-            country_field=country_field,
-            taken_after_field=taken_after_field,
-            taken_before_field=taken_before_field,
-            rating_field=rating_field,
-            color_slider=color_slider,
-            vibrancy_slider=vibrancy_slider,
-            active_switch=active_switch,
-            is_edit=job_id is not None,
+            name=name_field.value,
+            strategy=strategy_field.value or "RANDOM",
+            query=query_field.value,
+            target_device_id=target_field.value,
+            count_raw=count_field.value,
+            random_pick=bool(random_pick.value),
+            overfetch=overfetch_slider.value,
+            albums=albums_field.value,
+            persons=persons_field.value,
+            tags=tags_field.value,
+            favorite=favorite_field.value,
+            city=city_field.value,
+            state=state_field.value,
+            country=country_field.value,
+            taken_after=taken_after_field.value,
+            taken_before=taken_before_field.value,
+            rating=rating_field.value,
+            color=color_slider.value,
+            vibrancy=vibrancy_slider.value,
+            is_active=bool(active_switch.value),
         )
         if isinstance(body, str):
-            error_text.value = body
-            page.update()
+            error_label.text = body
             return
         try:
             if job_id is None:
@@ -273,140 +240,88 @@ async def build_form(page: ft.Page, *, job_id: str | None) -> ft.Control:  # noq
             else:
                 await api.update_sync_job(UUID(job_id), body)
         except ApiError as exc:
-            error_text.value = f"Save failed: {exc.detail or exc}"
-            page.update()
+            error_label.text = f"Save failed: {exc.detail or exc}"
             return
-        _snack(page, "Saved")
-        page.go("/sync-jobs")
+        ui.notify("Saved", type="positive")
+        ui.navigate.to("/sync-jobs")
 
-    title = "New sync job" if job_id is None else "Edit sync job"
-
-    return ft.Column(
-        [
-            ft.Row(
-                [
-                    ft.IconButton(icon=ft.Icons.ARROW_BACK, on_click=lambda _e: page.go("/sync-jobs")),
-                    ft.Text(title, size=22, weight=ft.FontWeight.BOLD),
-                ]
-            ),
-            ft.Column(
-                [
-                    name_field,
-                    ft.Row([strategy_field, query_field]),
-                    target_dropdown,
-                    ft.Row([count_field, random_pick]),
-                    ft.Text("Overfetch multiplier"),
-                    overfetch_slider,
-                    albums_field,
-                    persons_field,
-                    tags_field,
-                    ft.Row([favorite_field, rating_field]),
-                    ft.Row([city_field, state_field, country_field]),
-                    ft.Row([taken_after_field, taken_before_field]),
-                    ft.Text("Minimum color score"),
-                    color_slider,
-                    ft.Text("Minimum vibrancy score"),
-                    vibrancy_slider,
-                    active_switch,
-                    error_text,
-                    ft.Row(
-                        [
-                            ft.TextButton("Cancel", on_click=lambda _e: page.go("/sync-jobs")),
-                            ft.Container(expand=True),
-                            ft.FilledButton(
-                                "Save", icon=ft.Icons.SAVE, on_click=lambda _e: asyncio.create_task(save())
-                            ),
-                        ]
-                    ),
-                ],
-                spacing=12,
-                scroll=ft.ScrollMode.AUTO,
-                expand=True,
-            ),
-        ],
-        expand=True,
-    )
+    with ui.row().classes("w-full justify-end gap-2 pt-2"):
+        ui.button("Cancel", on_click=lambda: ui.navigate.to("/sync-jobs")).props("flat")
+        ui.button("Save", icon="save", on_click=save).props("color=primary")
 
 
-def _collect_form(  # noqa: PLR0911, PLR0913
+def _collect_form(  # noqa: PLR0913, PLR0911
     *,
-    name_field: ft.TextField,
-    strategy_field: ft.Dropdown,
-    query_field: ft.TextField,
-    target_dropdown: ft.Dropdown,
-    count_field: ft.TextField,
-    random_pick: ft.Switch,
-    overfetch_slider: ft.Slider,
-    albums_field: ft.TextField,
-    persons_field: ft.TextField,
-    tags_field: ft.TextField,
-    favorite_field: ft.Dropdown,
-    city_field: ft.TextField,
-    state_field: ft.TextField,
-    country_field: ft.TextField,
-    taken_after_field: ft.TextField,
-    taken_before_field: ft.TextField,
-    rating_field: ft.Dropdown,
-    color_slider: ft.Slider,
-    vibrancy_slider: ft.Slider,
-    active_switch: ft.Switch,
-    is_edit: bool,
+    name: str | None,
+    strategy: str,
+    query: str | None,
+    target_device_id: str | None,
+    count_raw: Any,
+    random_pick: bool,
+    overfetch: Any,
+    albums: str | None,
+    persons: str | None,
+    tags: str | None,
+    favorite: str | None,
+    city: str | None,
+    state: str | None,
+    country: str | None,
+    taken_after: str | None,
+    taken_before: str | None,
+    rating: str | None,
+    color: Any,
+    vibrancy: Any,
+    is_active: bool,
 ) -> dict[str, Any] | str:
-    """Validate + pack the form values into a request dict, or return an error string."""
-    if not name_field.value:
+    if not name:
         return "Name is required"
-    if not target_dropdown.value:
+    if not target_device_id:
         return "Target device is required"
     try:
-        count = int(count_field.value or 10)
-    except ValueError:
+        count = int(count_raw if count_raw is not None else 10)
+    except (TypeError, ValueError):
         return "Count must be an integer"
     if not _MIN_COUNT <= count <= _MAX_COUNT:
         return f"Count must be between {_MIN_COUNT} and {_MAX_COUNT}"
-    strategy = strategy_field.value or "RANDOM"
-    if strategy == "SMART" and not (query_field.value or "").strip():
+    if strategy == "SMART" and not (query or "").strip():
         return "Query is required when strategy is SMART"
 
-    taken_after = _parse_date(taken_after_field.value)
-    if taken_after_field.value and taken_after is None:
+    parsed_after = _parse_date(taken_after)
+    if taken_after and parsed_after is None:
         return "Taken-after must be YYYY-MM-DD"
-    taken_before = _parse_date(taken_before_field.value)
-    if taken_before_field.value and taken_before is None:
+    parsed_before = _parse_date(taken_before)
+    if taken_before and parsed_before is None:
         return "Taken-before must be YYYY-MM-DD"
 
     rating_value: int | None = None
-    if rating_field.value:
+    if rating:
         try:
-            rating_value = int(rating_field.value)
+            rating_value = int(rating)
         except ValueError:
             return "Rating must be an integer"
 
-    body: dict[str, Any] = {
-        "name": name_field.value,
+    return {
+        "name": name,
         "strategy": strategy,
-        "query": (query_field.value or None) if strategy == "SMART" else None,
-        "target_device_id": target_dropdown.value,
+        "query": (query or None) if strategy == "SMART" else None,
+        "target_device_id": target_device_id,
         "count": count,
-        "random_pick": bool(random_pick.value),
-        "overfetch_multiplier": int(overfetch_slider.value or 3),
-        "album_ids": _split_lines(albums_field.value),
-        "person_ids": _split_lines(persons_field.value),
-        "tag_ids": _split_lines(tags_field.value),
-        "is_favorite": _option_to_bool(favorite_field.value),
-        "city": city_field.value or None,
-        "state": state_field.value or None,
-        "country": country_field.value or None,
-        "taken_after": taken_after.isoformat() if taken_after else None,
-        "taken_before": taken_before.isoformat() if taken_before else None,
+        "random_pick": random_pick,
+        "overfetch_multiplier": int(overfetch or 3),
+        "album_ids": _split_lines(albums),
+        "person_ids": _split_lines(persons),
+        "tag_ids": _split_lines(tags),
+        "is_favorite": _option_to_bool(favorite),
+        "city": city or None,
+        "state": state or None,
+        "country": country or None,
+        "taken_after": parsed_after.isoformat() if parsed_after else None,
+        "taken_before": parsed_before.isoformat() if parsed_before else None,
         "rating": rating_value,
-        "min_color_score": float(color_slider.value or 0.0),
-        "min_vibrancy_score": float(vibrancy_slider.value or 0.0),
-        "is_active": bool(active_switch.value),
+        "min_color_score": float(color or 0.0),
+        "min_vibrancy_score": float(vibrancy or 0.0),
+        "is_active": is_active,
     }
-    # On create, the target_device_id must be present; drop None list fields to avoid API surprises.
-    if not is_edit and body.get("target_device_id") is None:
-        return "Target device is required"
-    return body
 
 
 def _split_lines(value: str | None) -> list[str] | None:
@@ -460,28 +375,11 @@ async def _load_device_map(api: ApiClient) -> dict[str, str]:
     return {d["id"]: d.get("device_id") or d["id"] for d in devices}
 
 
-async def _confirm(page: ft.Page, message: str) -> bool:
-    result: dict[str, bool] = {"value": False}
-    event = asyncio.Event()
-
-    def close(value: bool) -> None:
-        result["value"] = value
-        event.set()
-        page.pop_dialog()
-
-    dialog = ft.AlertDialog(
-        modal=True,
-        title=ft.Text("Confirm"),
-        content=ft.Text(message),
-        actions=[
-            ft.TextButton("Cancel", on_click=lambda _e: close(False)),
-            ft.FilledButton("Confirm", on_click=lambda _e: close(True)),
-        ],
-    )
-    page.show_dialog(dialog)
-    await event.wait()
-    return result["value"]
-
-
-def _snack(page: ft.Page, message: str) -> None:
-    page.show_dialog(ft.SnackBar(content=ft.Text(message), duration=3000))
+async def _confirm(message: str) -> bool:
+    with ui.dialog() as dialog, ui.card():
+        ui.label(message)
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancel", on_click=lambda: dialog.submit(False)).props("flat")
+            ui.button("Confirm", on_click=lambda: dialog.submit(True)).props("color=primary")
+    result = await dialog
+    return bool(result)

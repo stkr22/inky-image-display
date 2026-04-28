@@ -1,21 +1,21 @@
-"""Uvicorn entry point assembling the FastAPI + Flet UI application."""
+"""Uvicorn entry point assembling the FastAPI + NiceGUI UI application."""
 
 from __future__ import annotations
 
 import logging
 
-import flet.fastapi as flet_fastapi
 import httpx
 import uvicorn
 from fastapi import APIRouter, FastAPI
 from inky_image_display_shared.logging import setup_logging
 from minio import Minio
+from nicegui import app as nicegui_app
+from nicegui import ui
 
-from inky_image_display_ui import app as flet_app
+from inky_image_display_ui import app as ui_app
 from inky_image_display_ui.api_client import ApiClient
 from inky_image_display_ui.config import Settings
 from inky_image_display_ui.s3_proxy import router as media_router
-from inky_image_display_ui.upload_proxy import router as upload_router
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +29,10 @@ async def health() -> dict[str, str]:
 
 
 def build_app(settings: Settings) -> FastAPI:
-    """Assemble the FastAPI application that hosts the Flet UI and support routes.
+    """Assemble the FastAPI application that hosts the NiceGUI UI and support routes.
 
-    Routes are registered before the Flet mount at ``/`` because FastAPI
-    matches routes in registration order and mounts are matched last.
+    The /health and /media routers are registered before NiceGUI mounts itself,
+    so FastAPI matches them ahead of NiceGUI's catch-all SPA routes.
     """
     minio_client = Minio(
         settings.s3_endpoint,
@@ -47,30 +47,29 @@ def build_app(settings: Settings) -> FastAPI:
     )
     api_client = ApiClient(http_client)
 
-    flet_app.configure(api_client=api_client)
+    ui_app.configure(api_client=api_client)
 
-    async def _on_startup() -> None:
-        logger.info("Inky Image Display UI started on %s:%d", settings.host, settings.port)
-
-    async def _on_shutdown() -> None:
-        await http_client.aclose()
-        logger.info("Inky Image Display UI stopped")
-
-    # flet_fastapi.FastAPI owns the lifespan to coordinate its own Flet
-    # app_manager startup/shutdown; we attach our httpx cleanup via on_shutdown.
-    app = flet_fastapi.FastAPI(
-        title="Inky Image Display UI",
-        on_startup=[_on_startup],
-        on_shutdown=[_on_shutdown],
-    )
+    app = FastAPI(title="Inky Image Display UI")
     app.state.settings = settings
     app.state.minio_client = minio_client
     app.state.api_client = api_client
+    app.state.http_client = http_client
 
     app.include_router(health_router)
     app.include_router(media_router)
-    app.include_router(upload_router)
-    app.mount("/", flet_fastapi.app(flet_app.main))
+
+    ui_app.register_pages()
+    ui.run_with(
+        app,
+        title="Inky Image Display",
+        storage_secret=settings.storage_secret,
+    )
+
+    async def _close_http_client() -> None:
+        await http_client.aclose()
+        logger.info("Inky Image Display UI stopped")
+
+    nicegui_app.on_shutdown(_close_http_client)
     return app
 
 
@@ -85,3 +84,7 @@ def main() -> None:
         port=settings.port,
         root_path=settings.root_path,
     )
+
+
+if __name__ in {"__main__", "__mp_main__"}:
+    main()

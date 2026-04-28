@@ -36,7 +36,7 @@ def test_defaults_populate(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.s3_secure is False
     assert settings.s3_region is None
     assert settings.host == "0.0.0.0"
-    assert settings.port == 8001
+    assert settings.port == 8080
     assert settings.media_cache_max_age == 86400
 
 

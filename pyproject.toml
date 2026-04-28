@@ -21,6 +21,7 @@ dev = [
     "pytest-timeout~=2.3.1",
     "aiosqlite~=0.22.1",
     "pillow~=12.2.0",
+    "nice-vibes>=0.1.5",
 ]
 
 [tool.ty.rules]

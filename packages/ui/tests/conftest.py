@@ -11,7 +11,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from inky_image_display_ui.api_client import ApiClient
 from inky_image_display_ui.s3_proxy import router as media_router
-from inky_image_display_ui.upload_proxy import router as upload_router
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterator
@@ -97,7 +96,6 @@ def test_app(
         return {"status": "ok"}
 
     app.include_router(media_router)
-    app.include_router(upload_router)
     return app
 
 

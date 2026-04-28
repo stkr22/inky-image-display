@@ -1,75 +1,89 @@
-"""Images view: gallery, upload, detail/edit, delete."""
+"""Images view: gallery, upload, and full-route detail/edit."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID
 
-import flet as ft
+from nicegui import events, ui
 
 from inky_image_display_ui.api_client import ApiError
 from inky_image_display_ui.formatting import format_datetime
-from inky_image_display_ui.session import get_api_client
-
-if TYPE_CHECKING:
-    from inky_image_display_ui.api_client import ApiClient
+from inky_image_display_ui.session import require_api_client
+from inky_image_display_ui.views._layout import frame
 
 logger = logging.getLogger(__name__)
 
 _PAGE_SIZE = 30
+_SOURCE_OPTIONS: dict[str, str] = {"": "All", "manual": "manual", "immich": "immich"}
 
 
-async def build(page: ft.Page) -> ft.Control:
-    """Build the images gallery view, including filters, grid, and upload FAB."""
-    api = get_api_client(page)
-    state: dict[str, Any] = {"offset": 0, "source_name": None, "is_portrait": None}
+def register() -> None:
+    """Register all image-related @ui.page routes with NiceGUI."""
 
-    source_filter = ft.Dropdown(
-        label="Source",
-        width=180,
-        options=[
-            ft.dropdown.Option(key="", text="All"),
-            ft.dropdown.Option(key="manual", text="manual"),
-            ft.dropdown.Option(key="immich", text="immich"),
-        ],
-    )
-    portrait_switch = ft.Switch(label="Portrait only", value=False)
-    prev_button = ft.IconButton(icon=ft.Icons.CHEVRON_LEFT, tooltip="Previous page")
-    next_button = ft.IconButton(icon=ft.Icons.CHEVRON_RIGHT, tooltip="Next page")
-    page_label = ft.Text("")
+    @ui.page("/images")
+    async def gallery_page() -> None:
+        with frame("/images"):
+            await _render_gallery()
 
-    grid = ft.GridView(
-        expand=True,
-        max_extent=260,
-        child_aspect_ratio=1.0,
-        spacing=8,
-        run_spacing=8,
+    @ui.page("/images/{image_id}")
+    async def detail_page(image_id: str) -> None:
+        with frame("/images"):
+            await _render_detail(image_id)
+
+
+async def _render_gallery() -> None:
+    api = require_api_client()
+    state: dict[str, Any] = {"offset": 0, "source_name": "", "is_portrait": False}
+
+    page_label = ui.label()
+
+    with ui.row().classes("w-full items-end gap-3 flex-wrap"):
+        source_select = ui.select(_SOURCE_OPTIONS, value="", label="Source").classes("min-w-[160px]")
+        portrait_switch = ui.switch("Portrait only", value=False)
+        ui.space()
+        prev_button = ui.button(icon="chevron_left").props("flat round")
+        with ui.element("div").classes("flex items-center"):
+            page_label.classes("text-sm")
+        next_button = ui.button(icon="chevron_right").props("flat round")
+
+    grid = (
+        ui.element("div")
+        .classes("grid w-full gap-3")
+        .style("grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));")
     )
 
     async def reload() -> None:
         try:
             rows = await api.list_images(
-                source_name=state["source_name"],
-                is_portrait=state["is_portrait"],
+                source_name=state["source_name"] or None,
+                is_portrait=True if state["is_portrait"] else None,
                 limit=_PAGE_SIZE,
                 offset=state["offset"],
             )
         except ApiError as exc:
             logger.exception("list_images failed")
-            _snack(page, f"Failed to load images: {exc.detail or exc}")
+            ui.notify(f"Failed to load images: {exc.detail or exc}", type="negative")
             return
-        _render_grid(page, grid, rows, api, reload)
+        grid.clear()
+        with grid:
+            if not rows:
+                ui.label("No images.").classes("italic text-gray-500")
+            for image in rows:
+                _render_tile(image)
         offset = state["offset"]
-        page_label.value = f"Showing {offset + 1}-{offset + len(rows)}"
-        prev_button.disabled = offset == 0
-        next_button.disabled = len(rows) < _PAGE_SIZE
-        page.update()
+        page_label.text = f"Showing {offset + 1}-{offset + len(rows)}" if rows else "No results"
+        prev_button.set_enabled(offset > 0)
+        next_button.set_enabled(len(rows) >= _PAGE_SIZE)
 
-    async def on_filter_change() -> None:
-        state["source_name"] = source_filter.value or None
-        state["is_portrait"] = True if portrait_switch.value else None
+    async def on_source(e: events.ValueChangeEventArguments) -> None:
+        state["source_name"] = e.value or ""
+        state["offset"] = 0
+        await reload()
+
+    async def on_portrait(e: events.ValueChangeEventArguments) -> None:
+        state["is_portrait"] = bool(e.value)
         state["offset"] = 0
         await reload()
 
@@ -81,89 +95,83 @@ async def build(page: ft.Page) -> ft.Control:
         state["offset"] += _PAGE_SIZE
         await reload()
 
-    source_filter.on_select = lambda _e: asyncio.create_task(on_filter_change())
-    portrait_switch.on_change = lambda _e: asyncio.create_task(on_filter_change())
-    prev_button.on_click = lambda _e: asyncio.create_task(on_prev())
-    next_button.on_click = lambda _e: asyncio.create_task(on_next())
+    source_select.on_value_change(on_source)
+    portrait_switch.on_value_change(on_portrait)
+    prev_button.on_click(on_prev)
+    next_button.on_click(on_next)
 
-    upload_fab = ft.FloatingActionButton(
-        icon=ft.Icons.UPLOAD,
-        tooltip="Upload image",
-        on_click=lambda _e: _open_upload_dialog(page, on_uploaded=reload),
-    )
+    with ui.page_sticky(position="bottom-right", x_offset=18, y_offset=18):
+        ui.button(icon="upload", on_click=lambda: _open_upload_dialog(reload)).props("fab color=primary").tooltip(
+            "Upload image"
+        )
 
     await reload()
 
-    return ft.Column(
-        [
-            ft.Row([source_filter, portrait_switch, ft.Container(expand=True), prev_button, page_label, next_button]),
-            ft.Container(grid, expand=True),
-            ft.Row([ft.Container(expand=True), upload_fab]),
-        ],
-        expand=True,
-    )
 
-
-def _render_grid(
-    page: ft.Page,
-    grid: ft.GridView,
-    rows: list[dict[str, Any]],
-    api: ApiClient,
-    on_changed: Any,
-) -> None:
-    grid.controls.clear()
-    for image in rows:
-        grid.controls.append(_tile(page, image, api, on_changed))
-
-
-def _tile(page: ft.Page, image: dict[str, Any], api: ApiClient, on_changed: Any) -> ft.Control:
+def _render_tile(image: dict[str, Any]) -> None:
     storage_path = image["storage_path"]
     title = image.get("title") or storage_path.split("/")[-1]
-    overlay = ft.Container(
-        content=ft.Text(title, color=ft.Colors.WHITE, size=12),
-        padding=6,
-        bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
-        alignment=ft.Alignment.BOTTOM_LEFT,
-    )
-    return ft.GestureDetector(
-        on_tap=lambda _e: _open_detail(page, image, api, on_changed),
-        content=ft.Stack(
-            [
-                ft.Image(
-                    src=f"/media/{storage_path}",
-                    fit=ft.BoxFit.COVER,
-                    width=260,
-                    height=260,
-                    border_radius=6,
-                ),
-                overlay,
-            ]
-        ),
-    )
+    image_id = image["id"]
+    with (
+        ui.card()
+        .tight()
+        .classes("cursor-pointer overflow-hidden")
+        .on("click", lambda iid=image_id: ui.navigate.to(f"/images/{iid}"))
+    ):
+        ui.image(f"/media/{storage_path}").classes("w-full aspect-square object-cover")
+        ui.label(title).classes("text-xs px-2 py-1 truncate")
 
 
-def _open_detail(page: ft.Page, image: dict[str, Any], api: ApiClient, on_changed: Any) -> None:
-    title_field = ft.TextField(label="Title", value=image.get("title") or "", width=420)
-    description_field = ft.TextField(
-        label="Description", value=image.get("description") or "", multiline=True, min_lines=2, max_lines=5, width=420
-    )
-    author_field = ft.TextField(label="Author", value=image.get("author") or "", width=420)
-    tags_field = ft.TextField(label="Tags (comma-separated)", value=image.get("tags") or "", width=420)
-    duration_field = ft.TextField(
-        label="Display duration (seconds)",
-        value=str(image.get("display_duration_seconds") or 600),
-        width=220,
-        keyboard_type=ft.KeyboardType.NUMBER,
-    )
-    priority_slider = ft.Slider(
-        min=1, max=10, divisions=9, value=float(image.get("priority") or 5), label="Priority: {value}"
-    )
+async def _render_detail(image_id: str) -> None:  # noqa: PLR0915
+    api = require_api_client()
+    try:
+        image_uuid = UUID(image_id)
+    except ValueError:
+        ui.label("Invalid image id.").classes("text-red-500")
+        return
+    try:
+        image = await api.get_image(image_uuid)
+    except ApiError as exc:
+        ui.notify(f"Load failed: {exc.detail or exc}", type="negative")
+        ui.label("Could not load image.").classes("text-red-500")
+        return
+
+    with ui.row().classes("w-full gap-6 flex-wrap md:flex-nowrap items-start"):
+        with ui.column().classes("flex-1 min-w-0 gap-2"):
+            ui.image(f"/media/{image['storage_path']}").classes(
+                "w-full max-h-[80vh] object-contain rounded shadow"
+            ).props("loading=lazy")
+            ui.label(image.get("title") or image["storage_path"].split("/")[-1]).classes("text-lg font-medium")
+
+        with ui.column().classes("w-full md:w-[420px] gap-3"):
+            title_field = ui.input("Title", value=image.get("title") or "").classes("w-full")
+            description_field = (
+                ui.textarea("Description", value=image.get("description") or "").classes("w-full").props("autogrow")
+            )
+            author_field = ui.input("Author", value=image.get("author") or "").classes("w-full")
+            tags_field = ui.input("Tags (comma-separated)", value=image.get("tags") or "").classes("w-full")
+
+            with ui.row().classes("w-full items-center gap-3"):
+                duration_field = ui.number(
+                    "Duration (s)",
+                    value=int(image.get("display_duration_seconds") or 600),
+                    min=1,
+                    step=1,
+                ).classes("w-32")
+                with ui.column().classes("flex-1 gap-0"):
+                    ui.label("Priority").classes("text-xs text-gray-500")
+                    priority_slider = ui.slider(min=1, max=10, step=1, value=int(image.get("priority") or 5)).props(
+                        "label-always"
+                    )
+
+            with ui.expansion("Metadata", icon="info").classes("w-full"):
+                _render_metadata(image)
 
     async def save() -> None:
         try:
             duration = int(duration_field.value or 600)
-        except ValueError:
-            _snack(page, "Duration must be an integer")
+        except (TypeError, ValueError):
+            ui.notify("Duration must be an integer", type="negative")
             return
         body = {
             "title": title_field.value or None,
@@ -174,241 +182,146 @@ def _open_detail(page: ft.Page, image: dict[str, Any], api: ApiClient, on_change
             "priority": int(priority_slider.value or 5),
         }
         try:
-            await api.update_image(UUID(image["id"]), body)
+            await api.update_image(image_uuid, body)
         except ApiError as exc:
-            _snack(page, f"Update failed: {exc.detail or exc}")
+            ui.notify(f"Update failed: {exc.detail or exc}", type="negative")
             return
-        _snack(page, "Saved")
-        page.pop_dialog()
-        await on_changed()
+        ui.notify("Saved", type="positive")
+        ui.navigate.to("/images")
 
     async def delete() -> None:
-        confirmed = await _confirm(page, f"Delete image '{image.get('title') or image['id']}'?")
+        confirmed = await _confirm(f"Delete image '{image.get('title') or image['id']}'?")
         if not confirmed:
             return
         try:
-            await api.delete_image(UUID(image["id"]))
+            await api.delete_image(image_uuid)
         except ApiError as exc:
-            _snack(page, f"Delete failed: {exc.detail or exc}")
+            ui.notify(f"Delete failed: {exc.detail or exc}", type="negative")
             return
-        _snack(page, "Deleted")
-        page.pop_dialog()
-        await on_changed()
+        ui.notify("Deleted", type="positive")
+        ui.navigate.to("/images")
 
-    created = format_datetime(image.get("created_at"))
-    last_displayed = format_datetime(image.get("last_displayed_at"))
+    with (
+        ui.page_sticky(position="bottom", x_offset=0, y_offset=0),
+        ui.card().classes("w-full rounded-none border-t").tight(),
+        ui.row().classes("w-full items-center justify-end p-3 gap-2 max-w-screen-xl mx-auto"),
+    ):
+        ui.button("Cancel", on_click=lambda: ui.navigate.to("/images")).props("flat")
+        ui.button("Delete", icon="delete", on_click=delete).props("flat color=negative")
+        ui.button("Save", icon="save", on_click=save).props("color=primary")
+
+
+def _render_metadata(image: dict[str, Any]) -> None:
     dims = f"{image.get('original_width') or '?'}x{image.get('original_height') or '?'}"
-
-    source_url = image.get("source_url")
-    source_row: ft.Control
-    if source_url and source_url.startswith(("http://", "https://")):
-        source_row = ft.Row(
-            [
-                ft.Text("Source URL:", size=12),
-                ft.TextButton(
-                    source_url,
-                    url=source_url,
-                    style=ft.ButtonStyle(padding=0),
-                ),
-            ],
-            tight=True,
-            wrap=True,
-        )
-    else:
-        source_row = ft.Text(f"Source URL: {source_url or '-'}", size=12, selectable=True)
-
-    meta_lines: list[ft.Control] = [
-        ft.Text(f"ID: {image['id']}", size=12, selectable=True, color=ft.Colors.ON_SURFACE_VARIANT),
-        ft.Text(f"Source: {image.get('source_name', '?')}", size=12),
+    rows = [
+        ("ID", image["id"]),
+        ("Source", image.get("source_name") or "?"),
     ]
     if image.get("source_id"):
-        meta_lines.append(ft.Text(f"Source ID: {image['source_id']}", size=12, selectable=True))
+        rows.append(("Source ID", str(image["source_id"])))
     if image.get("sync_job_name"):
-        meta_lines.append(ft.Text(f"Sync job: {image['sync_job_name']}", size=12))
-    meta_lines.extend(
+        rows.append(("Sync job", str(image["sync_job_name"])))
+    rows.extend(
         [
-            source_row,
-            ft.Text(f"Dimensions: {dims}", size=12),
-            ft.Text(f"Created: {created}", size=12),
-            ft.Text(f"Last displayed: {last_displayed}", size=12),
+            ("Dimensions", dims),
+            ("Created", format_datetime(image.get("created_at"))),
+            ("Last displayed", format_datetime(image.get("last_displayed_at"))),
         ]
     )
 
-    meta = ft.Column(meta_lines, tight=True)
-
-    sheet = ft.BottomSheet(
-        ft.Container(
-            ft.Column(
-                [
-                    ft.Row(
-                        [
-                            ft.Image(
-                                src=f"/media/{image['storage_path']}",
-                                fit=ft.BoxFit.CONTAIN,
-                                height=320,
-                                width=480,
-                            ),
-                            ft.Container(meta, padding=12, expand=True),
-                        ],
-                        alignment=ft.MainAxisAlignment.START,
-                    ),
-                    title_field,
-                    description_field,
-                    author_field,
-                    tags_field,
-                    ft.Row([duration_field, ft.Container(priority_slider, expand=True)]),
-                    ft.Row(
-                        [
-                            ft.TextButton("Close", on_click=lambda _e: page.pop_dialog()),
-                            ft.Container(expand=True),
-                            ft.OutlinedButton(
-                                "Delete", icon=ft.Icons.DELETE, on_click=lambda _e: asyncio.create_task(delete())
-                            ),
-                            ft.FilledButton(
-                                "Save", icon=ft.Icons.SAVE, on_click=lambda _e: asyncio.create_task(save())
-                            ),
-                        ]
-                    ),
-                ],
-                tight=True,
-                scroll=ft.ScrollMode.AUTO,
-            ),
-            padding=16,
-        ),
-        open=True,
-    )
-    page.show_dialog(sheet)
+    with ui.column().classes("w-full gap-1 py-2"):
+        for label, value in rows:
+            with ui.row().classes("w-full items-baseline gap-2"):
+                ui.label(label).classes("text-xs text-gray-500 w-28 shrink-0")
+                ui.label(str(value)).classes("text-xs break-all").style("user-select: text;")
+        source_url = image.get("source_url")
+        if source_url and source_url.startswith(("http://", "https://")):
+            with ui.row().classes("w-full items-baseline gap-2"):
+                ui.label("Source URL").classes("text-xs text-gray-500 w-28 shrink-0")
+                ui.link(source_url, target=source_url, new_tab=True).classes("text-xs break-all")
+        elif source_url:
+            with ui.row().classes("w-full items-baseline gap-2"):
+                ui.label("Source URL").classes("text-xs text-gray-500 w-28 shrink-0")
+                ui.label(str(source_url)).classes("text-xs break-all")
 
 
-def _open_upload_dialog(page: ft.Page, *, on_uploaded: Any) -> None:  # noqa: PLR0915
-    api = get_api_client(page)
-    title_field = ft.TextField(label="Title")
-    description_field = ft.TextField(label="Description", multiline=True, min_lines=2, max_lines=4)
-    author_field = ft.TextField(label="Author")
-    tags_field = ft.TextField(label="Tags (comma-separated)")
-    duration_field = ft.TextField(label="Display duration (seconds)", value="600", keyboard_type=ft.KeyboardType.NUMBER)
-    priority_slider = ft.Slider(min=1, max=10, divisions=9, value=5, label="Priority: {value}")
-    portrait_switch = ft.Switch(label="Portrait (for portrait-oriented devices)", value=False)
-    status = ft.Text("", color=ft.Colors.ON_SURFACE_VARIANT)
-
-    picker = ft.FilePicker()
-    page.services.append(picker)
-    page.update()
-
+def _open_upload_dialog(on_uploaded: Any) -> None:
+    api = require_api_client()
     selected: dict[str, Any] = {"bytes": None, "name": None}
-    upload_button = ft.FilledButton("Upload", icon=ft.Icons.UPLOAD, disabled=True)
 
-    async def choose() -> None:
-        files = await picker.pick_files(
-            allow_multiple=False,
-            allowed_extensions=["jpg", "jpeg", "png", "webp", "heic"],
-            with_data=True,
+    with ui.dialog() as dialog, ui.card().classes("w-full max-w-md"):
+        ui.label("Upload image").classes("text-lg font-medium")
+
+        title_field = ui.input("Title").classes("w-full")
+        description_field = ui.textarea("Description").classes("w-full").props("autogrow")
+        author_field = ui.input("Author").classes("w-full")
+        tags_field = ui.input("Tags (comma-separated)").classes("w-full")
+
+        with ui.row().classes("w-full items-center gap-3"):
+            duration_field = ui.number("Duration (s)", value=600, min=1, step=1).classes("w-32")
+            with ui.column().classes("flex-1 gap-0"):
+                ui.label("Priority").classes("text-xs text-gray-500")
+                priority_slider = ui.slider(min=1, max=10, step=1, value=5).props("label-always")
+
+        portrait_switch = ui.switch("Portrait (for portrait-oriented devices)", value=False)
+
+        async def on_upload(e: events.UploadEventArguments) -> None:
+            selected["bytes"] = await e.file.read()
+            selected["name"] = e.file.name
+            ui.notify(f"Selected: {e.file.name}")
+
+        upload = (
+            ui.upload(
+                label="Choose file",
+                auto_upload=True,
+                max_files=1,
+                on_upload=on_upload,
+            )
+            .props('accept=".jpg,.jpeg,.png,.webp,.heic"')
+            .classes("w-full")
         )
-        if not files:
-            return
-        upload_file = files[0]
-        if not upload_file.bytes:
-            status.value = "File data not available"
-            page.update()
-            return
-        selected["bytes"] = upload_file.bytes
-        selected["name"] = upload_file.name
-        status.value = f"Selected: {upload_file.name}"
-        upload_button.disabled = False
-        page.update()
+        upload.on("rejected", lambda _e: ui.notify("File rejected", type="warning"))
 
-    async def upload() -> None:
-        if not selected["bytes"] or not selected["name"]:
-            status.value = "Choose a file first"
-            page.update()
-            return
-        try:
-            duration = int(duration_field.value or 600)
-        except ValueError:
-            status.value = "Duration must be an integer"
-            page.update()
-            return
-        metadata = {
-            "source_name": "manual",
-            "title": title_field.value or None,
-            "description": description_field.value or None,
-            "author": author_field.value or None,
-            "tags": tags_field.value or None,
-            "display_duration_seconds": duration,
-            "priority": int(priority_slider.value or 5),
-            "is_portrait": bool(portrait_switch.value),
-        }
-        status.value = "Uploading…"
-        upload_button.disabled = True
-        page.update()
-        try:
-            await api.upload_image(selected["bytes"], selected["name"], metadata)
-        except ApiError as exc:
-            status.value = f"Upload failed: {exc.detail or exc}"
-            upload_button.disabled = False
-            page.update()
-            return
-        status.value = "Uploaded"
-        page.update()
-        page.pop_dialog()
-        await on_uploaded()
+        async def submit() -> None:
+            if not selected["bytes"] or not selected["name"]:
+                ui.notify("Choose a file first", type="warning")
+                return
+            try:
+                duration = int(duration_field.value or 600)
+            except (TypeError, ValueError):
+                ui.notify("Duration must be an integer", type="negative")
+                return
+            metadata = {
+                "source_name": "manual",
+                "title": title_field.value or None,
+                "description": description_field.value or None,
+                "author": author_field.value or None,
+                "tags": tags_field.value or None,
+                "display_duration_seconds": duration,
+                "priority": int(priority_slider.value or 5),
+                "is_portrait": bool(portrait_switch.value),
+            }
+            try:
+                await api.upload_image(selected["bytes"], selected["name"], metadata)
+            except ApiError as exc:
+                ui.notify(f"Upload failed: {exc.detail or exc}", type="negative")
+                return
+            ui.notify("Uploaded", type="positive")
+            dialog.close()
+            await on_uploaded()
 
-    upload_button.on_click = lambda _e: asyncio.create_task(upload())
+        with ui.row().classes("w-full justify-end gap-2 mt-2"):
+            ui.button("Cancel", on_click=dialog.close).props("flat")
+            ui.button("Upload", icon="upload", on_click=submit).props("color=primary")
 
-    dialog = ft.AlertDialog(
-        modal=True,
-        title=ft.Text("Upload image"),
-        content=ft.Column(
-            [
-                title_field,
-                description_field,
-                author_field,
-                tags_field,
-                duration_field,
-                priority_slider,
-                portrait_switch,
-                status,
-            ],
-            tight=True,
-            width=420,
-            scroll=ft.ScrollMode.AUTO,
-        ),
-        actions=[
-            ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
-            ft.OutlinedButton(
-                "Choose file",
-                icon=ft.Icons.ATTACH_FILE,
-                on_click=lambda _e: asyncio.create_task(choose()),
-            ),
-            upload_button,
-        ],
-    )
-    page.show_dialog(dialog)
+    dialog.open()
 
 
-async def _confirm(page: ft.Page, message: str) -> bool:
-    """Open a modal confirm dialog and await the user's choice."""
-    result: dict[str, bool] = {"value": False}
-    event = asyncio.Event()
-
-    def close(value: bool) -> None:
-        result["value"] = value
-        event.set()
-        page.pop_dialog()
-
-    dialog = ft.AlertDialog(
-        modal=True,
-        title=ft.Text("Confirm"),
-        content=ft.Text(message),
-        actions=[
-            ft.TextButton("Cancel", on_click=lambda _e: close(False)),
-            ft.FilledButton("Confirm", on_click=lambda _e: close(True)),
-        ],
-    )
-    page.show_dialog(dialog)
-    await event.wait()
-    return result["value"]
-
-
-def _snack(page: ft.Page, message: str) -> None:
-    page.show_dialog(ft.SnackBar(content=ft.Text(message), duration=3000))
+async def _confirm(message: str) -> bool:
+    with ui.dialog() as dialog, ui.card():
+        ui.label(message)
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancel", on_click=lambda: dialog.submit(False)).props("flat")
+            ui.button("Confirm", on_click=lambda: dialog.submit(True)).props("color=primary")
+    result = await dialog
+    return bool(result)
