@@ -32,7 +32,7 @@ def test_media_missing_object_returns_404_from_media_router(client: TestClient, 
 
     response = client.get("/media/missing.jpg")
     assert response.status_code == 404
-    # The response should be JSON from FastAPI's HTTPException, not HTML from Flet
+    # The response should be JSON from FastAPI's HTTPException, not HTML from NiceGUI.
     assert response.headers["content-type"].startswith("application/json")
 
 

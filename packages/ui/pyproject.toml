@@ -5,21 +5,20 @@ build-backend = "uv_build"
 [project]
 name = "inky-image-display-ui"
 version = "0.1.0"
-description = "Flet-based web UI for Inky Image Display (images, devices, sync jobs)."
+description = "NiceGUI-based web UI for Inky Image Display (images, devices, sync jobs)."
 authors = [
     { name = "stkr22", email = "stkr22@github.com" }
 ]
 license = "GPL-3.0-only"
 dependencies = [
     "inky-image-display-shared",
-    "flet[web]~=0.84.0",
     "fastapi~=0.135.3",
     "uvicorn[standard]~=0.44.0",
     "httpx~=0.28.1",
     "minio~=7.2.20",
     "pydantic~=2.12.5",
     "pydantic-settings~=2.13.1",
-    "python-multipart~=0.0.26",
+    "nicegui~=3.3",
 ]
 
 [project.scripts]

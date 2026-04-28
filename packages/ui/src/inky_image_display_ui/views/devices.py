@@ -2,68 +2,62 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID
 
-import flet as ft
+from nicegui import ui
 
 from inky_image_display_ui.api_client import ApiError, DeviceNotConnectedError
 from inky_image_display_ui.formatting import format_datetime
-from inky_image_display_ui.session import get_api_client
-
-if TYPE_CHECKING:
-    from inky_image_display_ui.api_client import ApiClient
+from inky_image_display_ui.session import require_api_client
+from inky_image_display_ui.views._layout import frame
 
 logger = logging.getLogger(__name__)
 
 
-async def build(page: ft.Page) -> ft.Control:
-    """Build the devices view, with one card per registered device."""
-    api = get_api_client(page)
-    container = ft.Column(expand=True, spacing=12, scroll=ft.ScrollMode.AUTO)
+def register() -> None:
+    """Register the devices route."""
+
+    @ui.page("/devices")
+    async def devices_page() -> None:
+        with frame("/devices"):
+            await _render()
+
+
+async def _render() -> None:
+    api = require_api_client()
+
+    with ui.row().classes("w-full items-center"):
+        ui.label("Devices").classes("text-2xl font-medium")
+        ui.space()
+        refresh_button = ui.button(icon="refresh").props("flat round").tooltip("Refresh")
+
+    container = ui.column().classes("w-full gap-3")
 
     async def reload() -> None:
         try:
             devices = await api.list_devices()
         except ApiError as exc:
-            _snack(page, f"Failed to load devices: {exc.detail or exc}")
+            ui.notify(f"Failed to load devices: {exc.detail or exc}", type="negative")
             return
-        container.controls.clear()
-        if not devices:
-            container.controls.append(ft.Text("No devices registered yet.", italic=True))
-        else:
+        container.clear()
+        with container:
+            if not devices:
+                ui.label("No devices registered yet.").classes("italic text-gray-500")
+                return
             for device in devices:
-                container.controls.append(await _device_card(page, api, device, reload))
-        page.update()
+                await _render_device(api, device, reload)
 
-    refresh_button = ft.IconButton(
-        icon=ft.Icons.REFRESH,
-        tooltip="Refresh",
-        on_click=lambda _e: asyncio.create_task(reload()),
-    )
-
+    refresh_button.on_click(reload)
     await reload()
 
-    return ft.Column(
-        [
-            ft.Row([ft.Text("Devices", size=22, weight=ft.FontWeight.BOLD), ft.Container(expand=True), refresh_button]),
-            container,
-        ],
-        expand=True,
-    )
 
-
-async def _device_card(
-    page: ft.Page,
-    api: ApiClient,
-    device: dict[str, Any],
-    on_changed: Any,
-) -> ft.Control:
+async def _render_device(api: Any, device: dict[str, Any], on_changed: Any) -> None:  # noqa: PLR0915
     device_id: str = device["device_id"]
     is_online: bool = bool(device.get("is_online"))
-    current_image = None
+
+    current_image: dict[str, Any] | None = None
     current_image_id = device.get("current_image_id")
     if current_image_id:
         try:
@@ -71,140 +65,84 @@ async def _device_card(
         except ApiError:
             current_image = None
 
-    status_pill = ft.Container(
-        content=ft.Text("ONLINE" if is_online else "OFFLINE", size=11, weight=ft.FontWeight.BOLD),
-        padding=ft.padding.symmetric(horizontal=8, vertical=3),
-        bgcolor=ft.Colors.GREEN if is_online else ft.Colors.OUTLINE_VARIANT,
-        border_radius=10,
-    )
-
-    current_preview: ft.Control
-    if current_image:
-        current_preview = ft.Column(
-            [
-                ft.Image(
-                    src=f"/media/{current_image['storage_path']}",
-                    fit=ft.BoxFit.CONTAIN,
-                    height=160,
-                    width=260,
-                ),
-                ft.Text(current_image.get("title") or current_image["storage_path"], size=12),
-            ],
-            tight=True,
-        )
-    else:
-        current_preview = ft.Container(
-            ft.Text("No image displayed", italic=True),
-            height=160,
-            width=260,
-            alignment=ft.Alignment.CENTER,
-            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-            border_radius=6,
-        )
-
     async def do_next() -> None:
         try:
             result = await api.next_image(device_id)
         except DeviceNotConnectedError:
-            _snack(page, f"{device_id} is offline — command dropped")
+            ui.notify(f"{device_id} is offline — command dropped", type="warning")
             return
         except ApiError as exc:
-            _snack(page, f"Next failed: {exc.detail or exc}")
+            ui.notify(f"Next failed: {exc.detail or exc}", type="negative")
             return
-        _snack(page, f"Showing: {result.get('title') or result.get('image_id')}")
+        ui.notify(f"Showing: {result.get('title') or result.get('image_id')}")
         await on_changed()
 
     async def do_clear() -> None:
-        if not await _confirm(page, f"Clear the display on {device_id}?"):
+        if not await _confirm(f"Clear the display on {device_id}?"):
             return
         try:
             await api.clear_device(device_id)
         except DeviceNotConnectedError:
-            _snack(page, f"{device_id} is offline — command dropped")
+            ui.notify(f"{device_id} is offline — command dropped", type="warning")
             return
         except ApiError as exc:
-            _snack(page, f"Clear failed: {exc.detail or exc}")
+            ui.notify(f"Clear failed: {exc.detail or exc}", type="negative")
             return
-        _snack(page, f"{device_id} cleared")
+        ui.notify(f"{device_id} cleared", type="positive")
         await on_changed()
-
-    async def do_choose() -> None:
-        await _open_image_picker(page, api, device, on_selected=do_display)
 
     async def do_display(image_id: UUID) -> None:
         try:
             await api.display_image(device_id, image_id)
         except DeviceNotConnectedError:
-            _snack(page, f"{device_id} is offline — command dropped")
+            ui.notify(f"{device_id} is offline — command dropped", type="warning")
             return
         except ApiError as exc:
-            _snack(page, f"Display failed: {exc.detail or exc}")
+            ui.notify(f"Display failed: {exc.detail or exc}", type="negative")
             return
-        _snack(page, f"Sent image to {device_id}")
+        ui.notify(f"Sent image to {device_id}", type="positive")
         await on_changed()
 
-    actions = ft.Row(
-        [
-            ft.FilledButton(
-                "Next",
-                icon=ft.Icons.SKIP_NEXT,
-                on_click=lambda _e: asyncio.create_task(do_next()),
-                disabled=not is_online,
-            ),
-            ft.OutlinedButton(
-                "Choose image…",
-                icon=ft.Icons.IMAGE_SEARCH,
-                on_click=lambda _e: asyncio.create_task(do_choose()),
-                disabled=not is_online,
-            ),
-            ft.OutlinedButton(
-                "Clear",
-                icon=ft.Icons.CLEAR,
-                on_click=lambda _e: asyncio.create_task(do_clear()),
-                disabled=not is_online,
-            ),
-        ]
-    )
+    async def do_choose() -> None:
+        await _open_image_picker(api, device, on_selected=do_display)
 
-    meta = ft.Column(
-        [
-            ft.Row([ft.Text(device_id, size=18, weight=ft.FontWeight.BOLD), status_pill]),
-            ft.Text(device.get("room") or "(no room)", size=12, color=ft.Colors.ON_SURFACE_VARIANT),
-            ft.Text(
-                f"{device['display_width']}x{device['display_height']} {device['display_orientation']} - "
-                f"{device.get('display_model', '?')}",
-                size=12,
-            ),
-            ft.Text(f"Displayed since: {format_datetime(device.get('displayed_since'))}", size=12),
-            ft.Text(f"Next scheduled: {format_datetime(device.get('scheduled_next_at'))}", size=12),
-        ],
-        tight=True,
-    )
+    with ui.card().classes("w-full"):
+        with ui.row().classes("w-full gap-4 flex-wrap md:flex-nowrap items-start"):
+            with ui.column().classes("gap-1 w-full md:w-[280px]"):
+                if current_image:
+                    ui.image(f"/media/{current_image['storage_path']}").classes(
+                        "w-full max-h-[180px] object-contain rounded bg-gray-100"
+                    )
+                    ui.label(current_image.get("title") or current_image["storage_path"]).classes("text-xs truncate")
+                else:
+                    with ui.element("div").classes(
+                        "w-full h-[160px] flex items-center justify-center bg-gray-100 rounded"
+                    ):
+                        ui.label("No image displayed").classes("italic text-gray-500")
 
-    return ft.Card(
-        content=ft.Container(
-            ft.Column(
-                [
-                    ft.Row([current_preview, ft.Container(meta, expand=True, padding=ft.padding.only(left=16))]),
-                    actions,
-                ],
-                tight=True,
-            ),
-            padding=16,
-        )
-    )
+            with ui.column().classes("flex-1 min-w-0 gap-1"):
+                with ui.row().classes("items-center gap-2"):
+                    ui.label(device_id).classes("text-lg font-medium")
+                    badge_color = "positive" if is_online else "grey"
+                    ui.badge("ONLINE" if is_online else "OFFLINE", color=badge_color)
+                ui.label(device.get("room") or "(no room)").classes("text-xs text-gray-500")
+                ui.label(
+                    f"{device['display_width']}x{device['display_height']} {device['display_orientation']} "
+                    f"· {device.get('display_model', '?')}"
+                ).classes("text-xs")
+                ui.label(f"Displayed since: {format_datetime(device.get('displayed_since'))}").classes("text-xs")
+                ui.label(f"Next scheduled: {format_datetime(device.get('scheduled_next_at'))}").classes("text-xs")
+
+        with ui.row().classes("w-full gap-2 flex-wrap pt-2"):
+            next_btn = ui.button("Next", icon="skip_next", on_click=do_next).props("color=primary")
+            choose_btn = ui.button("Choose image…", icon="image_search", on_click=do_choose).props("flat")
+            clear_btn = ui.button("Clear", icon="clear", on_click=do_clear).props("flat color=negative")
+            for btn in (next_btn, choose_btn, clear_btn):
+                btn.set_enabled(is_online)
 
 
-async def _open_image_picker(
-    page: ft.Page,
-    api: ApiClient,
-    device: dict[str, Any],
-    *,
-    on_selected: Any,
-) -> None:
+async def _open_image_picker(api: Any, device: dict[str, Any], *, on_selected: Any) -> None:
     is_portrait = device["display_orientation"] == "portrait"
-    # display_width/height are panel-native (always landscape); swap for portrait
-    # so we match against orientation-aware image dims.
     if is_portrait:
         target_w, target_h = device["display_height"], device["display_width"]
     else:
@@ -212,70 +150,45 @@ async def _open_image_picker(
     try:
         images = await api.list_images(is_portrait=is_portrait, limit=100)
     except ApiError as exc:
-        _snack(page, f"Failed to list images: {exc.detail or exc}")
+        ui.notify(f"Failed to list images: {exc.detail or exc}", type="negative")
         return
-    # Exact dimension match only
-    images = [img for img in images if img.get("original_width") == target_w and img.get("original_height") == target_h]
+    matches = [
+        img for img in images if img.get("original_width") == target_w and img.get("original_height") == target_h
+    ]
 
-    grid = ft.GridView(expand=True, max_extent=160, child_aspect_ratio=1.0, spacing=6, run_spacing=6)
-
-    async def pick(image_id: UUID) -> None:
-        page.pop_dialog()
-        await on_selected(image_id)
-
-    for image in images:
-        image_uuid = UUID(image["id"])
-
-        def _wrap(uuid: UUID) -> Any:
-            return lambda _e: asyncio.create_task(pick(uuid))
-
-        grid.controls.append(
-            ft.GestureDetector(
-                on_tap=_wrap(image_uuid),
-                content=ft.Image(
-                    src=f"/media/{image['storage_path']}",
-                    fit=ft.BoxFit.COVER,
-                    width=160,
-                    height=160,
-                    border_radius=4,
-                ),
+    with ui.dialog() as dialog, ui.card().classes("w-full max-w-3xl"):
+        ui.label(f"Choose image for {device['device_id']}").classes("text-lg font-medium")
+        if not matches:
+            ui.label("No images match this device's exact dimensions.").classes("italic text-gray-500")
+        else:
+            grid = (
+                ui.element("div")
+                .classes("grid w-full gap-2")
+                .style("grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));")
             )
-        )
+            with grid:
+                for image in matches:
+                    image_uuid = UUID(image["id"])
 
-    body: ft.Control = grid if images else ft.Text("No images match this device's exact dimensions.", italic=True)
+                    async def pick(uuid: UUID = image_uuid) -> None:
+                        dialog.close()
+                        await on_selected(uuid)
 
-    dialog = ft.AlertDialog(
-        modal=True,
-        title=ft.Text(f"Choose image for {device['device_id']}"),
-        content=ft.Container(body, height=420, width=640),
-        actions=[ft.TextButton("Close", on_click=lambda _e: page.pop_dialog())],
-    )
-    page.show_dialog(dialog)
+                    with (
+                        ui.card().tight().classes("cursor-pointer overflow-hidden").on("click", lambda _e, p=pick: p())
+                    ):
+                        ui.image(f"/media/{image['storage_path']}").classes("w-full aspect-square object-cover")
+        with ui.row().classes("w-full justify-end gap-2 mt-2"):
+            ui.button("Close", on_click=dialog.close).props("flat")
 
-
-async def _confirm(page: ft.Page, message: str) -> bool:
-    """Open a modal confirm dialog and await the user's choice."""
-    result: dict[str, bool] = {"value": False}
-    event = asyncio.Event()
-
-    def close(value: bool) -> None:
-        result["value"] = value
-        event.set()
-        page.pop_dialog()
-
-    dialog = ft.AlertDialog(
-        modal=True,
-        title=ft.Text("Confirm"),
-        content=ft.Text(message),
-        actions=[
-            ft.TextButton("Cancel", on_click=lambda _e: close(False)),
-            ft.FilledButton("Confirm", on_click=lambda _e: close(True)),
-        ],
-    )
-    page.show_dialog(dialog)
-    await event.wait()
-    return result["value"]
+    dialog.open()
 
 
-def _snack(page: ft.Page, message: str) -> None:
-    page.show_dialog(ft.SnackBar(content=ft.Text(message), duration=3000))
+async def _confirm(message: str) -> bool:
+    with ui.dialog() as dialog, ui.card():
+        ui.label(message)
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancel", on_click=lambda: dialog.submit(False)).props("flat")
+            ui.button("Confirm", on_click=lambda: dialog.submit(True)).props("color=primary")
+    result = await dialog
+    return bool(result)
