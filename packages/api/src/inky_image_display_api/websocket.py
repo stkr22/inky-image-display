@@ -1,6 +1,5 @@
 """WebSocket endpoint for device communication."""
 
-import contextlib
 import logging
 from datetime import datetime
 from typing import Literal
@@ -24,10 +23,12 @@ logger = logging.getLogger(__name__)
 class ConnectionManager:
     """Manages active WebSocket connections keyed by device_id.
 
-    Reconnects are handled defensively: when a new socket arrives for a
-    device that already has an entry, the stale socket is closed before the
-    replacement is stored. ``disconnect`` is identity-checked so a
-    finally-block from the old socket can never evict the live connection.
+    Reconnects are handled with last-write-wins on the registry plus an
+    identity-checked ``disconnect`` so a stale handler's finally-block
+    cannot evict the live connection. Stale TCP sockets are reaped by
+    uvicorn's WS keepalive — proactively closing them on every new
+    connection caused dueling-client deployments (two processes sharing a
+    device_id) to perpetually kick each other off in a tight reconnect loop.
     """
 
     def __init__(self) -> None:
@@ -35,7 +36,7 @@ class ConnectionManager:
         self._connections: dict[str, WebSocket] = {}
 
     async def connect(self, device_id: str, websocket: WebSocket) -> None:
-        """Accept the new socket and pre-empt any stale predecessor.
+        """Accept the new socket and register it (replacing any prior entry).
 
         Args:
             device_id: Device string identifier.
@@ -43,13 +44,10 @@ class ConnectionManager:
 
         """
         await websocket.accept()
-        previous = self._connections.get(device_id)
-        if previous is not None and previous is not websocket:
-            # Closing the stale socket forces its handler out of
-            # ``receive_text`` so it can finish before its finally-block
-            # runs, which prevents it from clobbering this new connection.
-            with contextlib.suppress(Exception):
-                await previous.close(code=1012)  # 1012 = service restart / replaced
+        # Last-write-wins: the new socket takes the registry slot. The
+        # previous socket (if any) is left to be cleaned up by its own
+        # handler — our identity-check in ``disconnect`` ensures it
+        # cannot clobber this new entry when its finally-block runs.
         self._connections[device_id] = websocket
 
     def disconnect(self, device_id: str, websocket: WebSocket) -> bool:

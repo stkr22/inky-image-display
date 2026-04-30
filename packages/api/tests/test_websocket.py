@@ -24,12 +24,15 @@ class TestConnectionManager:
         assert connection_manager.connected_device_ids() == []
 
     @pytest.mark.asyncio
-    async def test_connect_replaces_and_closes_stale_socket(self, connection_manager):
-        """A new connection for the same device_id closes and replaces the old one.
+    async def test_connect_replaces_without_kicking_previous(self, connection_manager):
+        """A new connection takes the registry slot but does NOT close the old socket.
 
-        Without this the stale handler would stay parked on receive_text()
-        for as long as TCP took to die, blocking the API from cleanly
-        observing the reconnect.
+        Proactively closing the previous caused dueling-client deployments
+        (two processes accidentally sharing a device_id) to ping-pong each
+        other off every few seconds — each new connection would 1012-close
+        the other, which would reconnect and 1012-close back. Last-write-
+        wins on the registry plus identity-checked disconnect handles the
+        stale-finally race without triggering that loop.
         """
         old = MagicMock()
         old.accept = AsyncMock()
@@ -41,7 +44,7 @@ class TestConnectionManager:
         await connection_manager.connect("dev-1", old)
         await connection_manager.connect("dev-1", new)
 
-        old.close.assert_awaited_once()
+        old.close.assert_not_awaited()
         assert connection_manager.connected_device_ids() == ["dev-1"]
 
     @pytest.mark.asyncio
