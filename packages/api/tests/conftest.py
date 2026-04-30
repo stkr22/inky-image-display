@@ -4,6 +4,7 @@ import os
 import tempfile
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 from uuid import uuid4
@@ -115,6 +116,7 @@ async def seed_device(async_engine: AsyncEngine) -> Device:
         display_height=1200,
         display_orientation="landscape",
         is_online=True,
+        last_seen=datetime.now(),
     )
     async with AsyncSession(async_engine) as session:
         session.add(device)

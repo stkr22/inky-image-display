@@ -69,7 +69,15 @@ class WebSocketClient:
 
         while True:
             try:
-                async with websockets.connect(ws_url) as ws:
+                # Tighter ping cadence than library defaults so a broken
+                # path is detected in ~25s instead of ~40s. Shrinks the
+                # window in which the server's stale handler can race a
+                # fresh reconnect.
+                async with websockets.connect(
+                    ws_url,
+                    ping_interval=15,
+                    ping_timeout=10,
+                ) as ws:
                     self._ws = ws
                     self._connected.set()
                     logger.info("Connected to API at %s", ws_url)
@@ -98,16 +106,20 @@ class WebSocketClient:
                         except Exception:
                             logger.exception("Error handling message: %s", text[:200])
 
-            except (
-                websockets.ConnectionClosed,
-                OSError,
-                TimeoutError,
-            ) as e:
+            except asyncio.CancelledError:
+                # Surface task cancellation (shutdown) instead of treating
+                # it as a transient connection failure.
+                raise
+            except Exception as e:
+                # Catch-all so transient errors that aren't ConnectionClosed
+                # / OSError / TimeoutError (proxy 502, TLS handshake errors,
+                # InvalidStatusCode, etc.) don't kill the worker silently.
                 self._connected.clear()
                 self._ws = None
                 logger.warning(
-                    "WebSocket connection lost: %s. Reconnecting in %d seconds...",
+                    "WebSocket connection lost: %s (%s). Reconnecting in %d seconds...",
                     e,
+                    type(e).__name__,
                     reconnect_interval,
                 )
                 await asyncio.sleep(reconnect_interval)

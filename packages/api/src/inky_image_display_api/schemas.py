@@ -106,6 +106,7 @@ class DeviceResponse(BaseModel):
     current_image_id: UUID | None
     displayed_since: datetime | None
     scheduled_next_at: datetime
+    last_seen: datetime
 
 
 class DisplayCommandRequest(BaseModel):

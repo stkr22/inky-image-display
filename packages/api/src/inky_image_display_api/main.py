@@ -68,4 +68,14 @@ app.include_router(sync_jobs.router)
 def main() -> None:
     """Run the API server via uvicorn."""
     setup_logging()
-    uvicorn.run("inky_image_display_api.main:app", host="0.0.0.0", port=8000)
+    # Pin WS keepalive timings explicitly so behaviour is stable across
+    # uvicorn versions and shorter than typical reverse-proxy idle
+    # timeouts. Server-side pings detect a broken TCP path within
+    # ~ws_ping_interval + ws_ping_timeout seconds.
+    uvicorn.run(
+        "inky_image_display_api.main:app",
+        host="0.0.0.0",
+        port=8000,
+        ws_ping_interval=20,
+        ws_ping_timeout=20,
+    )

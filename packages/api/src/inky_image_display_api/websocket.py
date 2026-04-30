@@ -1,6 +1,8 @@
 """WebSocket endpoint for device communication."""
 
+import contextlib
 import logging
+from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -20,14 +22,20 @@ logger = logging.getLogger(__name__)
 
 
 class ConnectionManager:
-    """Manages active WebSocket connections keyed by device_id."""
+    """Manages active WebSocket connections keyed by device_id.
+
+    Reconnects are handled defensively: when a new socket arrives for a
+    device that already has an entry, the stale socket is closed before the
+    replacement is stored. ``disconnect`` is identity-checked so a
+    finally-block from the old socket can never evict the live connection.
+    """
 
     def __init__(self) -> None:
         """Initialise an empty connection registry."""
         self._connections: dict[str, WebSocket] = {}
 
     async def connect(self, device_id: str, websocket: WebSocket) -> None:
-        """Accept and store a WebSocket connection.
+        """Accept the new socket and pre-empt any stale predecessor.
 
         Args:
             device_id: Device string identifier.
@@ -35,16 +43,27 @@ class ConnectionManager:
 
         """
         await websocket.accept()
+        previous = self._connections.get(device_id)
+        if previous is not None and previous is not websocket:
+            # Closing the stale socket forces its handler out of
+            # ``receive_text`` so it can finish before its finally-block
+            # runs, which prevents it from clobbering this new connection.
+            with contextlib.suppress(Exception):
+                await previous.close(code=1012)  # 1012 = service restart / replaced
         self._connections[device_id] = websocket
 
-    def disconnect(self, device_id: str) -> None:
-        """Remove a stored WebSocket connection.
+    def disconnect(self, device_id: str, websocket: WebSocket) -> bool:
+        """Remove ``device_id`` only if its registered socket is ``websocket``.
 
-        Args:
-            device_id: Device string identifier.
-
+        Returns ``True`` if the entry was removed (caller owns post-disconnect
+        cleanup like marking offline), ``False`` if a newer socket has already
+        replaced it (caller must NOT mark offline — the device is connected).
         """
-        self._connections.pop(device_id, None)
+        current = self._connections.get(device_id)
+        if current is websocket:
+            del self._connections[device_id]
+            return True
+        return False
 
     async def send_command(self, device_id: str, command: DisplayCommand) -> None:
         """Push a display command to a connected device.
@@ -78,6 +97,7 @@ async def _upsert_device(
     async with AsyncSession(engine) as session:
         result = await session.exec(select(Device).where(Device.device_id == device_id))
         device = result.first()
+        now = datetime.now()
 
         if device is None:
             device = Device(
@@ -88,6 +108,7 @@ async def _upsert_device(
                 display_orientation=registration.display.orientation,
                 display_model=registration.display.model,
                 is_online=True,
+                last_seen=now,
             )
             session.add(device)
             status: Literal["registered", "updated"] = "registered"
@@ -98,11 +119,32 @@ async def _upsert_device(
             device.display_orientation = registration.display.orientation
             device.display_model = registration.display.model
             device.is_online = True
+            device.last_seen = now
             session.add(device)
             status = "updated"
 
         await session.commit()
     return status
+
+
+async def _touch_last_seen(engine: AsyncEngine, device_id: str) -> None:
+    """Refresh ``last_seen`` (and ``is_online``) on any inbound traffic.
+
+    Called on every acknowledge: this is what makes the online indicator
+    self-healing — if a prior stale-disconnect ever flipped ``is_online``
+    to False, the next ack puts it right.
+    """
+    try:
+        async with AsyncSession(engine) as session:
+            result = await session.exec(select(Device).where(Device.device_id == device_id))
+            device = result.first()
+            if device is not None:
+                device.last_seen = datetime.now()
+                device.is_online = True
+                session.add(device)
+                await session.commit()
+    except Exception:
+        logger.exception("Failed to touch last_seen for device %s", device_id)
 
 
 async def _mark_device_offline(engine: AsyncEngine, device_id: str) -> None:
@@ -129,7 +171,9 @@ async def device_websocket(websocket: WebSocket, device_id: str) -> None:
     3. Server upserts ``Device`` row, responds with ``RegistrationResponse``.
     4. Connection stays open; server can push ``DisplayCommand`` at any time.
     5. Device sends ``DeviceAcknowledge`` after processing each command.
-    6. On disconnect the device is marked offline.
+    6. On disconnect the device is marked offline — *unless* a newer socket
+       has already replaced this one, in which case the new connection owns
+       the device state and this handler must not touch it.
     """
     app = websocket.app
     manager: ConnectionManager = app.state.connection_manager
@@ -170,6 +214,7 @@ async def device_websocket(websocket: WebSocket, device_id: str) -> None:
                     ack.successful_display_change,
                     ack.image_id,
                 )
+                await _touch_last_seen(app.state.engine, device_id)
             except Exception:
                 logger.warning("Device %s sent unparseable message: %s", device_id, raw[:200])
 
@@ -178,5 +223,9 @@ async def device_websocket(websocket: WebSocket, device_id: str) -> None:
     except Exception:
         logger.exception("WebSocket error for device %s", device_id)
     finally:
-        manager.disconnect(device_id)
-        await _mark_device_offline(app.state.engine, device_id)
+        # Only mark offline if *this* socket is still the active one. If a
+        # reconnect arrived first, ``disconnect`` returns False and we keep
+        # our hands off the device row — the new handler owns it now.
+        was_active = manager.disconnect(device_id, websocket)
+        if was_active:
+            await _mark_device_offline(app.state.engine, device_id)
