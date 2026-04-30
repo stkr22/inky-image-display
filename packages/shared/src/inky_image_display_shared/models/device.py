@@ -5,6 +5,11 @@ from uuid import UUID, uuid4
 
 from sqlmodel import Field, SQLModel
 
+# A device is considered online if we have heard from it within this many
+# seconds. Set so a device that pings every 20s tolerates one missed ping
+# plus a reconnect window without flickering offline.
+DEVICE_ONLINE_FRESHNESS_SECONDS: int = 90
+
 
 class DeviceDisplayState(SQLModel, table=True):
     """Legacy display state for a device.
@@ -49,6 +54,9 @@ class Device(SQLModel, table=True):
         current_image_id: Currently displayed image
         displayed_since: When current image was displayed
         scheduled_next_at: When to show next image
+        last_seen: Last time the device sent any traffic (registration / ack).
+            Drives self-healing online detection so a stale ``is_online``
+            flag is corrected on the next message.
         created_at: When record was created
         updated_at: When record was last updated
 
@@ -67,5 +75,9 @@ class Device(SQLModel, table=True):
     current_image_id: UUID | None = Field(default=None, foreign_key="images.id")
     displayed_since: datetime | None = Field(default=None)
     scheduled_next_at: datetime = Field(default_factory=datetime.now)
+    last_seen: datetime = Field(default_factory=datetime.now)
     created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
+    # onupdate ensures any SQLAlchemy UPDATE bumps this — the original
+    # default_factory only applied on insert, so updated_at silently
+    # froze at row creation time.
+    updated_at: datetime = Field(default_factory=datetime.now, sa_column_kwargs={"onupdate": datetime.now})

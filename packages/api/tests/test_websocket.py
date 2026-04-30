@@ -1,7 +1,9 @@
 """Tests for the WebSocket device communication endpoint."""
 
 import json
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from fastapi.testclient import TestClient
 from inky_image_display_api.websocket import ConnectionManager
 from inky_image_display_shared.models import Device
@@ -20,6 +22,55 @@ class TestConnectionManager:
 
     def test_connected_device_ids_empty(self, connection_manager):
         assert connection_manager.connected_device_ids() == []
+
+    @pytest.mark.asyncio
+    async def test_connect_replaces_and_closes_stale_socket(self, connection_manager):
+        """A new connection for the same device_id closes and replaces the old one.
+
+        Without this the stale handler would stay parked on receive_text()
+        for as long as TCP took to die, blocking the API from cleanly
+        observing the reconnect.
+        """
+        old = MagicMock()
+        old.accept = AsyncMock()
+        old.close = AsyncMock()
+        new = MagicMock()
+        new.accept = AsyncMock()
+        new.close = AsyncMock()
+
+        await connection_manager.connect("dev-1", old)
+        await connection_manager.connect("dev-1", new)
+
+        old.close.assert_awaited_once()
+        assert connection_manager.connected_device_ids() == ["dev-1"]
+
+    @pytest.mark.asyncio
+    async def test_disconnect_only_pops_matching_socket(self, connection_manager):
+        """Stale finally-block must NOT evict a newer live connection.
+
+        This is the race that left controller-2 visible as offline:
+        old socket's TCP finally died long after the reconnect, and its
+        ``disconnect`` was clobbering the new socket's registry entry.
+        """
+        old = MagicMock()
+        old.accept = AsyncMock()
+        old.close = AsyncMock()
+        new = MagicMock()
+        new.accept = AsyncMock()
+        new.close = AsyncMock()
+
+        await connection_manager.connect("dev-1", old)
+        await connection_manager.connect("dev-1", new)
+
+        # The old handler's finally-block runs *after* the reconnect.
+        was_active = connection_manager.disconnect("dev-1", old)
+
+        assert was_active is False
+        assert connection_manager.is_connected("dev-1") is True
+
+        # The live socket eventually disconnects normally.
+        assert connection_manager.disconnect("dev-1", new) is True
+        assert connection_manager.is_connected("dev-1") is False
 
 
 class TestDeviceWebSocket:
