@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.1](https://github.com/stkr22/inky-image-display/compare/v1.3.0...v1.3.1) (2026-04-30)
+
+
+### Bug Fixes
+
+* **ws:** :bug: prevent stale-disconnect from clobbering live reconnects ([ebebfb6](https://github.com/stkr22/inky-image-display/commit/ebebfb631b4b4064acb3cb64b056a43a95ab315a))
+* **ws:** :bug: prevent stale-disconnect from clobbering live reconnects ([1c7e285](https://github.com/stkr22/inky-image-display/commit/1c7e285f7c7bac00e2e76e919c479f2f740b29b7))
+
 ## [1.3.0](https://github.com/stkr22/inky-image-display/compare/v1.2.5...v1.3.0) (2026-04-28)
 
 
