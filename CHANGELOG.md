@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.2](https://github.com/stkr22/inky-image-display/compare/v1.3.1...v1.3.2) (2026-04-30)
+
+
+### Bug Fixes
+
+* **ws:** :bug: stop kicking previous socket on connect ([1a2eea1](https://github.com/stkr22/inky-image-display/commit/1a2eea1a35e2e0d032182c4d64a390cf88dbc010))
+* **ws:** :bug: stop kicking previous socket on connect ([d862fd7](https://github.com/stkr22/inky-image-display/commit/d862fd780a7798a02a399d321a94c906d4898500))
+
 ## [1.3.1](https://github.com/stkr22/inky-image-display/compare/v1.3.0...v1.3.1) (2026-04-30)
 
 
