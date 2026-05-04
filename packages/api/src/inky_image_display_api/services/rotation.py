@@ -24,11 +24,11 @@ async def rotation_loop(app: FastAPI) -> None:
 
     Runs every 30 seconds and checks for online devices whose
     ``scheduled_next_at`` is in the past. For each, selects the next
-    image via FIFO and pushes a display command over WebSocket.
+    image via FIFO and publishes a display command over MQTT.
 
     Args:
         app: The running FastAPI application (provides engine, settings,
-             and connection_manager via ``app.state``).
+             and the MQTT service via ``app.state``).
 
     """
     while True:
@@ -53,7 +53,7 @@ async def _rotate_due_devices(app: FastAPI) -> None:
         due_devices = result.all()
 
     for device in due_devices:
-        if not app.state.connection_manager.is_connected(device.device_id):
+        if not app.state.mqtt.is_connected(device.device_id):
             continue
         try:
             await _rotate_single_device(app, device)
@@ -75,6 +75,6 @@ async def _rotate_single_device(app: FastAPI, device: Device) -> None:
             return
 
         command = build_display_command(image)
-        await app.state.connection_manager.send_command(db_device.device_id, command)
+        await app.state.mqtt.send_command(db_device.device_id, command)
         await update_display_state(session, db_device, image, app.state.settings)
         logger.info("Rotated device %s to image %s", db_device.device_id, image.id)

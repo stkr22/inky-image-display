@@ -3,6 +3,7 @@
 from .commands import (
     DeviceAcknowledge,
     DeviceRegistration,
+    DeviceStatus,
     DisplayCommand,
     DisplayInfo,
     RegistrationResponse,
@@ -11,6 +12,7 @@ from .commands import (
 __all__ = [
     "DeviceAcknowledge",
     "DeviceRegistration",
+    "DeviceStatus",
     "DisplayCommand",
     "DisplayInfo",
     "RegistrationResponse",

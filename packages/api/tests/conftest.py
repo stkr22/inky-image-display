@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -14,8 +14,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from inky_image_display_api.routes import devices, images, sync_jobs
 from inky_image_display_api.routes.health import router as health_router
-from inky_image_display_api.websocket import ConnectionManager
-from inky_image_display_api.websocket import router as ws_router
 from inky_image_display_shared.models import Device, Image
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -64,9 +62,18 @@ def mock_s3_service() -> MagicMock:
 
 
 @pytest.fixture
-def connection_manager() -> ConnectionManager:
-    """Create a fresh ConnectionManager."""
-    return ConnectionManager()
+def mock_mqtt() -> MagicMock:
+    """Provide a stand-in for ``MQTTService`` in route-level tests.
+
+    Routes only touch ``is_connected``, ``send_command`` and
+    ``connected_device_ids``; mock those.
+    """
+    mqtt = MagicMock()
+    mqtt.online_devices = set()
+    mqtt.is_connected = MagicMock(return_value=False)
+    mqtt.connected_device_ids = MagicMock(return_value=[])
+    mqtt.send_command = AsyncMock()
+    return mqtt
 
 
 @pytest.fixture
@@ -74,7 +81,7 @@ def test_app(
     async_engine: AsyncEngine,
     mock_settings: MagicMock,
     mock_s3_service: MagicMock,
-    connection_manager: ConnectionManager,
+    mock_mqtt: MagicMock,
 ) -> FastAPI:
     """Create a FastAPI test app with mocked state."""
 
@@ -87,10 +94,9 @@ def test_app(
     app.state.engine = async_engine
     app.state.settings = mock_settings
     app.state.s3_service = mock_s3_service
-    app.state.connection_manager = connection_manager
+    app.state.mqtt = mock_mqtt
 
     app.include_router(health_router)
-    app.include_router(ws_router)
     app.include_router(images.router)
     app.include_router(devices.router)
     app.include_router(sync_jobs.router)

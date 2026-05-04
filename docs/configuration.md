@@ -18,6 +18,13 @@ All variables are prefixed with `API_`.
 | `API_S3_SECURE` | No | `false` | Use HTTPS for S3 |
 | `API_S3_REGION` | No | — | S3 region (omit for MinIO/Garage) |
 | `API_DEFAULT_DISPLAY_DURATION` | No | `3600` | Default image display duration (seconds) |
+| `API_MQTT_HOST` | Yes | — | MQTT broker hostname |
+| `API_MQTT_PORT` | No | `1883` | MQTT broker port |
+| `API_MQTT_USERNAME` | No | — | MQTT username |
+| `API_MQTT_PASSWORD` | No | — | MQTT password |
+| `API_MQTT_TLS` | No | `false` | Use TLS for the broker connection |
+| `API_MQTT_CLIENT_ID` | No | `inky-api` | MQTT client identifier |
+| `API_MQTT_KEEP_ALIVE` | No | `30` | MQTT keep-alive interval (seconds) |
 
 ## UI (`inky-image-display-ui`)
 
@@ -40,7 +47,7 @@ All variables are prefixed with `UI_`.
 
 ## Controller (`inky-image-display-controller`)
 
-The controller supports both a YAML file and environment variables. Environment variables take precedence; nested fields use `__` as a delimiter (e.g. `DEVICE__ID`).
+The controller supports both a YAML file and environment variables. Environment variables are prefixed with `CONTROLLER_` and take precedence; nested fields use `__` as a delimiter (e.g. `CONTROLLER_DEVICE__ID`).
 
 ### YAML configuration file
 
@@ -52,8 +59,16 @@ device:
   room: Kitchen             # Optional room label
 
 api:
-  url: ws://api.local:8000  # API WebSocket base URL
-  reconnect_interval: 5     # Initial reconnect delay (seconds)
+  url: http://api.local:8000  # API base URL (used for one-shot HTTP registration)
+
+mqtt:
+  host: mqtt.local            # MQTT broker hostname
+  port: 1883
+  username: inky              # Optional
+  # password: <secret>        # Prefer setting via env var MQTT__PASSWORD
+  tls: false
+  keep_alive: 30
+  reconnect_interval: 5       # Initial reconnect delay (seconds)
   max_reconnect_interval: 60
 
 s3:
@@ -73,22 +88,28 @@ display:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DEVICE__ID` | `inky-display` | Device identifier |
-| `DEVICE__ROOM` | — | Room label |
-| `API__URL` | `ws://localhost:8000` | API WebSocket base URL |
-| `API__RECONNECT_INTERVAL` | `5` | Initial reconnect delay (seconds) |
-| `API__MAX_RECONNECT_INTERVAL` | `60` | Max reconnect delay (seconds) |
-| `S3__ENDPOINT` | `localhost:9000` | S3 endpoint |
-| `S3__BUCKET` | `inky-images` | S3 bucket |
-| `S3__ACCESS_KEY` | — | S3 access key (normally provided by API at registration) |
-| `S3__SECRET_KEY` | — | S3 secret key |
-| `S3__SECURE` | `false` | Use HTTPS |
-| `DISPLAY__ORIENTATION` | `landscape` | `landscape` or `portrait` |
-| `DISPLAY__SATURATION` | `0.5` | Color saturation for Spectra 6 (0.0–1.0) |
-| `DISPLAY__MOCK` | `false` | Use mock display (no hardware) |
-| `DISPLAY__MOCK_WIDTH` | `1600` | Mock display width (pixels) |
-| `DISPLAY__MOCK_HEIGHT` | `1200` | Mock display height (pixels) |
-| `DEVICE_ID` | — | Overrides `DEVICE__ID` (also accepted as `--device-id` CLI flag) |
+| `CONTROLLER_DEVICE__ID` | `inky-display` | Device identifier |
+| `CONTROLLER_DEVICE__ROOM` | — | Room label |
+| `CONTROLLER_API__URL` | `http://localhost:8000` | API base URL (HTTP registration only) |
+| `CONTROLLER_MQTT__HOST` | `localhost` | MQTT broker hostname |
+| `CONTROLLER_MQTT__PORT` | `1883` | MQTT broker port |
+| `CONTROLLER_MQTT__USERNAME` | — | MQTT username |
+| `CONTROLLER_MQTT__PASSWORD` | — | MQTT password |
+| `CONTROLLER_MQTT__TLS` | `false` | Use TLS for the broker connection |
+| `CONTROLLER_MQTT__KEEP_ALIVE` | `30` | MQTT keep-alive interval (seconds) |
+| `CONTROLLER_MQTT__RECONNECT_INTERVAL` | `5` | Initial reconnect delay (seconds) |
+| `CONTROLLER_MQTT__MAX_RECONNECT_INTERVAL` | `60` | Max reconnect delay (seconds) |
+| `CONTROLLER_S3__ENDPOINT` | `localhost:9000` | S3 endpoint |
+| `CONTROLLER_S3__BUCKET` | `inky-images` | S3 bucket |
+| `CONTROLLER_S3__ACCESS_KEY` | — | S3 access key (normally provided by API at registration) |
+| `CONTROLLER_S3__SECRET_KEY` | — | S3 secret key |
+| `CONTROLLER_S3__SECURE` | `false` | Use HTTPS |
+| `CONTROLLER_DISPLAY__ORIENTATION` | `landscape` | `landscape` or `portrait` |
+| `CONTROLLER_DISPLAY__SATURATION` | `0.5` | Color saturation for Spectra 6 (0.0–1.0) |
+| `CONTROLLER_DISPLAY__MOCK` | `false` | Use mock display (no hardware) |
+| `CONTROLLER_DISPLAY__MOCK_WIDTH` | `1600` | Mock display width (pixels) |
+| `CONTROLLER_DISPLAY__MOCK_HEIGHT` | `1200` | Mock display height (pixels) |
+| `DEVICE_ID` | — | Overrides `CONTROLLER_DEVICE__ID` (also accepted as `--device-id` CLI flag) |
 
 ## Sync (`inky-image-display-sync`)
 

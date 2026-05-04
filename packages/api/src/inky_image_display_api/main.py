@@ -12,12 +12,11 @@ from inky_image_display_shared.logging import setup_logging
 
 from inky_image_display_api.config import Settings
 from inky_image_display_api.database import create_engine, create_tables
+from inky_image_display_api.mqtt import MQTTService
 from inky_image_display_api.routes import devices, images, sync_jobs
 from inky_image_display_api.routes.health import router as health_router
 from inky_image_display_api.services.rotation import rotation_loop
 from inky_image_display_api.services.s3_service import S3Service
-from inky_image_display_api.websocket import ConnectionManager
-from inky_image_display_api.websocket import router as ws_router
 
 logger = logging.getLogger(__name__)
 
@@ -34,32 +33,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # S3
     s3_service = S3Service(settings)
 
-    # Connection manager
-    connection_manager = ConnectionManager()
+    # MQTT transport — replaces the previous WebSocket connection manager.
+    mqtt = MQTTService(settings, engine)
 
-    # Store on app.state for access in routes / websocket
     app.state.settings = settings
     app.state.engine = engine
     app.state.s3_service = s3_service
-    app.state.connection_manager = connection_manager
+    app.state.mqtt = mqtt
 
-    # Start background rotation task
     rotation_task = asyncio.create_task(rotation_loop(app))
+    mqtt_task = asyncio.create_task(mqtt.run())
 
     logger.info("Inky Image Display API started")
     try:
         yield
     finally:
-        rotation_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await rotation_task
+        for task in (rotation_task, mqtt_task):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         await engine.dispose()
         logger.info("Inky Image Display API stopped")
 
 
 app = FastAPI(title="Inky Image Display API", lifespan=lifespan)
 app.include_router(health_router)
-app.include_router(ws_router)
 app.include_router(images.router)
 app.include_router(devices.router)
 app.include_router(sync_jobs.router)
@@ -68,14 +66,8 @@ app.include_router(sync_jobs.router)
 def main() -> None:
     """Run the API server via uvicorn."""
     setup_logging()
-    # Pin WS keepalive timings explicitly so behaviour is stable across
-    # uvicorn versions and shorter than typical reverse-proxy idle
-    # timeouts. Server-side pings detect a broken TCP path within
-    # ~ws_ping_interval + ws_ping_timeout seconds.
     uvicorn.run(
         "inky_image_display_api.main:app",
         host="0.0.0.0",
         port=8000,
-        ws_ping_interval=20,
-        ws_ping_timeout=20,
     )

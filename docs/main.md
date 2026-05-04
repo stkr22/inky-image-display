@@ -8,24 +8,24 @@ Four components work together to display images on Inky e-ink displays.
 
 FastAPI service running at `:8000`. Responsibilities:
 
-- **Device registry**: Devices connect via WebSocket at `/ws/devices/{device_id}` and register with their display specs (dimensions, orientation, model). The API stores these in the `devices` table.
+- **Device registry**: Devices register over HTTP at `POST /api/devices/register` with their display specs (dimensions, orientation, model). The API stores these in the `devices` table and returns the S3 reader credentials.
 - **Image library**: Images are stored as metadata in the `images` table and as files in S3-compatible storage.
 - **Sync job management**: CRUD REST API for `immich_sync_jobs` records which drive the Sync service.
-- **Display control**: REST endpoints push commands (display, clear) to connected devices via the WebSocket connection. A background rotation loop also periodically advances the displayed image.
+- **Display control**: REST endpoints publish commands (display, clear) to connected devices over MQTT. A background rotation loop also periodically advances the displayed image.
+- **Online tracking**: The API subscribes to retained MQTT status topics. Devices publish `online` on connect and configure an MQTT Last-Will-and-Testament with `offline`, so the broker announces unexpected disconnects automatically.
 
-On startup the API auto-creates the `devices`, `images`, and `immich_sync_jobs` tables.
+On startup the API auto-creates the `devices`, `images`, and `immich_sync_jobs` tables and connects to the MQTT broker.
 
 ### Controller (`inky-image-display-controller`)
 
 Python daemon that runs on the Raspberry Pi hosting an Inky display. It:
 
-1. Connects to the API WebSocket and sends a `DeviceRegistration` message (device ID, room, display specs).
-2. Receives a `RegistrationResponse` containing S3 reader credentials.
-3. Waits for `DisplayCommand` messages pushed by the API.
-4. Fetches the image file from S3, resizes/crops to the display's exact pixel dimensions, and calls the Inky library to refresh the screen.
-5. Sends a `DeviceAcknowledge` back to the API after each command.
+1. Calls `POST /api/devices/register` over HTTP and receives a `RegistrationResponse` containing S3 reader credentials.
+2. Connects to the MQTT broker, publishes a retained `online` status to `inky/devices/{device_id}/status`, and subscribes to `inky/devices/{device_id}/cmd`.
+3. Receives `DisplayCommand` messages, fetches the image from S3, resizes/crops to the display's exact pixel dimensions, and calls the Inky library to refresh the screen.
+4. Publishes a `DeviceAcknowledge` to `inky/devices/{device_id}/ack` after each command.
 
-Reconnects automatically with exponential backoff if the WebSocket drops.
+Reconnects automatically with exponential backoff if MQTT drops.
 
 ### UI (`inky-image-display-ui`)
 
@@ -49,18 +49,23 @@ Immich ──(sync)──► S3 Storage ◄──(fetch)── Controller (Raspb
                         │
                    API (images table)
                         │
-                   devices table ◄──(register)── Controller
+                   devices table ◄──(HTTP register)── Controller
                         │
-                   REST / WebSocket ──(command)──► Controller
+                   MQTT broker ──(cmd / ack / status)──► Controller
 ```
 
-## MQTT topics (controller ↔ display)
+## MQTT topics (API ↔ Controller)
 
-Communication between the API and Controller is over WebSocket (not MQTT). The controller subscribes to a single WebSocket connection per device.
+All device traffic flows through an external MQTT broker. The API
+subscribes once to status and ack topics with single-level wildcards;
+the controller subscribes only to its own command topic.
 
-| Direction | Message type | Description |
-|-----------|-------------|-------------|
-| Controller → API | `DeviceRegistration` | Sent once on connect; declares display specs |
-| API → Controller | `RegistrationResponse` | S3 credentials + confirmation status |
-| API → Controller | `DisplayCommand` | `display` (with image path), `clear`, or `status` |
-| Controller → API | `DeviceAcknowledge` | Success/failure result for each command |
+| Topic | Direction | QoS | Retain | Payload |
+|-------|-----------|-----|--------|---------|
+| `inky/devices/{id}/status` | Controller → broker | 1 | yes | `DeviceStatus` (`online` / `offline` — `offline` also set as MQTT Last-Will) |
+| `inky/devices/{id}/cmd` | API → Controller | 1 | no | `DisplayCommand` (`display` with image path, `clear`, or `status`) |
+| `inky/devices/{id}/ack` | Controller → API | 1 | no | `DeviceAcknowledge` (success/failure for each command) |
+
+Initial registration uses HTTP (`POST /api/devices/register`) and returns
+`RegistrationResponse` with S3 reader credentials. This is a one-shot
+call on startup — all ongoing communication is over MQTT.

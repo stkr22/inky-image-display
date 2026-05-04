@@ -52,8 +52,8 @@ def main(
 ) -> None:
     """Start the Inky Display Controller daemon.
 
-    The controller connects to the Inky Image Display API via WebSocket,
-    registers with the server, and displays images received via commands.
+    The controller registers with the API over HTTP, then connects to
+    the MQTT broker to receive display commands and publish status/acks.
     """
     setup_logging(level=logging.DEBUG if verbose else None)
     logger = logging.getLogger(__name__)
@@ -68,6 +68,7 @@ def main(
     logger.info("Starting Inky Display Controller")
     logger.info("Device ID: %s", settings.device.id)
     logger.info("API URL: %s", settings.api.url)
+    logger.info("MQTT broker: %s:%d", settings.mqtt.host, settings.mqtt.port)
     logger.info("Mock display: %s", settings.display.mock)
 
     # Create controller

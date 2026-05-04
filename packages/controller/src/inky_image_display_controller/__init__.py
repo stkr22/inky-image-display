@@ -1,7 +1,8 @@
 """Inky Display Controller - E-ink display management for Raspberry Pi.
 
-This package provides a daemon that receives WebSocket commands from the
-inky-image-display API and displays images on an Inky Impression e-ink display.
+This package provides a daemon that registers with the inky-image-display
+API over HTTP, then receives display commands over MQTT and renders
+images on an Inky Impression e-ink display.
 """
 
 __version__ = "1.0.3"
