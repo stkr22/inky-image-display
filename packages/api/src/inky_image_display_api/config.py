@@ -1,5 +1,7 @@
 """Configuration management using pydantic-settings."""
 
+from typing import Literal
+
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -40,5 +42,7 @@ class Settings(BaseSettings):
     mqtt_username: str | None = None
     mqtt_password: SecretStr | None = None
     mqtt_tls: bool = False
+    mqtt_transport: Literal["tcp", "websockets"] = "tcp"
+    mqtt_websocket_path: str = "/mqtt"
     mqtt_client_id: str = "inky-api"
     mqtt_keep_alive: int = 30

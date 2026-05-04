@@ -205,6 +205,10 @@ class MQTTService:
                     identifier=self._settings.mqtt_client_id,
                     keepalive=self._settings.mqtt_keep_alive,
                     tls_params=aiomqtt.TLSParameters() if self._settings.mqtt_tls else None,
+                    transport=self._settings.mqtt_transport,
+                    websocket_path=(
+                        self._settings.mqtt_websocket_path if self._settings.mqtt_transport == "websockets" else None
+                    ),
                 ) as client:
                     self._client = client
                     self._client_ready.set()
