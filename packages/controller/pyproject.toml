@@ -11,7 +11,7 @@ authors = [
 ]
 license = "GPL-3.0-only"
 dependencies = [
-    "inky-image-display-shared>=0.3.0",
+    "inky-image-display-shared~=2.0",
     "aiomqtt~=2.5.1",
     "httpx~=0.28.1",
     "minio~=7.2.20",
