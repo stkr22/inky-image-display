@@ -1,0 +1,24 @@
+{
+  "features": {
+    "ghcr.io/devcontainer-community/devcontainer-features/starship.rs:1": {
+      "version": "1.0.4",
+      "resolved": "ghcr.io/devcontainer-community/devcontainer-features/starship.rs@sha256:27b4dfe2f04debaa32a6d76dd6e20e8239f6851c4f3259644f68f5242cd11589",
+      "integrity": "sha256:27b4dfe2f04debaa32a6d76dd6e20e8239f6851c4f3259644f68f5242cd11589"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "1.7.1",
+      "resolved": "ghcr.io/devcontainers/features/node@sha256:8c0de46939b61958041700ee89e3493f3b2e4131a06dc46b4d9423427d06e5f6",
+      "integrity": "sha256:8c0de46939b61958041700ee89e3493f3b2e4131a06dc46b4d9423427d06e5f6"
+    },
+    "ghcr.io/stkr22/devcontainer-features/claude-code:2.0.3": {
+      "version": "2.0.3",
+      "resolved": "ghcr.io/stkr22/devcontainer-features/claude-code@sha256:57c53aa671eb209f4a4e93a47a8ea7ba114773ee6a868abf19545b6f129d2a6f",
+      "integrity": "sha256:57c53aa671eb209f4a4e93a47a8ea7ba114773ee6a868abf19545b6f129d2a6f"
+    },
+    "ghcr.io/stkr22/devcontainer-features/uv:1.1.0": {
+      "version": "1.1.0",
+      "resolved": "ghcr.io/stkr22/devcontainer-features/uv@sha256:229686a1664817bf1bab7fef7b3b25b81fe5c90dfc4807e547ad9c1dd845e77b",
+      "integrity": "sha256:229686a1664817bf1bab7fef7b3b25b81fe5c90dfc4807e547ad9c1dd845e77b"
+    }
+  }
+}
