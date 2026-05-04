@@ -1,5 +1,6 @@
 """Configuration management using pydantic-settings."""
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,3 +33,12 @@ class Settings(BaseSettings):
     s3_reader_access_key: str
     s3_reader_secret_key: str
     default_display_duration: int = 3600
+
+    # MQTT broker — used for command/ack/status traffic with devices.
+    mqtt_host: str
+    mqtt_port: int = 1883
+    mqtt_username: str | None = None
+    mqtt_password: SecretStr | None = None
+    mqtt_tls: bool = False
+    mqtt_client_id: str = "inky-api"
+    mqtt_keep_alive: int = 30

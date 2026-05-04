@@ -1,7 +1,8 @@
 """Command and response schemas for device communication.
 
-These models define the contract between skill/API and device controllers.
-Used for both MQTT and WebSocket communication.
+These models define the contract between the API and device controllers.
+The same payloads ride MQTT for command/ack/status traffic and the
+HTTP ``/api/devices/register`` endpoint for the initial handshake.
 """
 
 from typing import Literal
@@ -57,3 +58,14 @@ class DeviceAcknowledge(BaseModel):
     image_id: str | None = Field(default=None, description="Currently displayed image UUID")
     successful_display_change: bool = Field(description="Whether the display change was successful")
     error: str | None = Field(default=None, description="Error message if any")
+
+
+class DeviceStatus(BaseModel):
+    """Online/offline status published to a retained MQTT topic.
+
+    Devices publish ``online`` on connect and configure an MQTT
+    Last-Will-and-Testament with ``offline`` so the broker announces
+    unexpected disconnects on the same retained topic.
+    """
+
+    status: Literal["online", "offline"] = Field(description="Current device status")

@@ -4,6 +4,7 @@
 
 - **SQLite** — embedded database; file path set via `API_DATABASE_PATH`. Mount a persistent volume in containerised deployments. The sync service accesses the database only through the API — it does not need a direct database path.
 - **S3-compatible storage** (MinIO, Garage, AWS S3) — image file storage
+- **MQTT broker** (Mosquitto, EMQX, etc.) — used for command/ack/status traffic between the API and devices
 - **Immich** — photo library source (required only for the sync service)
 
 ## Environment variables
@@ -19,14 +20,16 @@ API_S3_WRITER_ACCESS_KEY=<write-key>
 API_S3_WRITER_SECRET_KEY=<write-secret>
 API_S3_READER_ACCESS_KEY=<read-key>
 API_S3_READER_SECRET_KEY=<read-secret>
+API_MQTT_HOST=mqtt.svc
 ```
 
 ### Controller
 
 ```env
-DEVICE__ID=inky-kitchen
-DEVICE__ROOM=Kitchen
-API__URL=ws://api.svc:8000
+CONTROLLER_DEVICE__ID=inky-kitchen
+CONTROLLER_DEVICE__ROOM=Kitchen
+CONTROLLER_API__URL=http://api.svc:8000
+CONTROLLER_MQTT__HOST=mqtt.svc
 ```
 
 S3 credentials are delivered automatically at registration — the controller does not need them in advance.

@@ -8,10 +8,11 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Request
 from inky_image_display_shared.models import Device, Image
 from inky_image_display_shared.models.device import DEVICE_ONLINE_FRESHNESS_SECONDS
-from inky_image_display_shared.schemas import DisplayCommand
+from inky_image_display_shared.schemas import DeviceRegistration, DisplayCommand, RegistrationResponse
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from inky_image_display_api.mqtt import upsert_device
 from inky_image_display_api.schemas import DeviceResponse, DisplayCommandRequest, NextImageResponse
 from inky_image_display_api.services.image_service import (
     build_display_command,
@@ -34,6 +35,28 @@ def _apply_freshness(device: Device) -> Device:
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
 logger = logging.getLogger(__name__)
+
+
+@router.post("/register")
+async def register_device(request: Request, registration: DeviceRegistration) -> RegistrationResponse:
+    """Upsert a device record and return the S3 reader credentials.
+
+    Devices call this once on startup before connecting to MQTT. Online
+    state is no longer set here — that arrives shortly after via the
+    retained ``inky/devices/{id}/status`` topic.
+    """
+    settings = request.app.state.settings
+    status = await upsert_device(request.app.state.engine, registration.device_id, registration)
+    logger.info("Device %s registered (status=%s)", registration.device_id, status)
+    return RegistrationResponse(
+        status=status,
+        s3_endpoint=settings.s3_endpoint,
+        s3_bucket=settings.s3_bucket,
+        s3_access_key=settings.s3_reader_access_key,
+        s3_secret_key=settings.s3_reader_secret_key,
+        s3_secure=settings.s3_secure,
+        s3_region=settings.s3_region,
+    )
 
 
 @router.get("", response_model=list[DeviceResponse])
@@ -82,7 +105,7 @@ async def send_display_command(
         body: Request containing the image UUID to display.
 
     """
-    manager = request.app.state.connection_manager
+    manager = request.app.state.mqtt
     if not manager.is_connected(device_id):
         raise HTTPException(status_code=404, detail="Device not connected")
 
@@ -112,7 +135,7 @@ async def next_image(request: Request, device_id: str) -> NextImageResponse:
 
     Returns image metadata so callers can build responses without a second request.
     """
-    manager = request.app.state.connection_manager
+    manager = request.app.state.mqtt
     if not manager.is_connected(device_id):
         raise HTTPException(status_code=404, detail="Device not connected")
 
@@ -146,7 +169,7 @@ async def next_image(request: Request, device_id: str) -> NextImageResponse:
 @router.post("/{device_id}/clear")
 async def clear_device(request: Request, device_id: str) -> dict[str, str]:
     """Send a clear command to the device."""
-    manager = request.app.state.connection_manager
+    manager = request.app.state.mqtt
     if not manager.is_connected(device_id):
         raise HTTPException(status_code=404, detail="Device not connected")
 

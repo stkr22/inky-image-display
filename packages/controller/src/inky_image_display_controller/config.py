@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,9 +16,24 @@ class DeviceConfig(BaseSettings):
 
 
 class APIConfig(BaseSettings):
-    """API server connection settings."""
+    """API HTTP server connection settings.
 
-    url: str = Field(default="ws://localhost:8000", description="API base URL (ws:// or wss://)")
+    Used for the one-shot registration call. All ongoing device traffic
+    (commands, acknowledgements, status) goes through MQTT.
+    """
+
+    url: str = Field(default="http://localhost:8000", description="API base URL (http:// or https://)")
+
+
+class MQTTConfig(BaseSettings):
+    """MQTT broker connection settings."""
+
+    host: str = Field(default="localhost", description="MQTT broker hostname")
+    port: int = Field(default=1883, description="MQTT broker port")
+    username: str | None = Field(default=None, description="MQTT username")
+    password: SecretStr | None = Field(default=None, description="MQTT password")
+    tls: bool = Field(default=False, description="Use TLS for the broker connection")
+    keep_alive: int = Field(default=30, description="MQTT keep-alive in seconds")
     reconnect_interval: int = Field(default=5, description="Initial reconnect delay in seconds")
     max_reconnect_interval: int = Field(default=60, description="Maximum reconnect delay")
 
@@ -52,12 +67,14 @@ class Settings(BaseSettings):
     """Main application settings aggregating all configuration sections."""
 
     model_config = SettingsConfigDict(
+        env_prefix="CONTROLLER_",
         env_nested_delimiter="__",
         extra="ignore",
     )
 
     device: DeviceConfig = Field(default_factory=DeviceConfig)
     api: APIConfig = Field(default_factory=APIConfig)
+    mqtt: MQTTConfig = Field(default_factory=MQTTConfig)
     s3: S3Config = Field(default_factory=S3Config)
     display: DisplayConfig = Field(default_factory=DisplayConfig)
 
@@ -80,12 +97,14 @@ class Settings(BaseSettings):
         # Build nested config from YAML
         device_config = DeviceConfig(**yaml_config.get("device", {}))
         api_config = APIConfig(**yaml_config.get("api", {}))
+        mqtt_config = MQTTConfig(**yaml_config.get("mqtt", {}))
         s3_config = S3Config(**yaml_config.get("s3", {}))
         display_config = DisplayConfig(**yaml_config.get("display", {}))
 
         return cls(
             device=device_config,
             api=api_config,
+            mqtt=mqtt_config,
             s3=s3_config,
             display=display_config,
             config_file=yaml_path,

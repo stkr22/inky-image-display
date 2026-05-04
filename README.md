@@ -11,14 +11,14 @@ A system for displaying images on Pimoroni Inky e-ink displays, with automatic s
 ## Architecture
 
 ```
-┌──────────────────────┐     WebSocket      ┌─────────────────────┐
-│   Controller         │◄───────────────────│   API               │
-│   (Raspberry Pi)     │                    │   (FastAPI)         │
-│   inky-controller    │     S3 (images)    │   :8000             │
+┌──────────────────────┐    MQTT broker     ┌─────────────────────┐
+│   Controller         │◄──────────────────►│   API               │
+│   (Raspberry Pi)     │  HTTP /register    │   (FastAPI)         │
+│   inky-controller    │  S3 (images)       │   :8000             │
 └──────────────────────┘◄───────────────────└─────────────────────┘
                                                       │
                                               ┌───────┴───────┐
-                                              │  PostgreSQL   │
+                                              │  SQLite       │
                                               │  S3 Storage   │
                                               └───────┬───────┘
                                                       │
@@ -29,9 +29,9 @@ A system for displaying images on Pimoroni Inky e-ink displays, with automatic s
                                             └─────────────────┘
 ```
 
-**API** — FastAPI service. Manages devices, images, and sync jobs. Devices connect via WebSocket for registration and command delivery. Serves image metadata and presigned S3 URLs to the controller.
+**API** — FastAPI service. Manages devices, images, and sync jobs. Devices register over HTTP (`/api/devices/register`); ongoing command and acknowledgement traffic flows through an MQTT broker. Serves image metadata and presigned S3 URLs to the controller.
 
-**Controller** — Daemon that runs on a Raspberry Pi. Connects to the API via WebSocket, receives display commands, fetches images from S3, and drives the Inky display.
+**Controller** — Daemon that runs on a Raspberry Pi. Registers with the API over HTTP, then connects to the MQTT broker to receive display commands, fetches images from S3, and drives the Inky display.
 
 **Sync** — CLI tool run as a cron job. Reads sync job configuration from the database, fetches images from Immich, and stores them in S3.
 

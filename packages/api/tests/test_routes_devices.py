@@ -1,6 +1,6 @@
 """Tests for device REST endpoints."""
 
-import json
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -57,11 +57,38 @@ class TestGetDevice:
         assert resp.status_code == 404
 
 
+class TestRegisterDevice:
+    """Tests for POST /api/devices/register."""
+
+    def test_register_creates_device(self, client: TestClient):
+        registration = DeviceRegistration(
+            device_id="kitchen-display",
+            display=DisplayInfo(width=1600, height=1200, orientation="landscape"),
+            room="Kitchen",
+        )
+        resp = client.post("/api/devices/register", json=registration.model_dump(mode="json"))
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "registered"
+        assert body["s3_endpoint"] == "s3.test.local:9000"
+        assert body["s3_access_key"] == "reader-key"
+
+    def test_register_updates_existing(self, client: TestClient, seed_device: Device):
+        registration = DeviceRegistration(
+            device_id=seed_device.device_id,
+            display=DisplayInfo(width=1600, height=1200, orientation="landscape"),
+            room="Updated Room",
+        )
+        resp = client.post("/api/devices/register", json=registration.model_dump(mode="json"))
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "updated"
+
+
 class TestNextImage:
     """Tests for POST /api/devices/{device_id}/next."""
 
-    def test_not_connected(self, client: TestClient, seed_device: Device):
-        """Returns 404 when device is not connected via WebSocket."""
+    def test_not_connected(self, client: TestClient, mock_mqtt: MagicMock, seed_device: Device):
+        mock_mqtt.is_connected.return_value = False
         resp = client.post(f"/api/devices/{seed_device.device_id}/next")
         assert resp.status_code == 404
 
@@ -69,58 +96,60 @@ class TestNextImage:
     def test_next_sends_command(
         self,
         client: TestClient,
+        mock_mqtt: MagicMock,
         seed_device: Device,
         seed_image: Image,
     ):
-        """When connected, selects next image, sends WebSocket command, and returns metadata."""
-        registration = DeviceRegistration(
-            device_id=seed_device.device_id,
-            display=DisplayInfo(width=1600, height=1200),
-        )
-        with client.websocket_connect(f"/ws/devices/{seed_device.device_id}") as ws:
-            ws.send_text(registration.model_dump_json())
-            ws.receive_text()  # consume registration response
+        """When connected, selects next image, publishes MQTT command, and returns metadata."""
+        mock_mqtt.is_connected.return_value = True
 
-            resp = client.post(f"/api/devices/{seed_device.device_id}/next")
-            assert resp.status_code == 200
+        resp = client.post(f"/api/devices/{seed_device.device_id}/next")
+        assert resp.status_code == 200
 
-            body = resp.json()
-            assert body["status"] == "ok"
-            assert body["image_id"] == str(seed_image.id)
-            assert body["title"] == seed_image.title
-            assert body["source_name"] == seed_image.source_name
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert body["image_id"] == str(seed_image.id)
+        assert body["title"] == seed_image.title
+        assert body["source_name"] == seed_image.source_name
 
-            # The device should receive the display command via WebSocket
-            raw = ws.receive_text()
-            data = json.loads(raw)
-            assert data["action"] == "display"
-            assert data["image_id"] == str(seed_image.id)
+        mock_mqtt.send_command.assert_awaited_once()
+        device_id_arg, command_arg = mock_mqtt.send_command.call_args.args
+        assert device_id_arg == seed_device.device_id
+        assert command_arg.action == "display"
+        assert command_arg.image_id == str(seed_image.id)
 
 
 class TestClearDevice:
     """Tests for POST /api/devices/{device_id}/clear."""
 
-    def test_not_connected(self, client: TestClient, seed_device: Device):
+    def test_not_connected(self, client: TestClient, mock_mqtt: MagicMock, seed_device: Device):
+        mock_mqtt.is_connected.return_value = False
         resp = client.post(f"/api/devices/{seed_device.device_id}/clear")
         assert resp.status_code == 404
 
     def test_clear_sends_command(
         self,
         client: TestClient,
+        mock_mqtt: MagicMock,
         seed_device: Device,
     ):
-        """Sends clear command to connected device."""
-        registration = DeviceRegistration(
-            device_id=seed_device.device_id,
-            display=DisplayInfo(width=1600, height=1200),
+        mock_mqtt.is_connected.return_value = True
+
+        resp = client.post(f"/api/devices/{seed_device.device_id}/clear")
+        assert resp.status_code == 200
+
+        mock_mqtt.send_command.assert_awaited_once()
+        _, command_arg = mock_mqtt.send_command.call_args.args
+        assert command_arg.action == "clear"
+
+
+class TestDisplayCommand:
+    """Tests for POST /api/devices/{device_id}/display."""
+
+    def test_not_connected(self, client: TestClient, mock_mqtt: MagicMock, seed_device: Device, seed_image: Image):
+        mock_mqtt.is_connected.return_value = False
+        resp = client.post(
+            f"/api/devices/{seed_device.device_id}/display",
+            json={"image_id": str(seed_image.id)},
         )
-        with client.websocket_connect(f"/ws/devices/{seed_device.device_id}") as ws:
-            ws.send_text(registration.model_dump_json())
-            ws.receive_text()
-
-            resp = client.post(f"/api/devices/{seed_device.device_id}/clear")
-            assert resp.status_code == 200
-
-            raw = ws.receive_text()
-            data = json.loads(raw)
-            assert data["action"] == "clear"
+        assert resp.status_code == 404

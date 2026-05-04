@@ -7,6 +7,7 @@ from inky_image_display_controller.config import (
     APIConfig,
     DeviceConfig,
     DisplayConfig,
+    MQTTConfig,
     S3Config,
     Settings,
 )
@@ -34,13 +35,12 @@ def mock_display() -> MockDisplay:
 
 
 @pytest.fixture
-def mock_ws_client() -> AsyncMock:
-    """Create a mock WebSocket client."""
+def mock_mqtt_client() -> AsyncMock:
+    """Create a mock MQTT client."""
     client = AsyncMock()
-    client.send_acknowledge = AsyncMock()
+    client.publish_ack = AsyncMock()
     client.run = AsyncMock()
     client.disconnect = AsyncMock()
-    client.set_registration_payload = MagicMock()
     return client
 
 
@@ -60,7 +60,8 @@ def test_settings() -> Settings:
     """Create test settings."""
     return Settings(
         device=DeviceConfig(id="test-device", room="Test Room"),
-        api=APIConfig(url="ws://localhost:8000"),
+        api=APIConfig(url="http://localhost:8000"),
+        mqtt=MQTTConfig(host="broker.test"),
         s3=S3Config(endpoint="localhost:9000", bucket="test-bucket"),
         display=DisplayConfig(mock=True),
     )

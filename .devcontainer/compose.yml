@@ -12,9 +12,14 @@ services:
       # SQLite database path (shared by API and sync services)
       DATABASE_PATH: /workspaces/inky-image-display/data/inky.db
       API_DATABASE_PATH: /workspaces/inky-image-display/data/inky.db
-      # MQTT connection
-      MQTT_HOST: mosquitto
-      MQTT_PORT: 1883
+      # MQTT connection — used by the API to talk to devices.
+      API_MQTT_HOST: mosquitto
+      API_MQTT_PORT: 1883
+      # Controller-side overrides (when running the controller from this
+      # container against the local broker / API).
+      CONTROLLER_MQTT__HOST: mosquitto
+      CONTROLLER_MQTT__PORT: 1883
+      CONTROLLER_API__URL: "http://localhost:8000"
       # S3 (Garage) — shared by API, UI, and sync
       API_S3_ENDPOINT: "garage:3900"
       API_S3_BUCKET: inky-images
@@ -39,6 +44,18 @@ services:
       S3_WRITER_SECRET_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     depends_on:
       - garage
+      - mosquitto
+    networks:
+      - pa-inky-image-display-network
+
+  # MQTT broker used for API ↔ device command/ack/status traffic.
+  # Dev-only: anonymous access on 1883, no persistence.
+  mosquitto:
+    image: docker.io/eclipse-mosquitto:2.0.22
+    container_name: inky-image-display-mosquitto
+    command: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
+    volumes:
+      - ./config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
     networks:
       - pa-inky-image-display-network
 
