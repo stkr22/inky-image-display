@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/stkr22/inky-image-display/compare/v1.3.2...v2.0.0) (2026-05-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* Devices and the API now require an MQTT broker. The /ws/devices/{id} WebSocket endpoint is removed; devices must call POST /api/devices/register over HTTP and connect to the broker. Controller env vars now require a CONTROLLER_ prefix (e.g. CONTROLLER_DEVICE__ID instead of DEVICE__ID); controller's API URL is HTTP not ws://. New required API setting: API_MQTT_HOST.
+
+### Features
+
+* :sparkles: replace device websocket transport with mqtt ([8d4fdcb](https://github.com/stkr22/inky-image-display/commit/8d4fdcbf3bf5981de675673eb25fb50fada46444))
+
 ## [1.3.2](https://github.com/stkr22/inky-image-display/compare/v1.3.1...v1.3.2) (2026-04-30)
 
 
