@@ -33,6 +33,14 @@ class MQTTConfig(BaseSettings):
     username: str | None = Field(default=None, description="MQTT username")
     password: SecretStr | None = Field(default=None, description="MQTT password")
     tls: bool = Field(default=False, description="Use TLS for the broker connection")
+    transport: Literal["tcp", "websockets"] = Field(
+        default="tcp",
+        description="MQTT transport. Use 'websockets' to tunnel via HTTP(S) ingress.",
+    )
+    websocket_path: str = Field(
+        default="/mqtt",
+        description="HTTP path served by the broker for MQTT-over-WebSockets",
+    )
     keep_alive: int = Field(default=30, description="MQTT keep-alive in seconds")
     reconnect_interval: int = Field(default=5, description="Initial reconnect delay in seconds")
     max_reconnect_interval: int = Field(default=60, description="Maximum reconnect delay")

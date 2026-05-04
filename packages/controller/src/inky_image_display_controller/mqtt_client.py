@@ -85,6 +85,8 @@ class MQTTClient:
                     identifier=f"inky-controller-{self._device_id}",
                     keepalive=self._config.keep_alive,
                     tls_params=aiomqtt.TLSParameters() if self._config.tls else None,
+                    transport=self._config.transport,
+                    websocket_path=(self._config.websocket_path if self._config.transport == "websockets" else None),
                     will=will,
                 ) as client:
                     self._client = client

@@ -23,8 +23,24 @@ All variables are prefixed with `API_`.
 | `API_MQTT_USERNAME` | No | — | MQTT username |
 | `API_MQTT_PASSWORD` | No | — | MQTT password |
 | `API_MQTT_TLS` | No | `false` | Use TLS for the broker connection |
+| `API_MQTT_TRANSPORT` | No | `tcp` | `tcp` or `websockets` (use ws to tunnel via HTTP(S) ingress) |
+| `API_MQTT_WEBSOCKET_PATH` | No | `/mqtt` | HTTP path the broker serves WS on (when `transport=websockets`) |
 | `API_MQTT_CLIENT_ID` | No | `inky-api` | MQTT client identifier |
 | `API_MQTT_KEEP_ALIVE` | No | `30` | MQTT keep-alive interval (seconds) |
+
+### MQTT transport / TLS combinations
+
+`tls` and `transport` are independent. The four combinations map to:
+
+| `tls` | `transport` | Effective URL | Typical port | Use when |
+|-------|-------------|---------------|--------------|----------|
+| `false` | `tcp` | `mqtt://`  | `1883` | LAN broker, no TLS (dev / trusted network) |
+| `true`  | `tcp` | `mqtts://` | `8883` | Dedicated MQTT VIP with its own cert |
+| `false` | `websockets` | `ws://`  | `8080`/`9001` | Behind a plaintext reverse proxy (rare) |
+| `true`  | `websockets` | `wss://` | `443` | Broker behind your existing HTTPS Ingress (recommended for K8s) |
+
+The same applies on the controller side via the corresponding
+`CONTROLLER_MQTT__TLS` / `CONTROLLER_MQTT__TRANSPORT` settings.
 
 ## UI (`inky-image-display-ui`)
 
@@ -65,8 +81,10 @@ mqtt:
   host: mqtt.local            # MQTT broker hostname
   port: 1883
   username: inky              # Optional
-  # password: <secret>        # Prefer setting via env var MQTT__PASSWORD
+  # password: <secret>        # Prefer setting via env var CONTROLLER_MQTT__PASSWORD
   tls: false
+  transport: tcp              # or "websockets" to tunnel via HTTP(S) ingress
+  websocket_path: /mqtt       # only relevant when transport=websockets
   keep_alive: 30
   reconnect_interval: 5       # Initial reconnect delay (seconds)
   max_reconnect_interval: 60
@@ -96,6 +114,8 @@ display:
 | `CONTROLLER_MQTT__USERNAME` | — | MQTT username |
 | `CONTROLLER_MQTT__PASSWORD` | — | MQTT password |
 | `CONTROLLER_MQTT__TLS` | `false` | Use TLS for the broker connection |
+| `CONTROLLER_MQTT__TRANSPORT` | `tcp` | `tcp` or `websockets` (use ws to tunnel via HTTP(S) ingress) |
+| `CONTROLLER_MQTT__WEBSOCKET_PATH` | `/mqtt` | HTTP path the broker serves WS on (when `transport=websockets`) |
 | `CONTROLLER_MQTT__KEEP_ALIVE` | `30` | MQTT keep-alive interval (seconds) |
 | `CONTROLLER_MQTT__RECONNECT_INTERVAL` | `5` | Initial reconnect delay (seconds) |
 | `CONTROLLER_MQTT__MAX_RECONNECT_INTERVAL` | `60` | Max reconnect delay (seconds) |
