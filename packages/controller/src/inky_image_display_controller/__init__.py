@@ -5,7 +5,7 @@ API over HTTP, then receives display commands over MQTT and renders
 images on an Inky Impression e-ink display.
 """
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 from inky_image_display_shared.schemas import (
     DeviceAcknowledge,

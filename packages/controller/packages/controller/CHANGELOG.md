@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.1.0](https://github.com/stkr22/inky-image-display/compare/controller-v2.0.0...controller-v2.1.0) (2026-05-04)
+
+
+### Features
+
+* **mqtt:** :sparkles: support MQTT-over-WebSockets transport ([ebdeb53](https://github.com/stkr22/inky-image-display/commit/ebdeb53449877985ee40ec3bd4a74547d1bf7e12))
+* **mqtt:** :sparkles: support MQTT-over-WebSockets transport ([7ea0154](https://github.com/stkr22/inky-image-display/commit/7ea0154e04159a8b020416880f72786b48fbc75a))
+
+
+### Bug Fixes
+
+* **controller:** :pushpin: tighten inky-image-display-shared pin ([4d339aa](https://github.com/stkr22/inky-image-display/commit/4d339aa535469fc4b4e1f62c704bc960fd1a26c8))
+* **controller:** :pushpin: tighten inky-image-display-shared pin ([0fb8be7](https://github.com/stkr22/inky-image-display/commit/0fb8be7852df4dff2c14b2986054ebc5941ea778))
+
 ## [2.0.0](https://github.com/stkr22/inky-image-display/compare/controller-v1.0.3...controller-v2.0.0) (2026-05-04)
 
 
