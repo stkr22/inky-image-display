@@ -2,11 +2,10 @@
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from fastapi import FastAPI
 from inky_image_display_shared.models import Device
-from inky_image_display_shared.models.device import DEVICE_ONLINE_FRESHNESS_SECONDS
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -42,11 +41,10 @@ async def rotation_loop(app: FastAPI) -> None:
 async def _rotate_due_devices(app: FastAPI) -> None:
     """Find and rotate all online devices that are due for a new image."""
     now = datetime.now()
-    fresh_cutoff = now - timedelta(seconds=DEVICE_ONLINE_FRESHNESS_SECONDS)
     async with AsyncSession(app.state.engine) as session:
         result = await session.exec(
             select(Device).where(
-                Device.last_seen >= fresh_cutoff,
+                Device.is_online == True,  # noqa: E712 — SQLModel comparison
                 Device.scheduled_next_at <= now,
             )
         )

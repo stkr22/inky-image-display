@@ -5,11 +5,6 @@ from uuid import UUID, uuid4
 
 from sqlmodel import Field, SQLModel
 
-# A device is considered online if we have heard from it within this many
-# seconds. Set so a device that pings every 20s tolerates one missed ping
-# plus a reconnect window without flickering offline.
-DEVICE_ONLINE_FRESHNESS_SECONDS: int = 90
-
 
 class DeviceDisplayState(SQLModel, table=True):
     """Legacy display state for a device.

@@ -871,7 +871,7 @@ requires-dist = [
 
 [[package]]
 name = "inky-image-display-controller"
-version = "2.0.0"
+version = "2.1.0"
 source = { editable = "packages/controller" }
 dependencies = [
     { name = "aiomqtt" },
@@ -982,7 +982,7 @@ requires-dist = [
 
 [[package]]
 name = "inky-image-display-workspace"
-version = "2.0.0"
+version = "2.1.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
