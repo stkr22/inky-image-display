@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.1](https://github.com/stkr22/inky-image-display/compare/shared-v2.0.0...shared-v2.0.1) (2026-05-05)
+
+
+### Bug Fixes
+
+* **api:** :bug: trust mqtt-driven is_online flag instead of last_seen freshness ([063c459](https://github.com/stkr22/inky-image-display/commit/063c459083c0cbcace248961156f0029acbc5773))
+* **api:** :bug: trust mqtt-driven is_online flag instead of last_seen freshness ([d824cf2](https://github.com/stkr22/inky-image-display/commit/d824cf25337fc9873c2ad0e5cbe8aeecf898e56b))
+
 ## [2.0.0](https://github.com/stkr22/inky-image-display/compare/shared-v1.1.1...shared-v2.0.0) (2026-05-04)
 
 
