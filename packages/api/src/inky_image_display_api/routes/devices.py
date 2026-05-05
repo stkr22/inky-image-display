@@ -1,13 +1,11 @@
 """REST endpoints for device management."""
 
 import logging
-from datetime import datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from inky_image_display_shared.models import Device, Image
-from inky_image_display_shared.models.device import DEVICE_ONLINE_FRESHNESS_SECONDS
 from inky_image_display_shared.schemas import DeviceRegistration, DisplayCommand, RegistrationResponse
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -19,19 +17,6 @@ from inky_image_display_api.services.image_service import (
     get_next_image_for_device,
     update_display_state,
 )
-
-
-def _apply_freshness(device: Device) -> Device:
-    """Override ``is_online`` based on ``last_seen`` freshness.
-
-    The stored flag can lag reality during reconnect races; ``last_seen``
-    is bumped on every inbound message, so a device is reported online iff
-    we have heard from it recently. This makes the UI self-healing.
-    """
-    cutoff = datetime.now() - timedelta(seconds=DEVICE_ONLINE_FRESHNESS_SECONDS)
-    device.is_online = device.last_seen >= cutoff
-    return device
-
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
 logger = logging.getLogger(__name__)
@@ -66,7 +51,11 @@ async def list_devices(
     is_online: Annotated[bool | None, Query(description="Filter by online status")] = None,
     id: Annotated[UUID | None, Query(description="Filter by device primary-key UUID")] = None,
 ) -> list[Device]:
-    """List registered devices with optional filters."""
+    """List registered devices with optional filters.
+
+    ``is_online`` reflects the broker's view of the device, kept fresh
+    by retained MQTT status messages plus Last-Will-on-disconnect.
+    """
     async with AsyncSession(request.app.state.engine) as session:
         stmt = select(Device)
         if room is not None:
@@ -74,10 +63,9 @@ async def list_devices(
         if id is not None:
             stmt = stmt.where(col(Device.id) == id)
         if is_online is not None:
-            cutoff = datetime.now() - timedelta(seconds=DEVICE_ONLINE_FRESHNESS_SECONDS)
-            stmt = stmt.where(Device.last_seen >= cutoff) if is_online else stmt.where(Device.last_seen < cutoff)
+            stmt = stmt.where(Device.is_online == is_online)
         result = await session.exec(stmt)
-        return [_apply_freshness(d) for d in result.all()]
+        return list(result.all())
 
 
 @router.get("/{device_id}", response_model=DeviceResponse)
@@ -88,7 +76,7 @@ async def get_device(request: Request, device_id: str) -> Device:
         device = result.first()
         if device is None:
             raise HTTPException(status_code=404, detail="Device not found")
-        return _apply_freshness(device)
+        return device
 
 
 @router.post("/{device_id}/display")
