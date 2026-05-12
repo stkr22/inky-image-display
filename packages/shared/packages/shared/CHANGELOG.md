@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.0](https://github.com/stkr22/inky-image-display/compare/shared-v2.1.0...shared-v2.2.0) (2026-05-12)
+
+
+### Features
+
+* **genai:** add AI image generation with editable prompts and on-demand UI ([4344cf2](https://github.com/stkr22/inky-image-display/commit/4344cf2d03c2c3f7c1c5137fcd7f33f56945ddaf))
+* **genai:** add AI image generation with editable prompts and on-demand UI ([3168737](https://github.com/stkr22/inky-image-display/commit/3168737d7fdc509bd016abe43c5daba54c7251f7))
+
 ## [2.1.0](https://github.com/stkr22/inky-image-display/compare/shared-v2.0.1...shared-v2.1.0) (2026-05-12)
 
 
