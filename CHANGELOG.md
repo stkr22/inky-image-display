@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.0](https://github.com/stkr22/inky-image-display/compare/v2.1.1...v2.2.0) (2026-05-12)
+
+
+### Features
+
+* **ui:** :sparkles: light-minimal bento redesign with hero landing page ([b530123](https://github.com/stkr22/inky-image-display/commit/b530123684d88a9d0e83e8d893c5a80962b64846))
+* **ui:** :sparkles: light-minimal bento redesign with hero landing page ([5283799](https://github.com/stkr22/inky-image-display/commit/5283799db71e0a932467ef636592a3cd3acfbd17))
+
 ## [2.1.1](https://github.com/stkr22/inky-image-display/compare/v2.1.0...v2.1.1) (2026-05-05)
 
 
