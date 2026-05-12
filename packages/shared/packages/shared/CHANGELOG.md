@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.0](https://github.com/stkr22/inky-image-display/compare/shared-v2.0.1...shared-v2.1.0) (2026-05-12)
+
+
+### Features
+
+* **controller:** centralize MQTT/S3 settings via registration response ([c030539](https://github.com/stkr22/inky-image-display/commit/c0305392c739f90bbc53733585932bcf0f25d7d1))
+* **controller:** centralize MQTT/S3 settings via registration response ([b8c4c26](https://github.com/stkr22/inky-image-display/commit/b8c4c26d82877c816c7dd4e50f7021e270cc8d14))
+
 ## [2.0.1](https://github.com/stkr22/inky-image-display/compare/shared-v2.0.0...shared-v2.0.1) (2026-05-05)
 
 
