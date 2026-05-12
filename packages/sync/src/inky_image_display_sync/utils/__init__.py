@@ -1,10 +1,15 @@
-"""Utility modules for image processing and other common operations."""
+"""Sync-specific utility modules.
 
-from inky_image_display_sync.utils.color_analysis import ColorProfileAnalyzer
-from inky_image_display_sync.utils.image_processing import (
+Image processing and color analysis live in ``inky_image_display_shared.utils``
+since the API service also needs them for on-demand AI generation.
+"""
+
+from inky_image_display_shared.utils import (
+    ColorProfileAnalyzer,
     ImageProcessingError,
     ImageProcessor,
 )
+
 from inky_image_display_sync.utils.metadata_builder import MetadataBuilder
 
 __all__ = [

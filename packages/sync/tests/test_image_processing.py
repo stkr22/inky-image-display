@@ -3,7 +3,7 @@
 from io import BytesIO
 
 import pytest
-from inky_image_display_sync.utils.image_processing import ImageProcessor
+from inky_image_display_shared.utils.image_processing import ImageProcessor
 from PIL import Image
 
 # EXIF 0x0112 = Orientation tag

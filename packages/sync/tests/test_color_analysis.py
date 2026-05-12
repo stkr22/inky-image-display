@@ -1,6 +1,6 @@
 from io import BytesIO
 
-from inky_image_display_sync.utils.color_analysis import ColorProfileAnalyzer
+from inky_image_display_shared.utils.color_analysis import ColorProfileAnalyzer
 from PIL import Image
 
 

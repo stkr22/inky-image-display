@@ -110,6 +110,12 @@ def _render_quick_actions() -> None:
                 target="/images/new",
             )
             _action_card(
+                icon="auto_awesome",
+                title="Generate an image",
+                hint="One-off AI image via Gemini",
+                target="/genai",
+            )
+            _action_card(
                 icon="sync",
                 title="New sync job",
                 hint="Pull from Immich automatically",

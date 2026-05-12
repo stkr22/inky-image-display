@@ -207,3 +207,150 @@ class SyncJobResponse(BaseModel):
     min_vibrancy_score: float
     created_at: datetime
     updated_at: datetime
+
+
+# --- Prompt blocks & presets ---
+
+
+class PromptBlockBase(BaseModel):
+    """Shared fields for a prompt block (style/palette/legibility/composition/background)."""
+
+    kind: str
+    name: str
+    text: str
+    is_default: bool = False
+
+
+class PromptBlockCreate(PromptBlockBase):
+    """Payload for creating a new prompt block."""
+
+
+class PromptBlockUpdate(BaseModel):
+    """Patch fields on an existing prompt block (all optional)."""
+
+    kind: str | None = None
+    name: str | None = None
+    text: str | None = None
+    is_default: bool | None = None
+
+
+class PromptBlockResponse(PromptBlockBase):
+    """Prompt block data returned by the API."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+class PromptPresetBase(BaseModel):
+    """Shared fields for a prompt preset (one block id per kind)."""
+
+    name: str
+    style_block_id: UUID
+    palette_block_id: UUID
+    legibility_block_id: UUID
+    composition_block_id: UUID
+    background_block_id: UUID
+    model_name: str = "gemini-2.5-flash-image"
+    is_default: bool = False
+
+
+class PromptPresetCreate(PromptPresetBase):
+    """Payload for creating a prompt preset."""
+
+
+class PromptPresetUpdate(BaseModel):
+    """Patch fields on an existing prompt preset (all optional)."""
+
+    name: str | None = None
+    style_block_id: UUID | None = None
+    palette_block_id: UUID | None = None
+    legibility_block_id: UUID | None = None
+    composition_block_id: UUID | None = None
+    background_block_id: UUID | None = None
+    model_name: str | None = None
+    is_default: bool | None = None
+
+
+class PromptPresetResponse(PromptPresetBase):
+    """Prompt preset data returned by the API."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+# --- Gemini sync jobs ---
+
+
+class GeminiSyncJobCreate(BaseModel):
+    """Payload for creating a Gemini batch sync job."""
+
+    name: str
+    is_active: bool = True
+    target_device_id: UUID
+    prompt_preset_id: UUID
+    is_portrait: bool = True
+    subjects: list[str] = []
+    images_per_subject: int = 1
+    retention_days: int | None = None
+
+
+class GeminiSyncJobUpdate(BaseModel):
+    """Patch fields on an existing Gemini sync job (all optional)."""
+
+    name: str | None = None
+    is_active: bool | None = None
+    target_device_id: UUID | None = None
+    prompt_preset_id: UUID | None = None
+    is_portrait: bool | None = None
+    subjects: list[str] | None = None
+    images_per_subject: int | None = None
+    retention_days: int | None = None
+
+
+class GeminiSyncJobResponse(BaseModel):
+    """Gemini sync job data returned by the API."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    is_active: bool
+    target_device_id: UUID
+    prompt_preset_id: UUID
+    is_portrait: bool
+    subjects: list[str]
+    images_per_subject: int
+    retention_days: int | None
+    created_at: datetime
+    updated_at: datetime
+
+
+# --- On-demand AI generation ---
+
+
+class ImageGenerateRequest(BaseModel):
+    """End-user request to generate one image via Gemini and push it.
+
+    ``preset_id`` defaults to the preset marked ``is_default``. Leaving
+    ``push_immediately`` enabled means a matching online device will get a
+    display command as soon as the image is registered.
+    """
+
+    subject: str
+    target_device_id: UUID
+    preset_id: UUID | None = None
+    is_portrait: bool = True
+    push_immediately: bool = True
+
+
+class ImageGenerateResponse(BaseModel):
+    """Acknowledgement that an image generation has been queued."""
+
+    task_id: UUID
+    status: str

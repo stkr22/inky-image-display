@@ -13,7 +13,15 @@ from inky_image_display_shared.logging import setup_logging
 from inky_image_display_api.config import Settings
 from inky_image_display_api.database import create_engine, create_tables
 from inky_image_display_api.mqtt import MQTTService
-from inky_image_display_api.routes import devices, images, sync_jobs
+from inky_image_display_api.routes import (
+    devices,
+    gemini_sync_jobs,
+    genai_generate,
+    images,
+    prompt_blocks,
+    prompt_presets,
+    sync_jobs,
+)
 from inky_image_display_api.routes.health import router as health_router
 from inky_image_display_api.services.rotation import rotation_loop
 from inky_image_display_api.services.s3_service import S3Service
@@ -61,6 +69,10 @@ app.include_router(health_router)
 app.include_router(images.router)
 app.include_router(devices.router)
 app.include_router(sync_jobs.router)
+app.include_router(prompt_blocks.router)
+app.include_router(prompt_presets.router)
+app.include_router(gemini_sync_jobs.router)
+app.include_router(genai_generate.router)
 
 
 def main() -> None:
