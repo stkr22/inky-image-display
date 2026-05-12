@@ -1,7 +1,8 @@
-"""Shared page chrome: header + responsive navigation drawer.
+"""Shared page chrome: sticky top nav + page container.
 
-Each view module wraps its content in :func:`frame` so the header, drawer,
-and base styling stay consistent across pages.
+Replaces the previous Quasar header/drawer with a custom, light-minimal top
+bar built from real ``<a href>`` anchors so clicks navigate client-side
+without a websocket round-trip.
 """
 
 from __future__ import annotations
@@ -11,44 +12,73 @@ from typing import TYPE_CHECKING
 
 from nicegui import ui
 
+from inky_image_display_ui.views._registry import PageSpec, get_pages
+from inky_image_display_ui.views._ui import install_global_styles
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-_NAV_ITEMS: list[tuple[str, str, str]] = [
-    ("/images", "Images", "image"),
-    ("/devices", "Devices", "devices"),
-    ("/sync-jobs", "Sync jobs", "sync"),
-]
 
 
 @contextmanager
 def frame(active_path: str) -> Iterator[ui.column]:
-    """Render the shared header/drawer and yield a column for the page body.
+    """Render top nav + content container; yield a column for the page body."""
+    install_global_styles()
+    _render_top_nav(active_path)
 
-    The drawer auto-shows on desktop (>= 900px) and is hidden behind a
-    hamburger toggle on mobile.
-    """
-    drawer = ui.left_drawer(value=False, bordered=True).props("breakpoint=900 show-if-above")
-
-    with ui.header().classes("items-center justify-between"), ui.row().classes("items-center gap-2"):
-        ui.button(icon="menu", on_click=drawer.toggle).props("flat round color=white").classes("md:hidden")
-        ui.label("Inky Image Display").classes("text-lg font-medium")
-
-    with drawer, ui.column().classes("w-full gap-1"):
-        for path, label, icon in _NAV_ITEMS:
-            _nav_link(path=path, label=label, icon=icon, active=path == active_path)
-
-    body = ui.column().classes("w-full max-w-screen-xl mx-auto p-4 gap-4")
+    body = ui.column().classes("ink-page")
     with body:
         yield body
 
 
-def _nav_link(*, path: str, label: str, icon: str, active: bool) -> None:
-    button = ui.button(on_click=lambda p=path: ui.navigate.to(p)).classes("w-full justify-start")
-    props = "flat align=left no-caps"
-    if active:
-        props += " color=primary"
-    button.props(props)
-    with button:
-        ui.icon(icon)
+def _render_top_nav(active_path: str) -> None:
+    pages = [p for p in get_pages() if p.show_in_nav]
+    drawer = _build_mobile_sheet(pages, active_path)
+
+    with ui.element("div").classes("ink-nav"):
+        with ui.link(target="/").classes("ink-nav-brand"):
+            ui.html('<span class="ink-nav-brand-dot"></span>')
+            ui.label("Inky").classes("text-base")
+            ui.label("/ image display").classes("text-base ink-muted")
+
+        ui.element("div").classes("flex-1")
+
+        with ui.element("nav").classes("ink-nav-links"):
+            for page in pages:
+                _nav_link(page.path, page.label, active=page.path == active_path)
+
+        with (
+            ui.element("button")
+            .classes("ink-btn ink-btn-ghost ink-btn-icon ink-nav-mobile-toggle")
+            .on("click", drawer.open)
+        ):
+            ui.icon("menu")
+
+
+def _nav_link(path: str, label: str, *, active: bool) -> None:
+    classes = "ink-nav-link is-active" if active else "ink-nav-link"
+    with ui.link(target=path).classes(classes):
         ui.label(label)
+
+
+def _build_mobile_sheet(pages: list[PageSpec], active_path: str) -> ui.dialog:
+    dialog = ui.dialog().props("position=right")
+    with (
+        dialog,
+        ui.card()
+        .classes("w-[280px] h-screen rounded-none")
+        .style("background: var(--ink-surface); border-left: 1px solid var(--ink-border);"),
+    ):
+        with ui.row().classes("w-full items-center justify-between p-4"):
+            ui.label("Menu").classes("ink-eyebrow")
+            ui.button(icon="close", on_click=dialog.close).props("flat round")
+        with ui.column().classes("w-full gap-1 px-2 pb-4"):
+            for page in pages:
+                cls = "ink-nav-link is-active" if page.path == active_path else "ink-nav-link"
+                with (
+                    ui.link(target=page.path)
+                    .classes(f"{cls} w-full")
+                    .style("display: flex; gap: 10px; padding: 12px 14px;")
+                ):
+                    ui.icon(page.icon)
+                    ui.label(page.label)
+    return dialog
