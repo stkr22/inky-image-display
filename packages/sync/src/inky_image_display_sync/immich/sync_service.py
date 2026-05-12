@@ -8,11 +8,13 @@ from datetime import datetime, timedelta
 from enum import Enum, auto
 from uuid import UUID
 
+from inky_image_display_shared.utils import ColorProfileAnalyzer, ImageProcessor
+
 from inky_image_display_sync.immich.api_client import (
-    DisplayAPIClient,
     ImageItem,
     ImageRegisterPayload,
     ImageUpdatePayload,
+    ImmichDisplayAPIClient,
     SyncJobItem,
 )
 from inky_image_display_sync.immich.client import ImmichClient
@@ -24,8 +26,6 @@ from inky_image_display_sync.immich.config import (
 )
 from inky_image_display_sync.immich.models import ImmichAsset
 from inky_image_display_sync.immich.storage import S3StorageClient
-from inky_image_display_sync.utils.color_analysis import ColorProfileAnalyzer
-from inky_image_display_sync.utils.image_processing import ImageProcessor
 from inky_image_display_sync.utils.metadata_builder import MetadataBuilder
 
 # Canonical source name marker for Immich records (matches Image.source_name).
@@ -99,7 +99,7 @@ class ImmichSyncService:
 
     def __init__(
         self,
-        api_client: DisplayAPIClient,
+        api_client: ImmichDisplayAPIClient,
         logger: logging.Logger,
         connection_config: ImmichConnectionConfig | None = None,
         sync_config: ImmichSyncConfig | None = None,

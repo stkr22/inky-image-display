@@ -26,21 +26,24 @@ _RATING_OPTIONS: dict[str, str] = {"": "Any", **{str(i): f">= {i}" for i in rang
 
 
 def register() -> None:
-    """Register sync-job page routes."""
+    """Register Immich sync-job create/edit routes.
+
+    The listing has moved to ``/jobs`` (tabbed); these routes only handle the
+    forms. Bare ``/sync-jobs`` redirects to the unified listing.
+    """
 
     @ui.page("/sync-jobs")
-    async def list_page() -> None:
-        with frame("/sync-jobs"):
-            await _render_list()
+    async def list_redirect() -> None:
+        ui.navigate.to("/jobs")
 
     @ui.page("/sync-jobs/new")
     async def create_page() -> None:
-        with frame("/sync-jobs"):
+        with frame("/jobs"):
             await _render_form(job_id=None)
 
     @ui.page("/sync-jobs/{job_id}")
     async def edit_page(job_id: str) -> None:
-        with frame("/sync-jobs"):
+        with frame("/jobs"):
             await _render_form(job_id=job_id)
 
 
@@ -139,7 +142,7 @@ async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
     eyebrow = "Automations / new" if job_id is None else "Automations / edit"
     title = "New sync job" if job_id is None else "Edit sync job"
     with ui.row().classes("w-full items-center gap-2"):
-        ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/sync-jobs")).props("flat round").tooltip(
+        ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/jobs")).props("flat round").tooltip(
             "Back to sync jobs"
         )
         with ui.column().classes("gap-0"):
@@ -306,10 +309,10 @@ async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
             error_label.text = f"Save failed: {exc.detail or exc}"
             return
         ui.notify("Saved", type="positive")
-        ui.navigate.to("/sync-jobs")
+        ui.navigate.to("/jobs")
 
     with ui.element("div").classes("ink-action-bar w-full"):
-        ui.button("Cancel", on_click=lambda: ui.navigate.to("/sync-jobs")).props("flat")
+        ui.button("Cancel", on_click=lambda: ui.navigate.to("/jobs")).props("flat")
         ui.button("Save", icon="save", on_click=save).props("unelevated color=primary")
 
 

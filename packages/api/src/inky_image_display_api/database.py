@@ -5,7 +5,14 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from inky_image_display_shared.models import Device, Image, ImmichSyncJob
+from inky_image_display_shared.models import (
+    Device,
+    GeminiSyncJob,
+    Image,
+    ImmichSyncJob,
+    PromptBlock,
+    PromptPreset,
+)
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from inky_image_display_api.config import Settings
@@ -44,7 +51,15 @@ async def create_tables(engine: AsyncEngine) -> None:
 
     """
     async with engine.begin() as conn:
-        for table in [Image.__table__, Device.__table__, ImmichSyncJob.__table__]:  # ty: ignore[unresolved-attribute]
+        tables = [
+            Image.__table__,  # ty: ignore[unresolved-attribute]
+            Device.__table__,  # ty: ignore[unresolved-attribute]
+            ImmichSyncJob.__table__,  # ty: ignore[unresolved-attribute]
+            PromptBlock.__table__,  # ty: ignore[unresolved-attribute]
+            PromptPreset.__table__,  # ty: ignore[unresolved-attribute]
+            GeminiSyncJob.__table__,  # ty: ignore[unresolved-attribute]
+        ]
+        for table in tables:
             await conn.run_sync(table.create, checkfirst=True)
 
     await _run_alembic_upgrade(engine)

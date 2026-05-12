@@ -176,6 +176,95 @@ class ApiClient:
         response = await self._client.delete(f"/api/sync-jobs/{job_id}")
         _raise_for_status(response)
 
+    # --- Prompt blocks ---
+
+    async def list_prompt_blocks(self, *, kind: str | None = None) -> list[dict[str, Any]]:
+        """List prompt blocks, optionally filtered by ``kind``."""
+        params: dict[str, Any] = {}
+        if kind is not None:
+            params["kind"] = kind
+        response = await self._client.get("/api/genai/blocks", params=params)
+        return _parse_json_list(response)
+
+    async def create_prompt_block(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """Create a prompt block."""
+        response = await self._client.post("/api/genai/blocks", json=_json_safe(body))
+        return _parse_json_dict(response)
+
+    async def update_prompt_block(self, block_id: UUID, body: Mapping[str, Any]) -> dict[str, Any]:
+        """Patch a prompt block."""
+        response = await self._client.put(f"/api/genai/blocks/{block_id}", json=_json_safe(body))
+        return _parse_json_dict(response)
+
+    async def delete_prompt_block(self, block_id: UUID) -> None:
+        """Delete a prompt block by UUID."""
+        response = await self._client.delete(f"/api/genai/blocks/{block_id}")
+        _raise_for_status(response)
+
+    # --- Prompt presets ---
+
+    async def list_prompt_presets(self) -> list[dict[str, Any]]:
+        """List all prompt presets."""
+        response = await self._client.get("/api/genai/presets")
+        return _parse_json_list(response)
+
+    async def get_prompt_preset(self, preset_id: UUID) -> dict[str, Any]:
+        """Fetch a prompt preset by UUID."""
+        response = await self._client.get(f"/api/genai/presets/{preset_id}")
+        return _parse_json_dict(response)
+
+    async def create_prompt_preset(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """Create a prompt preset."""
+        response = await self._client.post("/api/genai/presets", json=_json_safe(body))
+        return _parse_json_dict(response)
+
+    async def update_prompt_preset(self, preset_id: UUID, body: Mapping[str, Any]) -> dict[str, Any]:
+        """Patch a prompt preset."""
+        response = await self._client.put(f"/api/genai/presets/{preset_id}", json=_json_safe(body))
+        return _parse_json_dict(response)
+
+    async def delete_prompt_preset(self, preset_id: UUID) -> None:
+        """Delete a prompt preset by UUID."""
+        response = await self._client.delete(f"/api/genai/presets/{preset_id}")
+        _raise_for_status(response)
+
+    # --- Gemini sync jobs ---
+
+    async def list_gemini_jobs(self, *, is_active: bool | None = None) -> list[dict[str, Any]]:
+        """List Gemini sync jobs, optionally filtered by ``is_active``."""
+        params: dict[str, Any] = {}
+        if is_active is not None:
+            params["is_active"] = is_active
+        response = await self._client.get("/api/genai/jobs", params=params)
+        return _parse_json_list(response)
+
+    async def get_gemini_job(self, job_id: UUID) -> dict[str, Any]:
+        """Fetch a Gemini sync job by UUID."""
+        response = await self._client.get(f"/api/genai/jobs/{job_id}")
+        return _parse_json_dict(response)
+
+    async def create_gemini_job(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """Create a Gemini sync job."""
+        response = await self._client.post("/api/genai/jobs", json=_json_safe(body))
+        return _parse_json_dict(response)
+
+    async def update_gemini_job(self, job_id: UUID, body: Mapping[str, Any]) -> dict[str, Any]:
+        """Patch a Gemini sync job."""
+        response = await self._client.put(f"/api/genai/jobs/{job_id}", json=_json_safe(body))
+        return _parse_json_dict(response)
+
+    async def delete_gemini_job(self, job_id: UUID) -> None:
+        """Delete a Gemini sync job by UUID."""
+        response = await self._client.delete(f"/api/genai/jobs/{job_id}")
+        _raise_for_status(response)
+
+    # --- On-demand image generation ---
+
+    async def generate_image(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """Enqueue a Gemini generation; returns ``{task_id, status}``."""
+        response = await self._client.post("/api/genai/generate", json=_json_safe(body))
+        return _parse_json_dict(response)
+
 
 def _parse_json_list(response: httpx.Response) -> list[dict[str, Any]]:
     """Raise on non-2xx and return the JSON body as a list of dicts."""

@@ -46,3 +46,7 @@ class Settings(BaseSettings):
     mqtt_websocket_path: str = "/mqtt"
     mqtt_client_id: str = "inky-api"
     mqtt_keep_alive: int = 30
+
+    # Gemini AI image generation. Required only when the /api/images/generate
+    # endpoint is exercised — leaving it blank disables on-demand generation.
+    gemini_api_key: SecretStr | None = None
