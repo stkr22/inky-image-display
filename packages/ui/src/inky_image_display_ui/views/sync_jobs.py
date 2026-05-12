@@ -13,6 +13,8 @@ from inky_image_display_ui.api_client import ApiClient, ApiError
 from inky_image_display_ui.formatting import format_datetime
 from inky_image_display_ui.session import require_api_client
 from inky_image_display_ui.views._layout import frame
+from inky_image_display_ui.views._ui import stat
+from inky_image_display_ui.views._ui import tile as bento_tile
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +48,15 @@ async def _render_list() -> None:
     api = require_api_client()
     device_map = await _load_device_map(api)
 
-    with ui.row().classes("w-full items-center"):
-        ui.label("Sync jobs").classes("text-2xl font-medium")
-        ui.space()
-        refresh_button = ui.button(icon="refresh").props("flat round").tooltip("Refresh")
-        ui.button("New job", icon="add", on_click=lambda: ui.navigate.to("/sync-jobs/new")).props("color=primary")
+    with ui.row().classes("w-full items-end justify-between"):
+        with ui.column().classes("gap-0"):
+            ui.label("Automations").classes("ink-eyebrow")
+            ui.label("Sync jobs").classes("ink-h2")
+        with ui.row().classes("items-center gap-2"):
+            refresh_button = ui.button(icon="refresh").props("flat round").tooltip("Refresh")
+            ui.button("New job", icon="add", on_click=lambda: ui.navigate.to("/sync-jobs/new")).props(
+                "color=primary unelevated"
+            )
 
     container = ui.column().classes("w-full gap-2")
 
@@ -97,11 +103,17 @@ def _render_row(api: ApiClient, job: dict[str, Any], device_map: dict[str, str],
         ui.notify("Deleted", type="positive")
         await on_changed()
 
-    with ui.card().classes("w-full"), ui.row().classes("w-full items-center gap-3"):
-        with ui.column().classes("flex-1 gap-0 min-w-0"):
-            ui.label(job["name"]).classes("text-base font-medium truncate")
-            ui.label(f"{job['strategy']} · count={job['count']} · → {target_name}").classes("text-xs text-gray-500")
-            ui.label(f"Updated: {format_datetime(job.get('updated_at'))}").classes("text-xs text-gray-500")
+    with (
+        ui.element("div")
+        .classes("bento-tile w-full")
+        .style("padding: 16px 20px; flex-direction: row; align-items: center; gap: 12px;"),
+    ):
+        with ui.column().classes("flex-1 gap-1 min-w-0"):
+            ui.label(job["name"]).classes("ink-h3").style(
+                "white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"
+            )
+            ui.label(f"{job['strategy']} · count {job['count']} · → {target_name}").classes("ink-small")
+            ui.label(f"Updated {format_datetime(job.get('updated_at'))}").classes("ink-small")
         switch = ui.switch(value=bool(job.get("is_active"))).tooltip("Active")
         switch.on_value_change(toggle_active)
         ui.button(icon="edit", on_click=lambda jid=job["id"]: ui.navigate.to(f"/sync-jobs/{jid}")).props(
@@ -124,34 +136,62 @@ async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
             ui.label("Could not load sync job.").classes("text-red-500")
             return
 
+    eyebrow = "Automations / new" if job_id is None else "Automations / edit"
     title = "New sync job" if job_id is None else "Edit sync job"
-    with ui.row().classes("w-full items-center"):
-        ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/sync-jobs")).props("flat round")
-        ui.label(title).classes("text-2xl font-medium")
+    with ui.row().classes("w-full items-center gap-2"):
+        ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/sync-jobs")).props("flat round").tooltip(
+            "Back to sync jobs"
+        )
+        with ui.column().classes("gap-0"):
+            ui.label(eyebrow).classes("ink-eyebrow")
+            ui.label(title).classes("ink-h2")
 
-    with ui.expansion("Basics", icon="settings", value=True).classes("w-full"):
-        name_field = ui.input("Name", value=job.get("name") or "").classes("w-full")
-        with ui.row().classes("w-full gap-3 flex-wrap"):
-            strategy_field = ui.select(_STRATEGIES, value=job.get("strategy") or "RANDOM", label="Strategy").classes(
-                "min-w-[160px]"
+    # --- Basics card ---------------------------------------------------------
+    with (
+        ui.element("div").classes("bento-tile w-full").style("padding: 24px;"),
+        ui.column().classes("w-full ink-form-section"),
+    ):
+        ui.label("Basics").classes("ink-eyebrow")
+        name_field = ui.input("Name", value=job.get("name") or "").classes("w-full").props("outlined")
+        with ui.row().classes("w-full ink-form-row"):
+            strategy_field = (
+                ui.select(_STRATEGIES, value=job.get("strategy") or "RANDOM", label="Strategy")
+                .classes("flex-1")
+                .props("outlined")
             )
-            query_field = ui.input("Query (SMART only)", value=job.get("query") or "").classes("flex-1 min-w-[200px]")
-        target_field = ui.select(
-            device_options,
-            value=job.get("target_device_id") or (devices[0]["id"] if devices else None),
-            label="Target device",
-        ).classes("w-full")
-        with ui.row().classes("w-full gap-3 items-center flex-wrap"):
-            count_field = ui.number(
-                "Count (1-1000)", value=int(job.get("count") or 10), min=_MIN_COUNT, max=_MAX_COUNT, step=1
-            ).classes("w-40")
+            query_field = (
+                ui.input("Query (SMART only)", value=job.get("query") or "").classes("flex-1").props("outlined")
+            )
+        target_field = (
+            ui.select(
+                device_options,
+                value=job.get("target_device_id") or (devices[0]["id"] if devices else None),
+                label="Target device",
+            )
+            .classes("w-full")
+            .props("outlined")
+        )
+        with ui.row().classes("w-full ink-form-row items-end"):
+            count_field = (
+                ui.number(
+                    "Count (1-1000)",
+                    value=int(job.get("count") or 10),
+                    min=_MIN_COUNT,
+                    max=_MAX_COUNT,
+                    step=1,
+                )
+                .classes("flex-1")
+                .props("outlined")
+            )
+            with ui.column().classes("flex-1 gap-1 min-w-[180px]"):
+                with ui.row().classes("w-full items-baseline justify-between"):
+                    ui.label("Overfetch multiplier").classes("ink-small")
+                    overfetch_value = ui.label().classes("ink-slider-value")
+                overfetch_slider = ui.slider(min=1, max=10, step=1, value=int(job.get("overfetch_multiplier") or 3))
+                overfetch_value.bind_text_from(overfetch_slider, "value")
+        with ui.row().classes("w-full gap-4 items-center flex-wrap"):
             random_pick = ui.switch("Random pick", value=bool(job.get("random_pick")))
-        with ui.column().classes("w-full gap-0"):
-            ui.label("Overfetch multiplier").classes("text-xs text-gray-500")
-            overfetch_slider = ui.slider(min=1, max=10, step=1, value=int(job.get("overfetch_multiplier") or 3)).props(
-                "label-always"
-            )
-        active_switch = ui.switch("Active", value=bool(job.get("is_active", True)))
+            active_switch = ui.switch("Active", value=bool(job.get("is_active", True)))
 
     def _refresh_query_enabled() -> None:
         query_field.set_enabled(strategy_field.value == "SMART")
@@ -159,54 +199,77 @@ async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
     strategy_field.on_value_change(lambda _e: _refresh_query_enabled())
     _refresh_query_enabled()
 
-    with ui.expansion("Immich filters", icon="tune").classes("w-full"):
-        albums_field = (
-            ui.textarea("Album IDs (one per line)", value="\n".join(job.get("album_ids") or []))
-            .classes("w-full")
-            .props("autogrow")
-        )
-        persons_field = (
-            ui.textarea("Person IDs (one per line)", value="\n".join(job.get("person_ids") or []))
-            .classes("w-full")
-            .props("autogrow")
-        )
-        tags_field = (
-            ui.textarea("Tag IDs (one per line)", value="\n".join(job.get("tag_ids") or []))
-            .classes("w-full")
-            .props("autogrow")
-        )
-        with ui.row().classes("w-full gap-3 flex-wrap"):
-            favorite_field = ui.select(
-                _FAVORITE_OPTIONS, value=_bool_to_option(job.get("is_favorite")), label="Favorite filter"
-            ).classes("min-w-[180px]")
-            rating_field = ui.select(
-                _RATING_OPTIONS,
-                value=str(job["rating"]) if isinstance(job.get("rating"), int) else "",
-                label="Rating",
-            ).classes("min-w-[140px]")
-        with ui.row().classes("w-full gap-3 flex-wrap"):
-            city_field = ui.input("City", value=job.get("city") or "").classes("flex-1 min-w-[160px]")
-            state_field = ui.input("State/Region", value=job.get("state") or "").classes("flex-1 min-w-[160px]")
-            country_field = ui.input("Country", value=job.get("country") or "").classes("flex-1 min-w-[160px]")
-        with ui.row().classes("w-full gap-3 flex-wrap"):
-            taken_after_field = ui.input("Taken after (YYYY-MM-DD)", value=_date_str(job.get("taken_after"))).classes(
-                "flex-1 min-w-[180px]"
-            )
-            taken_before_field = ui.input(
-                "Taken before (YYYY-MM-DD)", value=_date_str(job.get("taken_before"))
-            ).classes("flex-1 min-w-[180px]")
-        with ui.column().classes("w-full gap-0"):
-            ui.label("Minimum color score").classes("text-xs text-gray-500")
-            color_slider = ui.slider(min=0.0, max=1.0, step=0.05, value=float(job.get("min_color_score") or 0.5)).props(
-                "label-always"
-            )
-        with ui.column().classes("w-full gap-0"):
-            ui.label("Minimum vibrancy score").classes("text-xs text-gray-500")
-            vibrancy_slider = ui.slider(
-                min=0.0, max=1.0, step=0.05, value=float(job.get("min_vibrancy_score") or 0.2)
-            ).props("label-always")
+    # --- Immich filters card -------------------------------------------------
+    with (
+        ui.element("div").classes("bento-tile w-full").style("padding: 24px;"),
+        ui.column().classes("w-full ink-form-section"),
+    ):
+        ui.label("Immich filters").classes("ink-eyebrow")
+        ui.label("Narrow which photos the sync pulls").classes("ink-small")
 
-    error_label = ui.label("").classes("text-red-500 text-sm")
+        with ui.row().classes("w-full ink-form-row"):
+            albums_field = (
+                ui.textarea("Album IDs (one per line)", value="\n".join(job.get("album_ids") or []))
+                .classes("flex-1")
+                .props("outlined autogrow")
+            )
+            persons_field = (
+                ui.textarea("Person IDs (one per line)", value="\n".join(job.get("person_ids") or []))
+                .classes("flex-1")
+                .props("outlined autogrow")
+            )
+            tags_field = (
+                ui.textarea("Tag IDs (one per line)", value="\n".join(job.get("tag_ids") or []))
+                .classes("flex-1")
+                .props("outlined autogrow")
+            )
+        with ui.row().classes("w-full ink-form-row"):
+            favorite_field = (
+                ui.select(_FAVORITE_OPTIONS, value=_bool_to_option(job.get("is_favorite")), label="Favorite filter")
+                .classes("flex-1")
+                .props("outlined")
+            )
+            rating_field = (
+                ui.select(
+                    _RATING_OPTIONS,
+                    value=str(job["rating"]) if isinstance(job.get("rating"), int) else "",
+                    label="Rating",
+                )
+                .classes("flex-1")
+                .props("outlined")
+            )
+        with ui.row().classes("w-full ink-form-row"):
+            city_field = ui.input("City", value=job.get("city") or "").classes("flex-1").props("outlined")
+            state_field = ui.input("State/Region", value=job.get("state") or "").classes("flex-1").props("outlined")
+            country_field = ui.input("Country", value=job.get("country") or "").classes("flex-1").props("outlined")
+        with ui.row().classes("w-full ink-form-row"):
+            taken_after_field = (
+                ui.input("Taken after (YYYY-MM-DD)", value=_date_str(job.get("taken_after")))
+                .classes("flex-1")
+                .props("outlined")
+            )
+            taken_before_field = (
+                ui.input("Taken before (YYYY-MM-DD)", value=_date_str(job.get("taken_before")))
+                .classes("flex-1")
+                .props("outlined")
+            )
+        with ui.row().classes("w-full ink-form-row"):
+            with ui.column().classes("flex-1 gap-1 min-w-[200px]"):
+                with ui.row().classes("w-full items-baseline justify-between"):
+                    ui.label("Minimum color score").classes("ink-small")
+                    color_value = ui.label().classes("ink-slider-value")
+                color_slider = ui.slider(min=0.0, max=1.0, step=0.05, value=float(job.get("min_color_score") or 0.5))
+                color_value.bind_text_from(color_slider, "value", backward=lambda v: f"{v:.2f}")
+            with ui.column().classes("flex-1 gap-1 min-w-[200px]"):
+                with ui.row().classes("w-full items-baseline justify-between"):
+                    ui.label("Minimum vibrancy score").classes("ink-small")
+                    vibrancy_value = ui.label().classes("ink-slider-value")
+                vibrancy_slider = ui.slider(
+                    min=0.0, max=1.0, step=0.05, value=float(job.get("min_vibrancy_score") or 0.2)
+                )
+                vibrancy_value.bind_text_from(vibrancy_slider, "value", backward=lambda v: f"{v:.2f}")
+
+    error_label = ui.label("").style("color: var(--ink-danger); font-size: 13px;")
 
     async def save() -> None:
         body = _collect_form(
@@ -245,9 +308,9 @@ async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
         ui.notify("Saved", type="positive")
         ui.navigate.to("/sync-jobs")
 
-    with ui.row().classes("w-full justify-end gap-2 pt-2"):
+    with ui.element("div").classes("ink-action-bar w-full"):
         ui.button("Cancel", on_click=lambda: ui.navigate.to("/sync-jobs")).props("flat")
-        ui.button("Save", icon="save", on_click=save).props("color=primary")
+        ui.button("Save", icon="save", on_click=save).props("unelevated color=primary")
 
 
 def _collect_form(  # noqa: PLR0913, PLR0911
@@ -362,6 +425,21 @@ def _date_str(value: Any) -> str:
     return ""
 
 
+async def tile() -> None:
+    """Render the Sync jobs bento tile on the landing dashboard."""
+    api = require_api_client()
+    try:
+        jobs = await api.list_sync_jobs()
+    except ApiError:
+        logger.exception("list_sync_jobs failed on landing tile")
+        jobs = []
+    total = len(jobs)
+    active = sum(1 for j in jobs if j.get("is_active"))
+
+    with bento_tile(span="col-span-4", href="/sync-jobs"):
+        stat(label="Sync jobs", value=f"{active}/{total}", hint="Active / configured")
+
+
 async def _load_devices(api: ApiClient) -> list[dict[str, Any]]:
     try:
         return await api.list_devices()
@@ -376,10 +454,10 @@ async def _load_device_map(api: ApiClient) -> dict[str, str]:
 
 
 async def _confirm(message: str) -> bool:
-    with ui.dialog() as dialog, ui.card():
-        ui.label(message)
+    with ui.dialog() as dialog, ui.card().style("padding: 20px; gap: 12px; min-width: 320px;"):
+        ui.label(message).classes("ink-body")
         with ui.row().classes("w-full justify-end gap-2"):
             ui.button("Cancel", on_click=lambda: dialog.submit(False)).props("flat")
-            ui.button("Confirm", on_click=lambda: dialog.submit(True)).props("color=primary")
+            ui.button("Confirm", on_click=lambda: dialog.submit(True)).props("unelevated color=primary")
     result = await dialog
     return bool(result)

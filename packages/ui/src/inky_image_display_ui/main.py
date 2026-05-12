@@ -59,10 +59,15 @@ def build_app(settings: Settings) -> FastAPI:
     app.include_router(media_router)
 
     ui_app.register_pages()
+    # NiceGUI's default ``reconnect_timeout`` of 3s is aggressive — a brief
+    # network hiccup evicts the session and reloads the page (taking any
+    # server-side click handlers with it). 20s tolerates transient drops
+    # and derives a sensible 16s socket.io ping interval / 8s pong window.
     ui.run_with(
         app,
         title="Inky Image Display",
         storage_secret=settings.storage_secret,
+        reconnect_timeout=20.0,
     )
 
     async def _close_http_client() -> None:
