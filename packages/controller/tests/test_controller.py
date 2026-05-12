@@ -134,5 +134,6 @@ class TestRegistrationResponse:
             s3_access_key="key",
             s3_secret_key="secret",
             s3_region="garage",
+            mqtt_host="broker.test",
         )
         assert response.s3_region == "garage"

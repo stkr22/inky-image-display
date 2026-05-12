@@ -83,6 +83,7 @@ class TestRegistrationResponse:
             s3_access_key="access123",
             s3_secret_key="secret456",
             s3_secure=True,
+            mqtt_host="broker.test",
         )
         assert response.status == "registered"
         assert response.s3_endpoint == "s3.local:9000"
@@ -96,6 +97,7 @@ class TestRegistrationResponse:
             s3_bucket="images",
             s3_access_key="access123",
             s3_secret_key="secret456",
+            mqtt_host="broker.test",
         )
         assert response.s3_region is None
 
@@ -108,6 +110,7 @@ class TestRegistrationResponse:
             s3_access_key="access123",
             s3_secret_key="secret456",
             s3_region="garage",
+            mqtt_host="broker.test",
         )
         assert response.s3_region == "garage"
 
@@ -119,6 +122,7 @@ class TestRegistrationResponse:
             s3_bucket="images",
             s3_access_key="access123",
             s3_secret_key="secret456",
+            mqtt_host="broker.test",
         )
         assert response.status == "updated"
 
@@ -131,6 +135,7 @@ class TestRegistrationResponse:
                 s3_bucket="images",
                 s3_access_key="access123",
                 s3_secret_key="secret456",
+                mqtt_host="broker.test",
             )
 
 

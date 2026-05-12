@@ -31,7 +31,14 @@ class DeviceRegistration(BaseModel):
 
 
 class RegistrationResponse(BaseModel):
-    """Response sent after successful device registration."""
+    """Response sent after successful device registration.
+
+    Carries everything the controller needs to talk to the rest of the
+    system: S3 read credentials for image fetches and the MQTT broker
+    parameters for command/ack/status traffic. The controller only
+    needs local config for its own identity, display hardware, and
+    where to find this API.
+    """
 
     status: Literal["registered", "updated"] = Field(description="Registration result")
     s3_endpoint: str = Field(description="S3 server endpoint")
@@ -40,6 +47,20 @@ class RegistrationResponse(BaseModel):
     s3_secret_key: str = Field(description="Read-only secret key")
     s3_secure: bool = Field(default=False, description="Use HTTPS for S3")
     s3_region: str | None = Field(default=None, description="S3 region")
+    mqtt_host: str = Field(description="MQTT broker hostname")
+    mqtt_port: int = Field(default=1883, description="MQTT broker port")
+    mqtt_username: str | None = Field(default=None, description="MQTT username")
+    mqtt_password: str | None = Field(default=None, description="MQTT password")
+    mqtt_tls: bool = Field(default=False, description="Use TLS for the broker connection")
+    mqtt_transport: Literal["tcp", "websockets"] = Field(
+        default="tcp",
+        description="MQTT transport. Use 'websockets' to tunnel via HTTP(S) ingress.",
+    )
+    mqtt_websocket_path: str = Field(
+        default="/mqtt",
+        description="HTTP path served by the broker for MQTT-over-WebSockets",
+    )
+    mqtt_keep_alive: int = Field(default=30, description="MQTT keep-alive in seconds")
 
 
 class DisplayCommand(BaseModel):
