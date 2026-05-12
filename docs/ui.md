@@ -1,6 +1,19 @@
 # UI (`inky-image-display-ui`)
 
-Flet-based web UI served by a FastAPI app. Lets an operator browse and upload images, command displays, and manage Immich sync jobs from a phone or laptop.
+NiceGUI-based web UI served by a FastAPI app. Lets an operator browse and upload images, command displays, manage sync jobs (Immich + Gemini), and trigger on-demand AI image generation from a phone or laptop.
+
+## Sections
+
+The top nav has four sections:
+
+| Path | Purpose |
+|------|---------|
+| `/images` | Library: browse, upload, edit, delete |
+| `/devices` | Online wall + per-device controls (push next, pick image, clear) |
+| `/jobs` | Tabbed list of Immich and Gemini sync jobs. The "New job" button follows the active tab and routes to `/sync-jobs/new` or `/gemini-jobs/new`; the per-source forms still live there for editing existing jobs |
+| `/genai` | On-demand generation form on top, prompt library tucked behind an "Advanced" expansion below |
+
+The GenAI page is the full AI surface: a Subject textarea (capped at 200 characters) plus target-device, preset, orientation, and "push immediately" toggles for one-off generation. The collapsed Advanced section lets operators add or edit prompt blocks (style / palette / legibility / composition / background) and prompt presets — including the Gemini model name each preset binds to.
 
 ## Architecture
 
@@ -14,12 +27,12 @@ The UI container hosts three pieces of surface area on one uvicorn process:
 
 | Route | Purpose |
 |-------|---------|
-| `/` | Flet UI (mounted ASGI app) |
+| `/` | NiceGUI UI (mounted ASGI app) |
 | `/health` | Liveness probe |
 | `/media/{object_key:path}` | Streams image bytes from S3 using reader credentials |
-| `/internal/upload` | Accepts multipart uploads from Flet's `FilePicker` and forwards to the API |
+| `/internal/upload` | Accepts multipart uploads and forwards to the API |
 
-Plain routes are registered before the Flet mount so FastAPI matches them first.
+Plain routes are registered before the NiceGUI mount so FastAPI matches them first.
 
 Images are proxied through the UI rather than fetched directly by the browser — avoids configuring CORS on S3 and keeps reader credentials server-side.
 

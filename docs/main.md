@@ -11,10 +11,11 @@ FastAPI service running at `:8000`. Responsibilities:
 - **Device registry**: Devices register over HTTP at `POST /api/devices/register` with their display specs (dimensions, orientation, model). The API stores these in the `devices` table and returns the S3 reader credentials.
 - **Image library**: Images are stored as metadata in the `images` table and as files in S3-compatible storage.
 - **Sync job management**: CRUD REST API for `immich_sync_jobs` records which drive the Sync service.
+- **AI generation**: `/api/genai/*` endpoints expose the prompt library (blocks + presets), Gemini batch jobs, and on-demand generation. `POST /api/genai/generate` runs the Gemini call in a FastAPI background task and pushes the result to a matching online device over MQTT as soon as it's ready — no polling.
 - **Display control**: REST endpoints publish commands (display, clear) to connected devices over MQTT. A background rotation loop also periodically advances the displayed image.
 - **Online tracking**: The API subscribes to retained MQTT status topics. Devices publish `online` on connect and configure an MQTT Last-Will-and-Testament with `offline`, so the broker announces unexpected disconnects automatically.
 
-On startup the API auto-creates the `devices`, `images`, and `immich_sync_jobs` tables and connects to the MQTT broker.
+On startup the API auto-creates the `devices`, `images`, `immich_sync_jobs`, `prompt_blocks`, `prompt_presets`, and `gemini_sync_jobs` tables, applies any pending Alembic migrations (the AI tables get seeded with a default prompt library on first run), and connects to the MQTT broker.
 
 ### Controller (`inky-image-display-controller`)
 
@@ -33,7 +34,9 @@ Flet-based web UI mounted inside a FastAPI app. Lets an operator browse, upload,
 
 ### Sync (`inky-image-display-sync`)
 
-CLI tool (`immich-sync`) intended to be run as a cron job. For each active `ImmichSyncJob` record it:
+CLI with two subcommands, both intended to run as cron jobs:
+
+**`inky-image-display-sync immich`** (default) — for each active `ImmichSyncJob`:
 
 1. Reads the target device's display dimensions from the `devices` table.
 2. Queries Immich using the job's filter criteria (albums, people, tags, dates, etc.).
@@ -42,17 +45,29 @@ CLI tool (`immich-sync`) intended to be run as a cron job. For each active `Immi
 5. Persists image metadata to the `images` table.
 6. Enforces the `max_images` cap and `retention_days` expiry by deleting old Immich-sourced images.
 
+**`inky-image-display-sync gemini`** — for each active `GeminiSyncJob`:
+
+1. Resolves the job's `prompt_preset_id` (which carries the model name and the five prompt blocks) via the API.
+2. Iterates `subjects × images_per_subject`, calling the configured Gemini image model.
+3. Stores results in S3 under `gemini/{uuid}.jpg` and registers them with `source_name="gemini"`. Optional `retention_days` lets the API clean up later.
+
+Both subcommands share the same `DisplayAPIClient` (subclassed per source for the source-specific endpoints) and the same `ImageProcessor`/`ColorProfileAnalyzer` helpers.
+
 ## Data flow
 
 ```
-Immich ──(sync)──► S3 Storage ◄──(fetch)── Controller (Raspberry Pi)
-                        │
-                   API (images table)
-                        │
-                   devices table ◄──(HTTP register)── Controller
-                        │
-                   MQTT broker ──(cmd / ack / status)──► Controller
+Immich        ──(immich-sync, cron)──┐
+Gemini batch  ──(gemini-sync, cron)──┤
+UI POST /api/genai/generate (background task) ──► S3 Storage ◄──(fetch)── Controller (Raspberry Pi)
+                                                       │
+                                                  API (images table)
+                                                       │
+                                                  devices table ◄──(HTTP register)── Controller
+                                                       │
+                                                  MQTT broker ──(cmd / ack / status)──► Controller
 ```
+
+On-demand generation: the UI's "Generate an image" form posts to `POST /api/genai/generate` with a subject, target device, preset, and orientation flag. The API queues a background task that calls Gemini, uploads the JPEG to S3, registers the row, and (when `push_immediately` is true and the device is online) immediately publishes a display command over MQTT — there's no separate worker process.
 
 ## MQTT topics (API ↔ Controller)
 
