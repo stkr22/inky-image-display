@@ -68,7 +68,6 @@ def main(
     logger.info("Starting Inky Display Controller")
     logger.info("Device ID: %s", settings.device.id)
     logger.info("API URL: %s", settings.api.url)
-    logger.info("MQTT broker: %s:%d", settings.mqtt.host, settings.mqtt.port)
     logger.info("Mock display: %s", settings.display.mock)
 
     # Create controller

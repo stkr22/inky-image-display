@@ -49,6 +49,14 @@ def mock_settings() -> MagicMock:
     settings.s3_reader_access_key = "reader-key"
     settings.s3_reader_secret_key = "reader-secret"
     settings.default_display_duration = 3600
+    settings.mqtt_host = "broker.test"
+    settings.mqtt_port = 1883
+    settings.mqtt_username = None
+    settings.mqtt_password = None
+    settings.mqtt_tls = False
+    settings.mqtt_transport = "tcp"
+    settings.mqtt_websocket_path = "/mqtt"
+    settings.mqtt_keep_alive = 30
     return settings
 
 

@@ -7,8 +7,6 @@ from inky_image_display_controller.config import (
     APIConfig,
     DeviceConfig,
     DisplayConfig,
-    MQTTConfig,
-    S3Config,
     Settings,
 )
 from inky_image_display_controller.display import MockDisplay
@@ -61,8 +59,6 @@ def test_settings() -> Settings:
     return Settings(
         device=DeviceConfig(id="test-device", room="Test Room"),
         api=APIConfig(url="http://localhost:8000"),
-        mqtt=MQTTConfig(host="broker.test"),
-        s3=S3Config(endpoint="localhost:9000", bucket="test-bucket"),
         display=DisplayConfig(mock=True),
     )
 
@@ -92,6 +88,7 @@ def sample_registration_response() -> RegistrationResponse:
         s3_access_key="test-access-key",
         s3_secret_key="test-secret-key",
         s3_secure=False,
+        mqtt_host="broker.test",
     )
 
 

@@ -1,10 +1,16 @@
-"""Configuration management using pydantic-settings."""
+"""Configuration management using pydantic-settings.
+
+The controller only configures three things locally: its own identity,
+how to reach the API for the one-shot registration call, and the
+display hardware. MQTT broker parameters and S3 credentials arrive in
+the registration response so they stay centrally managed by the API.
+"""
 
 from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import Field, SecretStr
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,45 +25,11 @@ class APIConfig(BaseSettings):
     """API HTTP server connection settings.
 
     Used for the one-shot registration call. All ongoing device traffic
-    (commands, acknowledgements, status) goes through MQTT.
+    (commands, acknowledgements, status) goes through MQTT, whose
+    connection details are returned by ``/register``.
     """
 
     url: str = Field(default="http://localhost:8000", description="API base URL (http:// or https://)")
-
-
-class MQTTConfig(BaseSettings):
-    """MQTT broker connection settings."""
-
-    host: str = Field(default="localhost", description="MQTT broker hostname")
-    port: int = Field(default=1883, description="MQTT broker port")
-    username: str | None = Field(default=None, description="MQTT username")
-    password: SecretStr | None = Field(default=None, description="MQTT password")
-    tls: bool = Field(default=False, description="Use TLS for the broker connection")
-    transport: Literal["tcp", "websockets"] = Field(
-        default="tcp",
-        description="MQTT transport. Use 'websockets' to tunnel via HTTP(S) ingress.",
-    )
-    websocket_path: str = Field(
-        default="/mqtt",
-        description="HTTP path served by the broker for MQTT-over-WebSockets",
-    )
-    keep_alive: int = Field(default=30, description="MQTT keep-alive in seconds")
-    reconnect_interval: int = Field(default=5, description="Initial reconnect delay in seconds")
-    max_reconnect_interval: int = Field(default=60, description="Maximum reconnect delay")
-
-
-class S3Config(BaseSettings):
-    """S3-compatible object storage connection settings.
-
-    These are typically populated from the registration response,
-    but can be pre-configured via environment variables.
-    """
-
-    endpoint: str = Field(default="localhost:9000", description="S3 server endpoint")
-    bucket: str = Field(default="inky-images", description="Bucket containing images")
-    access_key: str | None = Field(default=None, description="S3 access key")
-    secret_key: str | None = Field(default=None, description="S3 secret key")
-    secure: bool = Field(default=False, description="Use HTTPS for S3 connection")
 
 
 class DisplayConfig(BaseSettings):
@@ -82,8 +54,6 @@ class Settings(BaseSettings):
 
     device: DeviceConfig = Field(default_factory=DeviceConfig)
     api: APIConfig = Field(default_factory=APIConfig)
-    mqtt: MQTTConfig = Field(default_factory=MQTTConfig)
-    s3: S3Config = Field(default_factory=S3Config)
     display: DisplayConfig = Field(default_factory=DisplayConfig)
 
     config_file: Path | None = Field(default=None, description="Path to YAML configuration file")
@@ -102,18 +72,13 @@ class Settings(BaseSettings):
         with yaml_path.open() as f:
             yaml_config = yaml.safe_load(f) or {}
 
-        # Build nested config from YAML
         device_config = DeviceConfig(**yaml_config.get("device", {}))
         api_config = APIConfig(**yaml_config.get("api", {}))
-        mqtt_config = MQTTConfig(**yaml_config.get("mqtt", {}))
-        s3_config = S3Config(**yaml_config.get("s3", {}))
         display_config = DisplayConfig(**yaml_config.get("display", {}))
 
         return cls(
             device=device_config,
             api=api_config,
-            mqtt=mqtt_config,
-            s3=s3_config,
             display=display_config,
             config_file=yaml_path,
         )

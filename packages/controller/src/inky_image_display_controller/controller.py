@@ -29,7 +29,12 @@ class DisplayController:
     """
 
     def __init__(self, settings: Settings) -> None:
-        """Initialize the display controller."""
+        """Initialize the display controller.
+
+        The MQTT client is built later in ``_apply_registration_response``
+        because broker connection details arrive from the API rather
+        than being configured locally.
+        """
         self._settings = settings
         self._current_image_id: str | None = None
         self._shutdown_event = asyncio.Event()
@@ -40,11 +45,7 @@ class DisplayController:
             mock_width=settings.display.mock_width,
             mock_height=settings.display.mock_height,
         )
-        self._mqtt = MQTTClient(
-            mqtt_config=settings.mqtt,
-            device_id=settings.device.id,
-            on_command=self._handle_command,
-        )
+        self._mqtt: MQTTClient | None = None
 
     def _build_registration(self) -> DeviceRegistration:
         return DeviceRegistration(
@@ -88,6 +89,7 @@ class DisplayController:
             response = await self._register_with_retry()
             self._apply_registration_response(response)
 
+            assert self._mqtt is not None  # set by _apply_registration_response
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(self._mqtt.run(), name="mqtt")
                 tg.create_task(self._shutdown_monitor(), name="shutdown_monitor")
@@ -112,14 +114,17 @@ class DisplayController:
         self._s3.close()
         if hasattr(self._display, "close"):
             self._display.close()  # ty: ignore[call-non-callable]
-        await self._mqtt.disconnect()
+        if self._mqtt is not None:
+            await self._mqtt.disconnect()
 
     def _apply_registration_response(self, response: RegistrationResponse) -> None:
-        """Configure the S3 client from the registration response."""
+        """Configure S3 and build the MQTT client from the registration response."""
         logger.info(
-            "Received registration response: status=%s, endpoint=%s",
+            "Received registration response: status=%s, s3=%s, mqtt=%s:%s",
             response.status,
             response.s3_endpoint,
+            response.mqtt_host,
+            response.mqtt_port,
         )
         self._s3.configure(
             endpoint=response.s3_endpoint,
@@ -128,6 +133,18 @@ class DisplayController:
             bucket=response.s3_bucket,
             secure=response.s3_secure,
             region=response.s3_region,
+        )
+        self._mqtt = MQTTClient(
+            device_id=self._settings.device.id,
+            on_command=self._handle_command,
+            host=response.mqtt_host,
+            port=response.mqtt_port,
+            username=response.mqtt_username,
+            password=response.mqtt_password,
+            tls=response.mqtt_tls,
+            transport=response.mqtt_transport,
+            websocket_path=response.mqtt_websocket_path,
+            keep_alive=response.mqtt_keep_alive,
         )
 
     async def _handle_command(self, command: DisplayCommand) -> None:
@@ -205,6 +222,10 @@ class DisplayController:
             successful_display_change=success,
             error=error,
         )
+
+        if self._mqtt is None:
+            logger.warning("Cannot publish ack — MQTT client not yet initialised")
+            return
 
         try:
             await self._mqtt.publish_ack(acknowledge)

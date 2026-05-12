@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import Literal
 
 import aiomqtt
 from inky_image_display_shared.schemas import (
@@ -20,14 +20,16 @@ from inky_image_display_shared.schemas import (
     DisplayCommand,
 )
 
-if TYPE_CHECKING:
-    from inky_image_display_controller.config import MQTTConfig
-
 logger = logging.getLogger(__name__)
 
 CommandHandler = Callable[[DisplayCommand], Awaitable[None]]
 
 TOPIC_PREFIX = "inky/devices"
+
+# Reconnect tuning is client-side behaviour, not broker config, so it
+# lives here as constants rather than being shipped over the wire.
+_INITIAL_RECONNECT_INTERVAL = 5
+_MAX_RECONNECT_INTERVAL = 60
 
 
 def _command_topic(device_id: str) -> str:
@@ -45,16 +47,35 @@ def _status_topic(device_id: str) -> str:
 class MQTTClient:
     """Long-running MQTT client for the controller."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
-        mqtt_config: MQTTConfig,
         device_id: str,
         on_command: CommandHandler,
+        host: str,
+        port: int,
+        username: str | None,
+        password: str | None,
+        tls: bool,
+        transport: Literal["tcp", "websockets"],
+        websocket_path: str,
+        keep_alive: int,
     ) -> None:
-        """Store dependencies for use by the long-running ``run()`` loop."""
-        self._config = mqtt_config
+        """Store dependencies for use by the long-running ``run()`` loop.
+
+        Broker parameters are passed individually (rather than via a
+        config object) because they arrive in the registration response
+        as plain fields, not as a settings model.
+        """
         self._device_id = device_id
         self._on_command = on_command
+        self._host = host
+        self._port = port
+        self._username = username
+        self._password = password
+        self._tls = tls
+        self._transport = transport
+        self._websocket_path = websocket_path
+        self._keep_alive = keep_alive
         self._client: aiomqtt.Client | None = None
         self._connected = asyncio.Event()
 
@@ -64,9 +85,8 @@ class MQTTClient:
         The outer loop wraps the ``aiomqtt.Client`` context manager with
         exponential backoff for unrecoverable ``MqttError``s.
         """
-        backoff = self._config.reconnect_interval
-        max_backoff = self._config.max_reconnect_interval
-        password = self._config.password.get_secret_value() if self._config.password is not None else None
+        backoff = _INITIAL_RECONNECT_INTERVAL
+        max_backoff = _MAX_RECONNECT_INTERVAL
 
         will = aiomqtt.Will(
             topic=_status_topic(self._device_id),
@@ -78,20 +98,20 @@ class MQTTClient:
         while True:
             try:
                 async with aiomqtt.Client(
-                    hostname=self._config.host,
-                    port=self._config.port,
-                    username=self._config.username,
-                    password=password,
+                    hostname=self._host,
+                    port=self._port,
+                    username=self._username,
+                    password=self._password,
                     identifier=f"inky-controller-{self._device_id}",
-                    keepalive=self._config.keep_alive,
-                    tls_params=aiomqtt.TLSParameters() if self._config.tls else None,
-                    transport=self._config.transport,
-                    websocket_path=(self._config.websocket_path if self._config.transport == "websockets" else None),
+                    keepalive=self._keep_alive,
+                    tls_params=aiomqtt.TLSParameters() if self._tls else None,
+                    transport=self._transport,
+                    websocket_path=(self._websocket_path if self._transport == "websockets" else None),
                     will=will,
                 ) as client:
                     self._client = client
                     self._connected.set()
-                    backoff = self._config.reconnect_interval
+                    backoff = _INITIAL_RECONNECT_INTERVAL
 
                     await client.publish(
                         _status_topic(self._device_id),
@@ -102,8 +122,8 @@ class MQTTClient:
                     await client.subscribe(_command_topic(self._device_id), qos=1)
                     logger.info(
                         "MQTT connected to %s:%s as device %s",
-                        self._config.host,
-                        self._config.port,
+                        self._host,
+                        self._port,
                         self._device_id,
                     )
 

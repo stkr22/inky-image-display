@@ -22,6 +22,7 @@ async def test_register_posts_payload_and_parses_response(monkeypatch):
         s3_access_key="ak",
         s3_secret_key="sk",
         s3_secure=False,
+        mqtt_host="broker.test",
     ).model_dump_json()
 
     def handler(request: httpx.Request) -> httpx.Response:

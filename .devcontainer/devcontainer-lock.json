@@ -5,10 +5,10 @@
       "resolved": "ghcr.io/devcontainer-community/devcontainer-features/starship.rs@sha256:27b4dfe2f04debaa32a6d76dd6e20e8239f6851c4f3259644f68f5242cd11589",
       "integrity": "sha256:27b4dfe2f04debaa32a6d76dd6e20e8239f6851c4f3259644f68f5242cd11589"
     },
-    "ghcr.io/devcontainers/features/node:1": {
-      "version": "1.7.1",
-      "resolved": "ghcr.io/devcontainers/features/node@sha256:8c0de46939b61958041700ee89e3493f3b2e4131a06dc46b4d9423427d06e5f6",
-      "integrity": "sha256:8c0de46939b61958041700ee89e3493f3b2e4131a06dc46b4d9423427d06e5f6"
+    "ghcr.io/devcontainers/features/node:2.0.0": {
+      "version": "2.0.0",
+      "resolved": "ghcr.io/devcontainers/features/node@sha256:fedd4c11f7adfb64283b578dddc7da906728daa25fa293351c9d913231acf12f",
+      "integrity": "sha256:fedd4c11f7adfb64283b578dddc7da906728daa25fa293351c9d913231acf12f"
     },
     "ghcr.io/stkr22/devcontainer-features/claude-code:2.0.3": {
       "version": "2.0.3",

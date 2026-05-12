@@ -39,8 +39,8 @@ All variables are prefixed with `API_`.
 | `false` | `websockets` | `ws://`  | `8080`/`9001` | Behind a plaintext reverse proxy (rare) |
 | `true`  | `websockets` | `wss://` | `443` | Broker behind your existing HTTPS Ingress (recommended for K8s) |
 
-The same applies on the controller side via the corresponding
-`CONTROLLER_MQTT__TLS` / `CONTROLLER_MQTT__TRANSPORT` settings.
+The same settings are sent to controllers in the registration
+response, so they do not need to be reconfigured per device.
 
 ## UI (`inky-image-display-ui`)
 
@@ -63,6 +63,8 @@ All variables are prefixed with `UI_`.
 
 ## Controller (`inky-image-display-controller`)
 
+The controller only configures three things locally: its own identity, the API URL for the one-shot registration call, and the display hardware. MQTT broker parameters and S3 read credentials are returned by `POST /api/devices/register` so the API stays the single source of truth for fleet-wide settings.
+
 The controller supports both a YAML file and environment variables. Environment variables are prefixed with `CONTROLLER_` and take precedence; nested fields use `__` as a delimiter (e.g. `CONTROLLER_DEVICE__ID`).
 
 ### YAML configuration file
@@ -77,25 +79,6 @@ device:
 api:
   url: http://api.local:8000  # API base URL (used for one-shot HTTP registration)
 
-mqtt:
-  host: mqtt.local            # MQTT broker hostname
-  port: 1883
-  username: inky              # Optional
-  # password: <secret>        # Prefer setting via env var CONTROLLER_MQTT__PASSWORD
-  tls: false
-  transport: tcp              # or "websockets" to tunnel via HTTP(S) ingress
-  websocket_path: /mqtt       # only relevant when transport=websockets
-  keep_alive: 30
-  reconnect_interval: 5       # Initial reconnect delay (seconds)
-  max_reconnect_interval: 60
-
-s3:
-  endpoint: garage.storage.svc:3900
-  bucket: inky-images
-  secure: false
-  # access_key and secret_key are received from the API on registration
-  # and do not need to be set here
-
 display:
   orientation: landscape    # "landscape" or "portrait"
   saturation: 0.5           # Spectra 6 color saturation (0.0–1.0)
@@ -109,21 +92,6 @@ display:
 | `CONTROLLER_DEVICE__ID` | `inky-display` | Device identifier |
 | `CONTROLLER_DEVICE__ROOM` | — | Room label |
 | `CONTROLLER_API__URL` | `http://localhost:8000` | API base URL (HTTP registration only) |
-| `CONTROLLER_MQTT__HOST` | `localhost` | MQTT broker hostname |
-| `CONTROLLER_MQTT__PORT` | `1883` | MQTT broker port |
-| `CONTROLLER_MQTT__USERNAME` | — | MQTT username |
-| `CONTROLLER_MQTT__PASSWORD` | — | MQTT password |
-| `CONTROLLER_MQTT__TLS` | `false` | Use TLS for the broker connection |
-| `CONTROLLER_MQTT__TRANSPORT` | `tcp` | `tcp` or `websockets` (use ws to tunnel via HTTP(S) ingress) |
-| `CONTROLLER_MQTT__WEBSOCKET_PATH` | `/mqtt` | HTTP path the broker serves WS on (when `transport=websockets`) |
-| `CONTROLLER_MQTT__KEEP_ALIVE` | `30` | MQTT keep-alive interval (seconds) |
-| `CONTROLLER_MQTT__RECONNECT_INTERVAL` | `5` | Initial reconnect delay (seconds) |
-| `CONTROLLER_MQTT__MAX_RECONNECT_INTERVAL` | `60` | Max reconnect delay (seconds) |
-| `CONTROLLER_S3__ENDPOINT` | `localhost:9000` | S3 endpoint |
-| `CONTROLLER_S3__BUCKET` | `inky-images` | S3 bucket |
-| `CONTROLLER_S3__ACCESS_KEY` | — | S3 access key (normally provided by API at registration) |
-| `CONTROLLER_S3__SECRET_KEY` | — | S3 secret key |
-| `CONTROLLER_S3__SECURE` | `false` | Use HTTPS |
 | `CONTROLLER_DISPLAY__ORIENTATION` | `landscape` | `landscape` or `portrait` |
 | `CONTROLLER_DISPLAY__SATURATION` | `0.5` | Color saturation for Spectra 6 (0.0–1.0) |
 | `CONTROLLER_DISPLAY__MOCK` | `false` | Use mock display (no hardware) |
