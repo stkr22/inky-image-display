@@ -18,7 +18,7 @@ All variables are prefixed with `API_`.
 | `API_S3_SECURE` | No | `false` | Use HTTPS for S3 |
 | `API_S3_REGION` | No | — | S3 region (omit for MinIO/Garage) |
 | `API_DEFAULT_DISPLAY_DURATION` | No | `3600` | Default image display duration (seconds) |
-| `API_MQTT_HOST` | Yes | — | MQTT broker hostname |
+| `API_MQTT_HOST` | Yes | — | MQTT broker hostname **used by the API itself** (typically an internal/cluster address) |
 | `API_MQTT_PORT` | No | `1883` | MQTT broker port |
 | `API_MQTT_USERNAME` | No | — | MQTT username |
 | `API_MQTT_PASSWORD` | No | — | MQTT password |
@@ -27,6 +27,14 @@ All variables are prefixed with `API_`.
 | `API_MQTT_WEBSOCKET_PATH` | No | `/mqtt` | HTTP path the broker serves WS on (when `transport=websockets`) |
 | `API_MQTT_CLIENT_ID` | No | `inky-api` | MQTT client identifier |
 | `API_MQTT_KEEP_ALIVE` | No | `30` | MQTT keep-alive interval (seconds) |
+| `API_DEVICE_MQTT_HOST` | Yes | — | MQTT broker hostname **handed to controllers** in the registration response (typically the public/ingress address) |
+| `API_DEVICE_MQTT_PORT` | No | `1883` | Port advertised to controllers |
+| `API_DEVICE_MQTT_USERNAME` | No | — | MQTT username for controllers (use a separate, ACL-restricted account) |
+| `API_DEVICE_MQTT_PASSWORD` | No | — | MQTT password for controllers |
+| `API_DEVICE_MQTT_TLS` | No | `false` | Whether controllers should connect with TLS |
+| `API_DEVICE_MQTT_TRANSPORT` | No | `tcp` | `tcp` or `websockets` for the controller connection |
+| `API_DEVICE_MQTT_WEBSOCKET_PATH` | No | `/mqtt` | HTTP path controllers use for MQTT-over-WebSockets |
+| `API_DEVICE_MQTT_KEEP_ALIVE` | No | `30` | MQTT keep-alive interval advertised to controllers |
 | `API_GEMINI_API_KEY` | No | — | Google Generative AI key. Required only for `POST /api/genai/generate`; leave unset to disable on-demand generation (returns 503). |
 
 ### MQTT transport / TLS combinations
@@ -40,8 +48,12 @@ All variables are prefixed with `API_`.
 | `false` | `websockets` | `ws://`  | `8080`/`9001` | Behind a plaintext reverse proxy (rare) |
 | `true`  | `websockets` | `wss://` | `443` | Broker behind your existing HTTPS Ingress (recommended for K8s) |
 
-The same settings are sent to controllers in the registration
-response, so they do not need to be reconfigured per device.
+The `API_MQTT_*` block above governs the API's own broker connection.
+A parallel `API_DEVICE_MQTT_*` block (same fields, same semantics) is
+what the API hands to controllers in the registration response, so the
+two roles can use different endpoints and credentials — e.g. the API
+talks to the broker over plaintext TCP on an internal address while
+controllers connect via WSS through the public HTTPS ingress.
 
 ## UI (`inky-image-display-ui`)
 

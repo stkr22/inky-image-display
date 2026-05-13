@@ -57,6 +57,14 @@ def mock_settings() -> MagicMock:
     settings.mqtt_transport = "tcp"
     settings.mqtt_websocket_path = "/mqtt"
     settings.mqtt_keep_alive = 30
+    settings.device_mqtt_host = "broker.public.test"
+    settings.device_mqtt_port = 443
+    settings.device_mqtt_username = None
+    settings.device_mqtt_password = None
+    settings.device_mqtt_tls = True
+    settings.device_mqtt_transport = "websockets"
+    settings.device_mqtt_websocket_path = "/mqtt"
+    settings.device_mqtt_keep_alive = 30
     return settings
 
 

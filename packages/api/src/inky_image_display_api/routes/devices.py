@@ -41,14 +41,16 @@ async def register_device(request: Request, registration: DeviceRegistration) ->
         s3_secret_key=settings.s3_reader_secret_key,
         s3_secure=settings.s3_secure,
         s3_region=settings.s3_region,
-        mqtt_host=settings.mqtt_host,
-        mqtt_port=settings.mqtt_port,
-        mqtt_username=settings.mqtt_username,
-        mqtt_password=(settings.mqtt_password.get_secret_value() if settings.mqtt_password is not None else None),
-        mqtt_tls=settings.mqtt_tls,
-        mqtt_transport=settings.mqtt_transport,
-        mqtt_websocket_path=settings.mqtt_websocket_path,
-        mqtt_keep_alive=settings.mqtt_keep_alive,
+        mqtt_host=settings.device_mqtt_host,
+        mqtt_port=settings.device_mqtt_port,
+        mqtt_username=settings.device_mqtt_username,
+        mqtt_password=(
+            settings.device_mqtt_password.get_secret_value() if settings.device_mqtt_password is not None else None
+        ),
+        mqtt_tls=settings.device_mqtt_tls,
+        mqtt_transport=settings.device_mqtt_transport,
+        mqtt_websocket_path=settings.device_mqtt_websocket_path,
+        mqtt_keep_alive=settings.device_mqtt_keep_alive,
     )
 
 

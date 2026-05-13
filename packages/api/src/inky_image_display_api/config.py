@@ -36,7 +36,8 @@ class Settings(BaseSettings):
     s3_reader_secret_key: str
     default_display_duration: int = 3600
 
-    # MQTT broker — used for command/ack/status traffic with devices.
+    # MQTT broker — the API's own connection to the broker (server-side).
+    # Typically an internal/cluster address with no TLS or websockets.
     mqtt_host: str
     mqtt_port: int = 1883
     mqtt_username: str | None = None
@@ -46,6 +47,18 @@ class Settings(BaseSettings):
     mqtt_websocket_path: str = "/mqtt"
     mqtt_client_id: str = "inky-api"
     mqtt_keep_alive: int = 30
+
+    # MQTT broker — what controllers receive in the registration response.
+    # Typically the public/ingress address (e.g. WSS via HTTPS ingress) and
+    # often a different ACL-restricted user than the API itself uses.
+    device_mqtt_host: str
+    device_mqtt_port: int = 1883
+    device_mqtt_username: str | None = None
+    device_mqtt_password: SecretStr | None = None
+    device_mqtt_tls: bool = False
+    device_mqtt_transport: Literal["tcp", "websockets"] = "tcp"
+    device_mqtt_websocket_path: str = "/mqtt"
+    device_mqtt_keep_alive: int = 30
 
     # Gemini AI image generation. Required only when the /api/images/generate
     # endpoint is exercised — leaving it blank disables on-demand generation.

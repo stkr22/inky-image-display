@@ -28,6 +28,7 @@ def _make_settings() -> Settings:
         s3_reader_access_key="r",
         s3_reader_secret_key="r",
         mqtt_host="broker.test",
+        device_mqtt_host="broker.public.test",
     )
 
 
