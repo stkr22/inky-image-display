@@ -173,9 +173,12 @@ async def generate_and_publish(  # noqa: PLR0913
                 return
 
             command = build_display_command(image)
-            await mqtt.send_command(device.device_id, command)
+            # Snapshot identifiers before update_display_state's commit expires the ORM instances.
+            device_mqtt_id = device.device_id
+            image_pk = image.id
+            await mqtt.send_command(device_mqtt_id, command)
             await update_display_state(session, device, image, settings)
-            logger.info("Generation task %s: pushed image %s to %s", task_id, image.id, device.device_id)
+            logger.info("Generation task %s: pushed image %s to %s", task_id, image_pk, device_mqtt_id)
     except Exception:
         logger.exception("Generation task %s failed", task_id)
 
