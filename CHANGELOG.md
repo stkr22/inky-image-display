@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.0.2](https://github.com/stkr22/inky-image-display/compare/v3.0.1...v3.0.2) (2026-05-13)
+
+
+### Bug Fixes
+
+* **api:** avoid expired ORM attribute access in generation background task ([a1c671a](https://github.com/stkr22/inky-image-display/commit/a1c671a23b53d47bcf3071f0107665fa93520b08))
+* **api:** avoid expired ORM attribute access in generation background task ([695edd8](https://github.com/stkr22/inky-image-display/commit/695edd8809662453eb47a8f423c33b70882ba45b))
+
 ## [3.0.1](https://github.com/stkr22/inky-image-display/compare/v3.0.0...v3.0.1) (2026-05-13)
 
 
