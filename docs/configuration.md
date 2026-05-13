@@ -27,6 +27,7 @@ All variables are prefixed with `API_`.
 | `API_MQTT_WEBSOCKET_PATH` | No | `/mqtt` | HTTP path the broker serves WS on (when `transport=websockets`) |
 | `API_MQTT_CLIENT_ID` | No | `inky-api` | MQTT client identifier |
 | `API_MQTT_KEEP_ALIVE` | No | `30` | MQTT keep-alive interval (seconds) |
+| `API_GEMINI_API_KEY` | No | — | Google Generative AI key. Required only for `POST /api/genai/generate`; leave unset to disable on-demand generation (returns 503). |
 
 ### MQTT transport / TLS combinations
 
@@ -139,6 +140,15 @@ display:
 | `S3_WRITER_SECURE` | No | `false` | Use HTTPS |
 | `S3_WRITER_REGION` | No | — | S3 region (omit for MinIO/Garage) |
 
+### Gemini batch generation
+
+Required only when running the `gemini` subcommand.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `GEMINI_API_KEY` | Yes | — | Google Generative AI key. The model id is read from each preset's `model_name` column (default `gemini-2.5-flash-image`) — change it via the UI or `PUT /api/genai/presets/{id}`. |
+| `GEMINI_SYNC_STORAGE_PREFIX` | No | `gemini` | S3 path prefix for generated images |
+
 ## Sync job configuration
 
 Sync jobs are stored in the `immich_sync_jobs` table and managed via the API (`/api/sync-jobs`).
@@ -189,3 +199,74 @@ curl -X POST http://api.local:8000/api/sync-jobs \
     "is_favorite": true
   }'
 ```
+
+## AI generation (`/api/genai/*`)
+
+The Gemini integration is configured through three DB-backed resources, all
+managed through the API and the UI's GenAI page. Defaults are seeded on
+first run by the `0004_add_ai_prompts_and_gemini_jobs` migration.
+
+### Prompt blocks (`prompt_blocks`)
+
+A prompt block is one reusable text fragment scoped to a single concern.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `kind` | enum | One of `style`, `palette`, `legibility`, `composition`, `background` |
+| `name` | str | Unique within a kind |
+| `text` | str | Prompt fragment. Composition blocks may include a `{subject}` placeholder. |
+| `is_default` | bool | At most one default per kind, used as the fallback when a preset isn't fully specified |
+
+REST: `GET/POST /api/genai/blocks`, `GET/PUT/DELETE /api/genai/blocks/{id}`.
+
+### Prompt presets (`prompt_presets`)
+
+A preset is a named bundle of one block per kind plus the Gemini model
+they should be sent to. Both batch jobs and on-demand generation reference
+a preset.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | str | Unique preset name |
+| `style_block_id`, `palette_block_id`, `legibility_block_id`, `composition_block_id`, `background_block_id` | UUID | One block per kind |
+| `model_name` | str | Gemini image model id (default `gemini-2.5-flash-image`) — changing this re-targets every job/request that uses the preset |
+| `is_default` | bool | The preset used when the generate request omits `preset_id` |
+
+REST: `GET/POST /api/genai/presets`, `GET/PUT/DELETE /api/genai/presets/{id}`.
+
+### Gemini sync jobs (`gemini_sync_jobs`)
+
+A batch generation job — analogous to `ImmichSyncJob` but for AI output.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | str | Unique job name |
+| `is_active` | bool | Enable/disable |
+| `target_device_id` | UUID | Target device — provides display dimensions |
+| `prompt_preset_id` | UUID | Preset used to render the prompt and pick the model |
+| `is_portrait` | bool | `true` → 3:4 aspect ratio, `false` → 4:3 |
+| `subjects` | list[str] | One Gemini call per subject, repeated `images_per_subject` times per run |
+| `images_per_subject` | int (1-10) | Variations per subject |
+| `retention_days` | int? | Optional expiry; the API cleans up matching images after this many days |
+
+REST: `GET/POST /api/genai/jobs`, `GET/PUT/DELETE /api/genai/jobs/{id}`.
+
+### On-demand generation
+
+`POST /api/genai/generate` accepts:
+
+```json
+{
+  "subject": "Ada Lovelace",
+  "target_device_id": "550e8400-e29b-41d4-a716-446655440000",
+  "preset_id": null,
+  "is_portrait": true,
+  "push_immediately": true
+}
+```
+
+Returns `202 Accepted` with a `task_id`. The API runs Gemini in a background
+task, registers the result with `source_name="gemini"`, and (when
+`push_immediately` is true and the target device is online) issues an MQTT
+display command immediately. Returns `503` if `API_GEMINI_API_KEY` is not
+configured.
