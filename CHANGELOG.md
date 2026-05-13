@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.4.1](https://github.com/stkr22/inky-image-display/compare/v2.4.0...v2.4.1) (2026-05-13)
+
+
+### Bug Fixes
+
+* **api:** avoid lazy load on expired ORM attributes in rotation log session.commit() in update_display_state expires instance attributes by ([af7ebb0](https://github.com/stkr22/inky-image-display/commit/af7ebb03d7ff6d017f0b1a8f706f8d7a9dae1267))
+* **api:** avoid lazy load on expired ORM attributes in rotation log session.commit() in update_display_state expires instance attributes by ([afca7e9](https://github.com/stkr22/inky-image-display/commit/afca7e9b624ad255ae264d4a16d386a21af9ed6f))
+
+
+### Documentation
+
+* cover the new GenAI surface (api, ui, deployment, config) ([206c119](https://github.com/stkr22/inky-image-display/commit/206c1196d8c4c660d94cac41cd571a523f35d2b6))
+* cover the new GenAI surface (api, ui, deployment, config) ([b82e06f](https://github.com/stkr22/inky-image-display/commit/b82e06f649647151f9559578c978b0d1a6e6ddba))
+
 ## [2.4.0](https://github.com/stkr22/inky-image-display/compare/v2.3.0...v2.4.0) (2026-05-12)
 
 
