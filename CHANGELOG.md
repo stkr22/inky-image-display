@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.0.1](https://github.com/stkr22/inky-image-display/compare/v3.0.0...v3.0.1) (2026-05-13)
+
+
+### Bug Fixes
+
+* **api:** repair seeded prompt-preset UUIDs unreachable by ORM on SQLite ([b2518d9](https://github.com/stkr22/inky-image-display/commit/b2518d9bba98f7b31a204f254e784a96a90167eb))
+* **api:** repair seeded prompt-preset UUIDs unreachable by ORM on SQLite ([210fa1f](https://github.com/stkr22/inky-image-display/commit/210fa1f798d14c768d6a67853942c0e6a50d5942))
+
 ## [3.0.0](https://github.com/stkr22/inky-image-display/compare/v2.4.1...v3.0.0) (2026-05-13)
 
 
