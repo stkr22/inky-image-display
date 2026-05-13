@@ -22,7 +22,13 @@ API_S3_WRITER_SECRET_KEY=<write-secret>
 API_S3_READER_ACCESS_KEY=<read-key>
 API_S3_READER_SECRET_KEY=<read-secret>
 API_MQTT_HOST=mqtt.svc
+API_DEVICE_MQTT_HOST=mqtt.example.com
 ```
+
+`API_MQTT_HOST` is the broker address used by the API process itself
+(usually an internal cluster service). `API_DEVICE_MQTT_HOST` is the
+address advertised to controllers in the registration response (usually
+the public/ingress hostname). Both are required.
 
 ### Controller
 
