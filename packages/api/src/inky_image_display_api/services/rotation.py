@@ -73,6 +73,8 @@ async def _rotate_single_device(app: FastAPI, device: Device) -> None:
             return
 
         command = build_display_command(image)
-        await app.state.mqtt.send_command(db_device.device_id, command)
+        device_id = db_device.device_id
+        image_id = image.id
+        await app.state.mqtt.send_command(device_id, command)
         await update_display_state(session, db_device, image, app.state.settings)
-        logger.info("Rotated device %s to image %s", db_device.device_id, image.id)
+        logger.info("Rotated device %s to image %s", device_id, image_id)
