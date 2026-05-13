@@ -1,5 +1,21 @@
 # Changelog
 
+## [3.0.0](https://github.com/stkr22/inky-image-display/compare/v2.4.1...v3.0.0) (2026-05-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **api:** API_DEVICE_MQTT_HOST is now required.
+
+### Features
+
+* **api:** split MQTT settings between API and controller-facing ([ad315a5](https://github.com/stkr22/inky-image-display/commit/ad315a545e40dec09c411137c5f14a528d424856))
+
+
+### Bug Fixes
+
+* **deps:** require inky-image-display-shared ~=2.2 across packages ([61969a8](https://github.com/stkr22/inky-image-display/commit/61969a8e0dda3cec7de5d615f4a386258dab65dc))
+
 ## [2.4.1](https://github.com/stkr22/inky-image-display/compare/v2.4.0...v2.4.1) (2026-05-13)
 
 

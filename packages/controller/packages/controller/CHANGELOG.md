@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.1](https://github.com/stkr22/inky-image-display/compare/controller-v2.2.0...controller-v2.2.1) (2026-05-13)
+
+
+### Bug Fixes
+
+* **deps:** require inky-image-display-shared ~=2.2 across packages ([61969a8](https://github.com/stkr22/inky-image-display/commit/61969a8e0dda3cec7de5d615f4a386258dab65dc))
+
 ## [2.2.0](https://github.com/stkr22/inky-image-display/compare/controller-v2.1.0...controller-v2.2.0) (2026-05-12)
 
 
