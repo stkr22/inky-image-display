@@ -131,10 +131,29 @@ def upgrade() -> None:
 
 
 def _seed_defaults(bind: sa.engine.Connection) -> None:
-    """Seed default blocks + a humanoid preset if not already present."""
-    existing_names = {row[0] for row in bind.execute(sa.text("SELECT name FROM prompt_blocks")).fetchall()}
+    """Seed default blocks + a humanoid preset if not already present.
 
-    blocks: list[tuple[str, str, str, bool]] = [
+    Inserts go through ``op.bulk_insert`` against ``sa.Table`` objects whose
+    UUID columns are typed as ``sa.Uuid``. That matters on SQLite: the type's
+    bind processor stores UUIDs as 32-char hex (no dashes), matching how the
+    ORM later reads them back. A previous version of this seed used raw
+    ``sa.text`` inserts with ``str(uuid.uuid4())`` (36-char with dashes), which
+    silently diverged from the ORM's format and made ID-keyed lookups miss.
+    See migration 0006 for the matching backfill of already-deployed rows.
+    """
+    blocks_tbl = sa.Table(
+        "prompt_blocks",
+        sa.MetaData(),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("kind", sa.String()),
+        sa.Column("name", sa.String()),
+        sa.Column("text", sa.Text()),
+        sa.Column("is_default", sa.Boolean()),
+        sa.Column("created_at", sa.DateTime()),
+        sa.Column("updated_at", sa.DateTime()),
+    )
+
+    block_defs: list[tuple[str, str, str, bool]] = [
         ("style", "poster_screenprint", _STYLE_DEFAULT, True),
         ("palette", "spectra_6", _PALETTE_SPECTRA_6, True),
         ("legibility", "eink_bold_shapes", _LEGIBILITY_EINK, True),
@@ -143,20 +162,20 @@ def _seed_defaults(bind: sa.engine.Connection) -> None:
         ("background", "bold_solid", _BACKGROUND_DEFAULT, True),
     ]
 
-    ids: dict[str, str] = {}
     now = datetime.now()
-    for kind, name, text, is_default in blocks:
-        if name in existing_names:
-            row = bind.execute(sa.text("SELECT id FROM prompt_blocks WHERE name = :n"), {"n": name}).fetchone()
-            if row is not None:
-                ids[name] = str(row[0])
+    existing_by_name: dict[str, uuid.UUID] = {}
+    for row in bind.execute(sa.text("SELECT id, name FROM prompt_blocks")).fetchall():
+        existing_by_name[row[1]] = _coerce_uuid(row[0])
+
+    block_ids: dict[str, uuid.UUID] = {}
+    new_rows: list[dict[str, object]] = []
+    for kind, name, text, is_default in block_defs:
+        if name in existing_by_name:
+            block_ids[name] = existing_by_name[name]
             continue
-        new_id = str(uuid.uuid4())
-        bind.execute(
-            sa.text(
-                "INSERT INTO prompt_blocks (id, kind, name, text, is_default, created_at, updated_at) "
-                "VALUES (:id, :kind, :name, :text, :is_default, :created_at, :updated_at)"
-            ),
+        new_id = uuid.uuid4()
+        block_ids[name] = new_id
+        new_rows.append(
             {
                 "id": new_id,
                 "kind": kind,
@@ -165,44 +184,65 @@ def _seed_defaults(bind: sa.engine.Connection) -> None:
                 "is_default": is_default,
                 "created_at": now,
                 "updated_at": now,
-            },
+            }
         )
-        ids[name] = new_id
+    if new_rows:
+        op.bulk_insert(blocks_tbl, new_rows)
 
     preset_exists = bind.execute(
         sa.text("SELECT 1 FROM prompt_presets WHERE name = :n"), {"n": "e_ink_humanoid"}
     ).fetchone()
-    if preset_exists is None:
-        # Build the column list dynamically so the seed works whether the
-        # ``model_name`` column already exists (fresh DB created from the
-        # current SQLModel metadata) or not (older DB upgrading through 0004
-        # before 0005 adds the column).
-        preset_columns = {c["name"] for c in sa.inspect(bind).get_columns("prompt_presets")}
-        params: dict[str, object] = {
-            "id": str(uuid.uuid4()),
-            "name": "e_ink_humanoid",
-            "style": ids["poster_screenprint"],
-            "palette": ids["spectra_6"],
-            "leg": ids["eink_bold_shapes"],
-            "comp": ids["humanoid_closeup"],
-            "bg": ids["bold_solid"],
-            "is_default": True,
-            "created_at": now,
-            "updated_at": now,
-        }
-        columns = (
-            "id, name, style_block_id, palette_block_id, legibility_block_id, "
-            "composition_block_id, background_block_id, is_default, created_at, updated_at"
-        )
-        values = ":id, :name, :style, :palette, :leg, :comp, :bg, :is_default, :created_at, :updated_at"
-        if "model_name" in preset_columns:
-            columns += ", model_name"
-            values += ", :model_name"
-            params["model_name"] = "gemini-2.5-flash-image"
-        bind.execute(
-            sa.text(f"INSERT INTO prompt_presets ({columns}) VALUES ({values})"),
-            params,
-        )
+    if preset_exists is not None:
+        return
+
+    # Build the Table with model_name only when that column already exists,
+    # so this seed runs unchanged whether 0005 has been applied or not.
+    preset_columns = {c["name"] for c in sa.inspect(bind).get_columns("prompt_presets")}
+    has_model_name = "model_name" in preset_columns
+    preset_cols = [
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("name", sa.String()),
+        sa.Column("style_block_id", sa.Uuid()),
+        sa.Column("palette_block_id", sa.Uuid()),
+        sa.Column("legibility_block_id", sa.Uuid()),
+        sa.Column("composition_block_id", sa.Uuid()),
+        sa.Column("background_block_id", sa.Uuid()),
+        sa.Column("is_default", sa.Boolean()),
+        sa.Column("created_at", sa.DateTime()),
+        sa.Column("updated_at", sa.DateTime()),
+    ]
+    if has_model_name:
+        preset_cols.append(sa.Column("model_name", sa.String()))
+    presets_tbl = sa.Table("prompt_presets", sa.MetaData(), *preset_cols)
+
+    preset_row: dict[str, object] = {
+        "id": uuid.uuid4(),
+        "name": "e_ink_humanoid",
+        "style_block_id": block_ids["poster_screenprint"],
+        "palette_block_id": block_ids["spectra_6"],
+        "legibility_block_id": block_ids["eink_bold_shapes"],
+        "composition_block_id": block_ids["humanoid_closeup"],
+        "background_block_id": block_ids["bold_solid"],
+        "is_default": True,
+        "created_at": now,
+        "updated_at": now,
+    }
+    if has_model_name:
+        preset_row["model_name"] = "gemini-2.5-flash-image"
+    op.bulk_insert(presets_tbl, [preset_row])
+
+
+def _coerce_uuid(value: object) -> uuid.UUID:
+    """Read a UUID column value regardless of stored format.
+
+    Older seed rows on SQLite live as 36-char strings with dashes; newer rows
+    as 32-char hex. ``uuid.UUID`` parses both. Bytes (some drivers) also work.
+    """
+    if isinstance(value, uuid.UUID):
+        return value
+    if isinstance(value, bytes):
+        return uuid.UUID(bytes=value)
+    return uuid.UUID(str(value))
 
 
 def downgrade() -> None:
