@@ -1,6 +1,6 @@
 [project]
 name = "inky-image-display-workspace"
-version = "2.4.0"
+version = "2.4.1"
 description = "Workspace root for Inky Image Display services."
 authors = [
     { name = "stkr22", email = "stkr22@github.com" }
