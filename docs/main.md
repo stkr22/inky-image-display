@@ -8,14 +8,15 @@ Four components work together to display images on Inky e-ink displays.
 
 FastAPI service running at `:8000`. Responsibilities:
 
-- **Device registry**: Devices register over HTTP at `POST /api/devices/register` with their display specs (dimensions, orientation, model). The API stores these in the `devices` table and returns the S3 reader credentials.
+- **Device registry**: Devices register over HTTP at `POST /api/devices/register` with their `device_profile_key` (one of the seeded Inky lineup, e.g. `inky_impression_13_spectra6`) and mounted orientation. The API stores the device with a FK to the matching `device_profiles` row and returns the S3 reader credentials.
+- **Device profiles**: `/api/device-profiles` exposes a fixed lineup of supported panels (4" / 7.3" / 13.3" Spectra 6) seeded by migration. One row is marked `is_default` and feeds the genai default-target dropdown; name is editable from the UI, panel dims/model are immutable.
 - **Image library**: Images are stored as metadata in the `images` table and as files in S3-compatible storage.
 - **Sync job management**: CRUD REST API for `immich_sync_jobs` records which drive the Sync service.
 - **AI generation**: `/api/genai/*` endpoints expose the prompt library (blocks + presets), Gemini batch jobs, and on-demand generation. `POST /api/genai/generate` runs the Gemini call in a FastAPI background task and pushes the result to a matching online device over MQTT as soon as it's ready — no polling.
 - **Display control**: REST endpoints publish commands (display, clear) to connected devices over MQTT. A background rotation loop also periodically advances the displayed image.
 - **Online tracking**: The API subscribes to retained MQTT status topics. Devices publish `online` on connect and configure an MQTT Last-Will-and-Testament with `offline`, so the broker announces unexpected disconnects automatically.
 
-On startup the API auto-creates the `devices`, `images`, `immich_sync_jobs`, `prompt_blocks`, `prompt_presets`, and `gemini_sync_jobs` tables, applies any pending Alembic migrations (the AI tables get seeded with a default prompt library on first run), and connects to the MQTT broker.
+On startup the API auto-creates the `device_profiles`, `devices`, `images`, `immich_sync_jobs`, `prompt_blocks`, `prompt_presets`, and `gemini_sync_jobs` tables, applies any pending Alembic migrations (the AI tables get seeded with a default prompt library on first run; `device_profiles` gets the three-panel Inky Impression Spectra 6 lineup), and connects to the MQTT broker.
 
 ### Controller (`inky-image-display-controller`)
 
@@ -38,7 +39,7 @@ CLI with two subcommands, both intended to run as cron jobs:
 
 **`inky-image-display-sync immich`** (default) — for each active `ImmichSyncJob`:
 
-1. Reads the target device's display dimensions from the `devices` table.
+1. Reads the target panel dimensions from the job's `target_device_profile_id` (and the job's optional `orientation` override).
 2. Queries Immich using the job's filter criteria (albums, people, tags, dates, etc.).
 3. Filters results client-side by orientation, minimum color score, and vibrancy score.
 4. Downloads, resizes, and stores qualifying images to S3.
@@ -67,7 +68,7 @@ UI POST /api/genai/generate (background task) ──► S3 Storage ◄──(fet
                                                   MQTT broker ──(cmd / ack / status)──► Controller
 ```
 
-On-demand generation: the UI's "Generate an image" form posts to `POST /api/genai/generate` with a subject, target device, preset, and orientation flag. The API queues a background task that calls Gemini, uploads the JPEG to S3, registers the row, and (when `push_immediately` is true and the device is online) immediately publishes a display command over MQTT — there's no separate worker process.
+On-demand generation: the UI's "Generate an image" form posts to `POST /api/genai/generate` with a subject, optional `target_device_profile_id` (defaults to the `is_default` profile), preset, and orientation. The API queues a background task that calls Gemini, uploads the JPEG to S3, registers the row, and (when `push_immediately` is true) picks a *random* online device whose `device_profile_id` and `display_orientation` both match the request, then publishes a display command over MQTT. If no matching device is online the image is persisted but no command is sent — it'll show up in the next rotation when a matching device reconnects.
 
 ## MQTT topics (API ↔ Controller)
 

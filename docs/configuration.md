@@ -108,8 +108,7 @@ display:
 | `CONTROLLER_DISPLAY__ORIENTATION` | `landscape` | `landscape` or `portrait` |
 | `CONTROLLER_DISPLAY__SATURATION` | `0.5` | Color saturation for Spectra 6 (0.0–1.0) |
 | `CONTROLLER_DISPLAY__MOCK` | `false` | Use mock display (no hardware) |
-| `CONTROLLER_DISPLAY__MOCK_WIDTH` | `1600` | Mock display width (pixels) |
-| `CONTROLLER_DISPLAY__MOCK_HEIGHT` | `1200` | Mock display height (pixels) |
+| `CONTROLLER_DISPLAY__MOCK_PROFILE_KEY` | `inky_impression_13_spectra6` | Seeded device-profile key whose panel dimensions the mock display should report. Valid keys: `inky_impression_4_spectra6`, `inky_impression_7_spectra6`, `inky_impression_13_spectra6`. |
 | `DEVICE_ID` | — | Overrides `CONTROLLER_DEVICE__ID` (also accepted as `--device-id` CLI flag) |
 
 ## Sync (`inky-image-display-sync`)
@@ -171,7 +170,8 @@ Sync jobs are stored in the `immich_sync_jobs` table and managed via the API (`/
 |-------|------|---------|-------------|
 | `name` | str | — | Unique job name |
 | `is_active` | bool | `true` | Enable/disable this job |
-| `target_device_id` | UUID | — | Device ID (determines image dimensions) |
+| `target_device_profile_id` | UUID | — | Device profile (panel) this job syncs for — determines target dimensions. See `GET /api/device-profiles`. |
+| `orientation` | str \| null | `null` | Optional orientation override (`landscape` / `portrait`). `null` means "any" — images are sized for the profile's landscape-native dims. |
 | `strategy` | enum | `RANDOM` | `RANDOM` or `SMART` (CLIP semantic search) |
 | `query` | str | — | Search query (required for `SMART` strategy) |
 | `count` | int | `10` | Images to sync per run |
@@ -205,7 +205,8 @@ curl -X POST http://api.local:8000/api/sync-jobs \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "family-favorites",
-    "target_device_id": "550e8400-e29b-41d4-a716-446655440000",
+    "target_device_profile_id": "4a688010-6c69-5297-b574-67e5c75ea29f",
+    "orientation": "landscape",
     "strategy": "RANDOM",
     "count": 20,
     "is_favorite": true
@@ -254,9 +255,9 @@ A batch generation job — analogous to `ImmichSyncJob` but for AI output.
 |-------|------|-------------|
 | `name` | str | Unique job name |
 | `is_active` | bool | Enable/disable |
-| `target_device_id` | UUID | Target device — provides display dimensions |
+| `target_device_profile_id` | UUID | Target device profile — provides panel dimensions |
 | `prompt_preset_id` | UUID | Preset used to render the prompt and pick the model |
-| `is_portrait` | bool | `true` → 3:4 aspect ratio, `false` → 4:3 |
+| `orientation` | str | `portrait` → 3:4 aspect ratio, `landscape` → 4:3. Determines image dims and which devices receive the result. |
 | `subjects` | list[str] | One Gemini call per subject, repeated `images_per_subject` times per run |
 | `images_per_subject` | int (1-10) | Variations per subject |
 | `retention_days` | int? | Optional expiry; the API cleans up matching images after this many days |
@@ -270,15 +271,34 @@ REST: `GET/POST /api/genai/jobs`, `GET/PUT/DELETE /api/genai/jobs/{id}`.
 ```json
 {
   "subject": "Ada Lovelace",
-  "target_device_id": "550e8400-e29b-41d4-a716-446655440000",
+  "target_device_profile_id": null,
   "preset_id": null,
-  "is_portrait": true,
+  "orientation": "portrait",
   "push_immediately": true
 }
 ```
 
+`target_device_profile_id` is optional — when omitted the API uses the
+profile marked `is_default` in `device_profiles`.
+
 Returns `202 Accepted` with a `task_id`. The API runs Gemini in a background
 task, registers the result with `source_name="gemini"`, and (when
-`push_immediately` is true and the target device is online) issues an MQTT
-display command immediately. Returns `503` if `API_GEMINI_API_KEY` is not
-configured.
+`push_immediately` is true) dispatches a display command to a *random* online
+device whose `device_profile_id` and `display_orientation` both match the
+request. If no matching device is online the image is still persisted — it'll
+surface in the next rotation when a matching device reconnects. Returns `503`
+if `API_GEMINI_API_KEY` is not configured.
+
+### Device profiles (`/api/device-profiles`)
+
+The supported Inky lineup is seeded by migration 0007 with stable UUIDs
+(via `uuid5`) so the same IDs are used in every environment. The lineup
+is not user-extensible.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `key` | str | Stable slug (e.g. `inky_impression_13_spectra6`) — used by the controller at registration |
+| `name` | str | Human label, editable via `PATCH /api/device-profiles/{id}` |
+| `width`, `height` | int | Panel-native dimensions (landscape, longer side first); immutable |
+| `model` | str | Hardware identifier; immutable |
+| `is_default` | bool | Exactly one row marked default — used by genai when no profile is supplied. Flip via `POST /api/device-profiles/{id}/set-default`. |
