@@ -41,10 +41,8 @@ class Device(SQLModel, table=True):
         id: Unique identifier
         device_id: String device identifier (e.g. 'inky-kitchen')
         room: Room where device is located
-        display_width: Display width in pixels
-        display_height: Display height in pixels
-        display_orientation: Display orientation
-        display_model: Display hardware model
+        device_profile_id: FK to the device_profiles row that defines panel size/model
+        display_orientation: Per-device orientation ('landscape' or 'portrait')
         is_online: Whether device is currently connected
         current_image_id: Currently displayed image
         displayed_since: When current image was displayed
@@ -62,10 +60,8 @@ class Device(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     device_id: str = Field(unique=True, index=True, description="Device string identifier, e.g. 'inky-kitchen'")
     room: str | None = Field(default=None)
-    display_width: int = Field(default=1600)
-    display_height: int = Field(default=1200)
+    device_profile_id: UUID = Field(foreign_key="device_profiles.id")
     display_orientation: str = Field(default="landscape")
-    display_model: str = Field(default="inky_impression_13_spectra6")
     is_online: bool = Field(default=False)
     current_image_id: UUID | None = Field(default=None, foreign_key="images.id")
     displayed_since: datetime | None = Field(default=None)

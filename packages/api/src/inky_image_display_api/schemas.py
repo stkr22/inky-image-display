@@ -90,6 +90,28 @@ class ImageResponse(BaseModel):
 # --- Devices ---
 
 
+class DeviceProfileResponse(BaseModel):
+    """Panel profile data returned by the API."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    key: str
+    name: str
+    width: int
+    height: int
+    model: str
+    is_default: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class DeviceProfileUpdate(BaseModel):
+    """Patchable fields on a device profile. Size/model/key are immutable."""
+
+    name: str | None = None
+
+
 class DeviceResponse(BaseModel):
     """Device data returned by the API."""
 
@@ -98,10 +120,8 @@ class DeviceResponse(BaseModel):
     id: UUID
     device_id: str
     room: str | None
-    display_width: int
-    display_height: int
+    device_profile_id: UUID
     display_orientation: str
-    display_model: str
     is_online: bool
     current_image_id: UUID | None
     displayed_since: datetime | None
@@ -134,7 +154,8 @@ class SyncJobCreate(BaseModel):
 
     name: str
     is_active: bool = True
-    target_device_id: UUID
+    target_device_profile_id: UUID
+    orientation: str | None = None
     strategy: str = "RANDOM"
     query: str | None = None
     count: int = 10
@@ -159,7 +180,8 @@ class SyncJobUpdate(BaseModel):
 
     name: str | None = None
     is_active: bool | None = None
-    target_device_id: UUID | None = None
+    target_device_profile_id: UUID | None = None
+    orientation: str | None = None
     strategy: str | None = None
     query: str | None = None
     count: int | None = None
@@ -187,7 +209,8 @@ class SyncJobResponse(BaseModel):
     id: UUID
     name: str
     is_active: bool
-    target_device_id: UUID
+    target_device_profile_id: UUID
+    orientation: str | None
     strategy: str
     query: str | None
     count: int
@@ -292,9 +315,9 @@ class GeminiSyncJobCreate(BaseModel):
 
     name: str
     is_active: bool = True
-    target_device_id: UUID
+    target_device_profile_id: UUID
     prompt_preset_id: UUID
-    is_portrait: bool = True
+    orientation: str = "portrait"
     subjects: list[str] = []
     images_per_subject: int = 1
     retention_days: int | None = None
@@ -305,9 +328,9 @@ class GeminiSyncJobUpdate(BaseModel):
 
     name: str | None = None
     is_active: bool | None = None
-    target_device_id: UUID | None = None
+    target_device_profile_id: UUID | None = None
     prompt_preset_id: UUID | None = None
-    is_portrait: bool | None = None
+    orientation: str | None = None
     subjects: list[str] | None = None
     images_per_subject: int | None = None
     retention_days: int | None = None
@@ -321,9 +344,9 @@ class GeminiSyncJobResponse(BaseModel):
     id: UUID
     name: str
     is_active: bool
-    target_device_id: UUID
+    target_device_profile_id: UUID
     prompt_preset_id: UUID
-    is_portrait: bool
+    orientation: str
     subjects: list[str]
     images_per_subject: int
     retention_days: int | None
@@ -343,9 +366,9 @@ class ImageGenerateRequest(BaseModel):
     """
 
     subject: str
-    target_device_id: UUID
+    target_device_profile_id: UUID | None = None
     preset_id: UUID | None = None
-    is_portrait: bool = True
+    orientation: str = "portrait"
     push_immediately: bool = True
 
 

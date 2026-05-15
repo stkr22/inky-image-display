@@ -256,7 +256,7 @@ class ImmichSyncService:
         """
         result = SyncResult()
 
-        device_reqs = await self._get_device_requirements(job.target_device_id)
+        device_reqs = await self._get_device_requirements(job.target_device_profile_id, job.orientation)
 
         fetch_count = job.count * job.overfetch_multiplier
 
@@ -331,39 +331,31 @@ class ImmichSyncService:
         elif process_result == ProcessResult.SKIPPED_LOW_VIBRANCY:
             result.skipped_low_vibrancy += 1
 
-    async def _get_device_requirements(self, device_id: UUID) -> DeviceRequirements:
-        """Get display requirements from the Display API.
+    async def _get_device_requirements(self, profile_id: UUID, orientation: str | None) -> DeviceRequirements:
+        """Resolve target panel dims from a profile + optional orientation.
 
-        Args:
-            device_id: UUID of target device
-
-        Returns:
-            DeviceRequirements with width, height, and orientation
+        When ``orientation`` is None the job did not specify one, so we
+        default to landscape — same shape used for downstream filtering.
 
         Raises:
-            ValueError: If device not found
+            ValueError: If the profile cannot be loaded.
 
         """
-        devices = await self.api_client.get_devices(id=device_id)
-        if not devices:
-            raise ValueError(f"Target device not found: {device_id}")
+        profile = await self.api_client.get_device_profile(profile_id)
+        effective_orientation = orientation or "landscape"
 
-        device = devices[0]
-        orientation = device.display_orientation
-
-        # device.display_width/height are the panel's native (always landscape)
-        # dims. Swap for portrait so width/height describe the orientation-aware
-        # raster target and are what gets recorded against the Image row.
-        if orientation == "portrait":
-            width, height = device.display_height, device.display_width
+        # profile.width/height are panel-native (landscape). Swap for portrait
+        # so width/height describe the orientation-aware raster target.
+        if effective_orientation == "portrait":
+            width, height = profile.height, profile.width
         else:
-            width, height = device.display_width, device.display_height
+            width, height = profile.width, profile.height
 
         return DeviceRequirements(
             width=width,
             height=height,
-            orientation=orientation,
-            display_model=device.display_model,
+            orientation=effective_orientation,
+            display_model=profile.model,
         )
 
     async def _count_existing_immich_images(self) -> int:

@@ -14,7 +14,6 @@ from inky_image_display_shared.schemas import (
     DeviceAcknowledge,
     DeviceRegistration,
     DisplayCommand,
-    DisplayInfo,
     RegistrationResponse,
 )
 from PIL import Image
@@ -68,12 +67,8 @@ def sample_device_registration() -> DeviceRegistration:
     """Create a sample device registration."""
     return DeviceRegistration(
         device_id="test-device",
-        display=DisplayInfo(
-            width=1600,
-            height=1200,
-            orientation="landscape",
-            model="inky_impression_13_spectra6",
-        ),
+        device_profile_key="inky_impression_13_spectra6",
+        orientation="landscape",
         room="Test Room",
     )
 

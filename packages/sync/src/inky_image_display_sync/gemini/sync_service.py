@@ -103,19 +103,20 @@ class GeminiSyncService:
         blocks_by_id: dict,
     ) -> GeminiSyncResult:
         result = GeminiSyncResult(job_name=job.name)
-        devices = await self.api_client.get_devices(id=job.target_device_id)
-        if not devices:
+        try:
+            profile = await self.api_client.get_device_profile(job.target_device_profile_id)
+        except Exception as exc:
             result.failed += 1
-            result.errors.append(f"target device {job.target_device_id} not found")
+            result.errors.append(f"target device profile {job.target_device_profile_id} not found: {exc}")
             return result
-        device = devices[0]
 
-        if job.is_portrait:
-            target_width, target_height = device.display_height, device.display_width
+        is_portrait = job.orientation == "portrait"
+        if is_portrait:
+            target_width, target_height = profile.height, profile.width
         else:
-            target_width, target_height = device.display_width, device.display_height
+            target_width, target_height = profile.width, profile.height
 
-        prompt = self._build_prompt(preset, blocks_by_id, job.is_portrait)
+        prompt = self._build_prompt(preset, blocks_by_id, is_portrait)
         expires_at = (
             datetime.now() + timedelta(days=job.retention_days)
             if job.retention_days is not None and job.retention_days > 0
@@ -196,7 +197,7 @@ class GeminiSyncService:
                 tags="gemini,ai",
                 original_width=target_width,
                 original_height=target_height,
-                is_portrait=job.is_portrait,
+                is_portrait=job.orientation == "portrait",
                 expires_at=expires_at,
             )
         )

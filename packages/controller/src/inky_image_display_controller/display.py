@@ -12,6 +12,47 @@ from inky_image_display_controller.exceptions import DisplayError
 logger = logging.getLogger(__name__)
 
 
+# Maps the panel dimensions reported by the Inky library (always
+# landscape-native, longer dim first) to the device-profile key seeded
+# in API migration 0007. The controller no longer sends raw dimensions
+# to the API — it sends the profile key, and the API resolves the rest.
+_PANEL_DIMS_TO_PROFILE_KEY: dict[tuple[int, int], str] = {
+    (640, 400): "inky_impression_4_spectra6",
+    (800, 480): "inky_impression_7_spectra6",
+    (1600, 1200): "inky_impression_13_spectra6",
+}
+
+# Reverse: profile key -> (width, height). Used by the mock display so
+# tests configure a panel by name and get the matching dimensions.
+_PROFILE_KEY_TO_PANEL_DIMS: dict[str, tuple[int, int]] = {key: dims for dims, key in _PANEL_DIMS_TO_PROFILE_KEY.items()}
+
+
+def profile_key_for_panel(width: int, height: int) -> str:
+    """Look up the seeded device-profile key for a detected panel size.
+
+    Raises:
+        DisplayError: If the (width, height) doesn't match a seeded profile.
+            Treated as fatal so registration fails fast rather than silently
+            misregistering against the wrong profile.
+
+    """
+    key = _PANEL_DIMS_TO_PROFILE_KEY.get((width, height))
+    if key is None:
+        raise DisplayError(
+            f"Unsupported panel size {width}x{height}: no matching device profile. "
+            f"Known sizes: {sorted(_PANEL_DIMS_TO_PROFILE_KEY)}"
+        )
+    return key
+
+
+def panel_dims_for_profile_key(key: str) -> tuple[int, int]:
+    """Look up panel (width, height) for a profile key (used by MockDisplay)."""
+    dims = _PROFILE_KEY_TO_PANEL_DIMS.get(key)
+    if dims is None:
+        raise DisplayError(f"Unknown device profile key '{key}'. Known keys: {sorted(_PROFILE_KEY_TO_PANEL_DIMS)}")
+    return dims
+
+
 class DisplayInterface(ABC):
     """Abstract interface for display implementations."""
 
@@ -244,15 +285,14 @@ class MockDisplay(DisplayInterface):
 
 def create_display(
     mock: bool = False,
-    mock_width: int = 1600,
-    mock_height: int = 1200,
+    mock_profile_key: str = "inky_impression_13_spectra6",
 ) -> DisplayInterface:
     """Create the appropriate display implementation.
 
     Args:
         mock: If True, create a MockDisplay for testing.
-        mock_width: Width for mock display (ignored for real hardware).
-        mock_height: Height for mock display (ignored for real hardware).
+        mock_profile_key: Seeded device-profile key whose panel dimensions the
+            mock should report (ignored for real hardware).
 
     Returns:
         DisplayInterface implementation.
@@ -262,8 +302,9 @@ def create_display(
 
     """
     if mock:
-        logger.info("Creating mock display (%dx%d)", mock_width, mock_height)
-        return MockDisplay(width=mock_width, height=mock_height)
+        width, height = panel_dims_for_profile_key(mock_profile_key)
+        logger.info("Creating mock display %s (%dx%d)", mock_profile_key, width, height)
+        return MockDisplay(width=width, height=height)
 
     logger.info("Creating Inky display")
     return InkyDisplay()

@@ -6,7 +6,6 @@ from inky_image_display_controller.config import APIConfig
 from inky_image_display_controller.registration import register
 from inky_image_display_shared.schemas import (
     DeviceRegistration,
-    DisplayInfo,
     RegistrationResponse,
 )
 
@@ -43,7 +42,8 @@ async def test_register_posts_payload_and_parses_response(monkeypatch):
 
     payload = DeviceRegistration(
         device_id="test-device",
-        display=DisplayInfo(width=1600, height=1200),
+        device_profile_key="inky_impression_13_spectra6",
+        orientation="landscape",
         room="Test Room",
     )
     result = await register(APIConfig(url="http://api.test"), payload)

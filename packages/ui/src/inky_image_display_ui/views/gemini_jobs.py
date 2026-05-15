@@ -42,7 +42,7 @@ def register() -> None:
 
 async def _render_list() -> None:
     api = require_api_client()
-    device_map = await _device_map(api)
+    profile_map = await _profile_map(api)
 
     with ui.row().classes("w-full items-end justify-between"):
         with ui.column().classes("gap-0"):
@@ -70,7 +70,7 @@ async def _render_list() -> None:
                 ui.label("No Gemini jobs yet.").classes("italic text-gray-500")
                 return
             for job in jobs:
-                _render_row(api, job, device_map, reload)
+                _render_row(api, job, profile_map, reload)
 
     refresh.on_click(reload)
     await reload()
@@ -79,13 +79,13 @@ async def _render_list() -> None:
 def _render_row(
     api: ApiClient,
     job: dict[str, Any],
-    device_map: dict[str, str],
+    profile_map: dict[str, str],
     on_changed: Any,
 ) -> None:
     job_id = UUID(job["id"])
-    target_name = device_map.get(job["target_device_id"], job["target_device_id"])
+    target_name = profile_map.get(job["target_device_profile_id"], job["target_device_profile_id"])
     total = len(job.get("subjects") or []) * int(job.get("images_per_subject") or 1)
-    orientation = "portrait" if job.get("is_portrait") else "landscape"
+    orientation = job.get("orientation") or "portrait"
 
     async def toggle_active(e: events.ValueChangeEventArguments) -> None:
         new_value = bool(e.value)
@@ -125,11 +125,12 @@ def _render_row(
 
 async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
     api = require_api_client()
-    devices = await _devices(api)
+    profiles = await _profiles(api)
     presets = await _presets(api)
 
-    device_options = {d["id"]: d.get("device_id") or d["id"] for d in devices}
+    profile_options = {p["id"]: f"{p['name']} ({p['width']}x{p['height']})" for p in profiles}
     preset_options = {p["id"]: p["name"] for p in presets}
+    orientation_options = {"portrait": "Portrait", "landscape": "Landscape"}
 
     job: dict[str, Any] = {}
     if job_id is not None:
@@ -159,9 +160,9 @@ async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
         name_field = ui.input("Name", value=job.get("name") or "").classes("w-full").props("outlined")
         target_field = (
             ui.select(
-                device_options,
-                value=job.get("target_device_id") or (devices[0]["id"] if devices else None),
-                label="Target device",
+                profile_options,
+                value=job.get("target_device_profile_id") or (profiles[0]["id"] if profiles else None),
+                label="Target device profile",
             )
             .classes("w-full")
             .props("outlined")
@@ -176,7 +177,15 @@ async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
             .props("outlined")
         )
         with ui.row().classes("w-full ink-form-row items-center"):
-            portrait_switch = ui.switch("Portrait orientation", value=bool(job.get("is_portrait", True)))
+            orientation_field = (
+                ui.select(
+                    orientation_options,
+                    value=job.get("orientation") or "portrait",
+                    label="Orientation",
+                )
+                .classes("flex-1")
+                .props("outlined")
+            )
             images_field = (
                 ui.number(
                     "Images per subject",
@@ -215,7 +224,7 @@ async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
             error_label.text = "Name is required"
             return
         if not target_field.value:
-            error_label.text = "Target device is required"
+            error_label.text = "Target device profile is required"
             return
         if not preset_field.value:
             error_label.text = "Preset is required"
@@ -227,9 +236,9 @@ async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
         body = {
             "name": name_field.value,
             "is_active": bool(active_switch.value),
-            "target_device_id": target_field.value,
+            "target_device_profile_id": target_field.value,
             "prompt_preset_id": preset_field.value,
-            "is_portrait": bool(portrait_switch.value),
+            "orientation": orientation_field.value or "portrait",
             "subjects": subjects,
             "images_per_subject": int(images_field.value or 1),
             "retention_days": int(retention_field.value) if retention_field.value is not None else None,
@@ -264,15 +273,15 @@ async def tile() -> None:
         stat(label="Gemini jobs", value=f"{active}/{total}", hint="Active / configured")
 
 
-async def _devices(api: ApiClient) -> list[dict[str, Any]]:
+async def _profiles(api: ApiClient) -> list[dict[str, Any]]:
     try:
-        return await api.list_devices()
+        return await api.list_device_profiles()
     except ApiError:
         return []
 
 
-async def _device_map(api: ApiClient) -> dict[str, str]:
-    return {d["id"]: d.get("device_id") or d["id"] for d in await _devices(api)}
+async def _profile_map(api: ApiClient) -> dict[str, str]:
+    return {p["id"]: p["name"] for p in await _profiles(api)}
 
 
 async def _presets(api: ApiClient) -> list[dict[str, Any]]:

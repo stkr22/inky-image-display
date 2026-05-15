@@ -29,7 +29,8 @@ class SyncJobItem(BaseModel):
     id: UUID
     name: str
     is_active: bool
-    target_device_id: UUID
+    target_device_profile_id: UUID
+    orientation: str | None
     strategy: str
     query: str | None
     count: int

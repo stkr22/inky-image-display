@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 from inky_image_display_shared.models import Device, Image
-from inky_image_display_shared.schemas import DeviceRegistration, DisplayInfo
+from inky_image_display_shared.schemas import DeviceRegistration
 
 
 class TestListDevices:
@@ -60,10 +60,12 @@ class TestGetDevice:
 class TestRegisterDevice:
     """Tests for POST /api/devices/register."""
 
+    @pytest.mark.usefixtures("seed_profile")
     def test_register_creates_device(self, client: TestClient):
         registration = DeviceRegistration(
             device_id="kitchen-display",
-            display=DisplayInfo(width=1600, height=1200, orientation="landscape"),
+            device_profile_key="inky_impression_13_spectra6",
+            orientation="landscape",
             room="Kitchen",
         )
         resp = client.post("/api/devices/register", json=registration.model_dump(mode="json"))
@@ -73,10 +75,20 @@ class TestRegisterDevice:
         assert body["s3_endpoint"] == "s3.test.local:9000"
         assert body["s3_access_key"] == "reader-key"
 
+    def test_register_rejects_unknown_profile(self, client: TestClient):
+        registration = DeviceRegistration(
+            device_id="some-display",
+            device_profile_key="does_not_exist",
+            orientation="landscape",
+        )
+        resp = client.post("/api/devices/register", json=registration.model_dump(mode="json"))
+        assert resp.status_code == 400
+
     def test_register_updates_existing(self, client: TestClient, seed_device: Device):
         registration = DeviceRegistration(
             device_id=seed_device.device_id,
-            display=DisplayInfo(width=1600, height=1200, orientation="landscape"),
+            device_profile_key="inky_impression_13_spectra6",
+            orientation="landscape",
             room="Updated Room",
         )
         resp = client.post("/api/devices/register", json=registration.model_dump(mode="json"))

@@ -12,9 +12,9 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from inky_image_display_api.routes import devices, images, sync_jobs
+from inky_image_display_api.routes import device_profiles, devices, images, sync_jobs
 from inky_image_display_api.routes.health import router as health_router
-from inky_image_display_shared.models import Device, Image
+from inky_image_display_shared.models import Device, DeviceProfile, Image
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -32,7 +32,11 @@ async def async_engine() -> AsyncIterator[AsyncEngine]:
     db_path = Path(db_path_str)
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     async with engine.begin() as conn:
-        for table in [Image.__table__, Device.__table__]:  # ty: ignore[unresolved-attribute]
+        for table in [
+            Image.__table__,  # ty: ignore[unresolved-attribute]
+            DeviceProfile.__table__,  # ty: ignore[unresolved-attribute]
+            Device.__table__,  # ty: ignore[unresolved-attribute]
+        ]:
             await conn.run_sync(table.create, checkfirst=True)
     yield engine
     db_path.unlink(missing_ok=True)
@@ -115,6 +119,7 @@ def test_app(
     app.include_router(health_router)
     app.include_router(images.router)
     app.include_router(devices.router)
+    app.include_router(device_profiles.router)
     app.include_router(sync_jobs.router)
 
     return app
@@ -128,14 +133,32 @@ def client(test_app: FastAPI) -> Iterator[TestClient]:
 
 
 @pytest.fixture
-async def seed_device(async_engine: AsyncEngine) -> Device:
+async def seed_profile(async_engine: AsyncEngine) -> DeviceProfile:
+    """Insert the default 13.3" Spectra 6 device profile."""
+    profile = DeviceProfile(
+        id=uuid4(),
+        key="inky_impression_13_spectra6",
+        name='Inky Impression 13.3" Spectra 6',
+        width=1600,
+        height=1200,
+        model="inky_impression_13_spectra6",
+        is_default=True,
+    )
+    async with AsyncSession(async_engine) as session:
+        session.add(profile)
+        await session.commit()
+        await session.refresh(profile)
+    return profile
+
+
+@pytest.fixture
+async def seed_device(async_engine: AsyncEngine, seed_profile: DeviceProfile) -> Device:
     """Insert a sample device into the test database."""
     device = Device(
         id=uuid4(),
         device_id="test-display",
         room="Living Room",
-        display_width=1600,
-        display_height=1200,
+        device_profile_id=seed_profile.id,
         display_orientation="landscape",
         is_online=True,
         last_seen=datetime.now(),

@@ -7,12 +7,15 @@ from inky_image_display_shared.schemas import (
     DeviceAcknowledge,
     DeviceRegistration,
     DisplayCommand,
-    DisplayInfo,
     RegistrationResponse,
 )
 
 from inky_image_display_controller.config import Settings
-from inky_image_display_controller.display import DisplayInterface, create_display
+from inky_image_display_controller.display import (
+    DisplayInterface,
+    create_display,
+    profile_key_for_panel,
+)
 from inky_image_display_controller.exceptions import CommunicationError, DisplayError
 from inky_image_display_controller.mqtt_client import MQTTClient
 from inky_image_display_controller.registration import register
@@ -42,19 +45,16 @@ class DisplayController:
         self._s3 = S3ImageClient()
         self._display: DisplayInterface = create_display(
             mock=settings.display.mock,
-            mock_width=settings.display.mock_width,
-            mock_height=settings.display.mock_height,
+            mock_profile_key=settings.display.mock_profile_key,
         )
         self._mqtt: MQTTClient | None = None
 
     def _build_registration(self) -> DeviceRegistration:
+        profile_key = profile_key_for_panel(self._display.width, self._display.height)
         return DeviceRegistration(
             device_id=self._settings.device.id,
-            display=DisplayInfo(
-                width=self._display.width,
-                height=self._display.height,
-                orientation=self._settings.display.orientation,
-            ),
+            device_profile_key=profile_key,
+            orientation=self._settings.display.orientation,
             room=self._settings.device.room,
         )
 

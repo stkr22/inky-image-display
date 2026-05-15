@@ -76,9 +76,9 @@ async def test_generate_and_publish_success_path_does_not_touch_expired_attrs(  
             mock_mqtt,
             task_id=task_id,
             subject="a cat",
-            target_device_id=seed_device.id,
+            target_device_profile_id=seed_device.device_profile_id,
             preset_id=None,
-            is_portrait=False,
+            orientation="landscape",
             push_immediately=True,
         )
 

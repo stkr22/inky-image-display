@@ -10,23 +10,22 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-class DisplayInfo(BaseModel):
-    """Display hardware characteristics sent during device registration."""
-
-    width: int = Field(default=1600, description="Display width in pixels")
-    height: int = Field(default=1200, description="Display height in pixels")
-    orientation: Literal["landscape", "portrait"] = Field(default="landscape", description="Display orientation")
-    model: str = Field(default="inky_impression_13_spectra6", description="Display model identifier")
-
-
 class DeviceRegistration(BaseModel):
     """Device registration payload.
 
-    Sent by the device on startup to announce itself.
+    Sent by the device on startup to announce itself. The controller does
+    not send raw panel dimensions — those live on the device profile that
+    matches ``device_profile_key``.
     """
 
     device_id: str = Field(description="Unique device identifier")
-    display: DisplayInfo = Field(default_factory=DisplayInfo, description="Display hardware characteristics")
+    device_profile_key: str = Field(
+        description="Stable key of the device profile (e.g. 'inky_impression_13_spectra6')",
+    )
+    orientation: Literal["landscape", "portrait"] = Field(
+        default="landscape",
+        description="Mounted orientation of the panel",
+    )
     room: str | None = Field(default=None, description="Room where device is located")
 
 

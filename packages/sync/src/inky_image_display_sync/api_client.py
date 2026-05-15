@@ -30,15 +30,25 @@ else:
     from uuid import UUID  # noqa: TC003
 
 
+class DeviceProfileItem(BaseModel):
+    """Device profile data returned by GET /api/device-profiles."""
+
+    id: UUID
+    key: str
+    name: str
+    width: int
+    height: int
+    model: str
+    is_default: bool
+
+
 class DeviceItem(BaseModel):
     """Device data returned by GET /api/devices."""
 
     id: UUID
     device_id: str
-    display_width: int
-    display_height: int
+    device_profile_id: UUID
     display_orientation: str
-    display_model: str
     current_image_id: UUID | None
 
 
@@ -176,3 +186,15 @@ class DisplayAPIClient:
             params["id"] = str(id)
         response = await self._request("GET", "/api/devices", params=params)
         return [DeviceItem.model_validate(d) for d in response.json()]
+
+    # --- Device profiles ---
+
+    async def get_device_profile(self, profile_id: UUID) -> DeviceProfileItem:
+        """Fetch a single device profile by primary-key UUID."""
+        response = await self._request("GET", f"/api/device-profiles/{profile_id}")
+        return DeviceProfileItem.model_validate(response.json())
+
+    async def get_device_profiles(self) -> list[DeviceProfileItem]:
+        """Fetch all seeded device profiles."""
+        response = await self._request("GET", "/api/device-profiles")
+        return [DeviceProfileItem.model_validate(p) for p in response.json()]

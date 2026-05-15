@@ -5,7 +5,6 @@ from .commands import (
     DeviceRegistration,
     DeviceStatus,
     DisplayCommand,
-    DisplayInfo,
     RegistrationResponse,
 )
 
@@ -14,6 +13,5 @@ __all__ = [
     "DeviceRegistration",
     "DeviceStatus",
     "DisplayCommand",
-    "DisplayInfo",
     "RegistrationResponse",
 ]

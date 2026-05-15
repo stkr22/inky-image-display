@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta
 
-from inky_image_display_shared.models import Device, Image
+from inky_image_display_shared.models import Device, DeviceProfile, Image
 from inky_image_display_shared.schemas import DisplayCommand
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -28,12 +28,16 @@ async def get_next_image_for_device(session: AsyncSession, device: Device) -> Im
     """
     is_portrait = device.display_orientation == "portrait"
 
-    # device.display_width/height are the panel's native (always landscape)
-    # dims. Image rows store orientation-aware dims, so swap for portrait.
+    # Profile stores panel-native (landscape) dims. Image rows store
+    # orientation-aware dims, so swap for portrait-mounted devices.
+    profile_result = await session.exec(select(DeviceProfile).where(col(DeviceProfile.id) == device.device_profile_id))
+    profile = profile_result.first()
+    if profile is None:
+        return None
     if is_portrait:
-        expected_width, expected_height = device.display_height, device.display_width
+        expected_width, expected_height = profile.height, profile.width
     else:
-        expected_width, expected_height = device.display_width, device.display_height
+        expected_width, expected_height = profile.width, profile.height
 
     query = (
         select(Image)

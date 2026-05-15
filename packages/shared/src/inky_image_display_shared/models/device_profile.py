@@ -1,0 +1,29 @@
+"""Device profile model — the fixed lineup of supported display panels.
+
+Devices reference a profile by FK and inherit panel dimensions and model
+identifier from it, so the controller no longer needs to send raw specs
+at registration.
+"""
+
+from datetime import datetime
+from uuid import UUID, uuid4
+
+from sqlmodel import Field, SQLModel
+
+
+class DeviceProfile(SQLModel, table=True):
+    """A supported Inky display panel."""
+
+    __tablename__ = "device_profiles"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    key: str = Field(unique=True, index=True, description="Stable lookup slug, e.g. 'inky_impression_13_spectra6'")
+    name: str = Field(description="Human label, e.g. 'Inky Impression 13.3\" Spectra 6'")
+    # width is stored as the longer (landscape-native) side; the orientation
+    # lives on the Device row and callers swap dims when needed.
+    width: int
+    height: int
+    model: str = Field(description="Hardware identifier reported by inky.auto")
+    is_default: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now, sa_column_kwargs={"onupdate": datetime.now})

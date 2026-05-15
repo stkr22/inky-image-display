@@ -143,6 +143,26 @@ class ApiClient:
         response = await self._client.post(f"/api/devices/{device_id}/clear")
         _raise_for_status(response, device_command=True)
 
+    # --- Device profiles ---
+
+    async def list_device_profiles(self) -> list[dict[str, Any]]:
+        """List the seeded device profiles."""
+        response = await self._client.get("/api/device-profiles")
+        return _parse_json_list(response)
+
+    async def update_device_profile(self, profile_id: UUID, *, name: str) -> dict[str, Any]:
+        """Update the display name of a profile."""
+        response = await self._client.patch(
+            f"/api/device-profiles/{profile_id}",
+            json={"name": name},
+        )
+        return _parse_json_dict(response)
+
+    async def set_default_device_profile(self, profile_id: UUID) -> dict[str, Any]:
+        """Make the given profile the global genai default."""
+        response = await self._client.post(f"/api/device-profiles/{profile_id}/set-default")
+        return _parse_json_dict(response)
+
     # --- Sync jobs ---
 
     async def list_sync_jobs(self, *, is_active: bool | None = None) -> list[dict[str, Any]]:

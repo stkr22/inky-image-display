@@ -38,9 +38,11 @@ class DisplayConfig(BaseSettings):
     orientation: Literal["landscape", "portrait"] = Field(default="landscape", description="Display orientation")
     saturation: float = Field(default=0.5, ge=0.0, le=1.0, description="Color saturation for Spectra 6")
     mock: bool = Field(default=False, description="Use mock display for testing without hardware")
-    # Only used when mock=True (no hardware to query)
-    mock_width: int = Field(default=1600, gt=0, description="Mock display width in pixels")
-    mock_height: int = Field(default=1200, gt=0, description="Mock display height in pixels")
+    # Only used when mock=True — picks the panel dims a seeded profile reports.
+    mock_profile_key: str = Field(
+        default="inky_impression_13_spectra6",
+        description="Seeded device-profile key whose dimensions the mock display should report",
+    )
 
 
 class Settings(BaseSettings):

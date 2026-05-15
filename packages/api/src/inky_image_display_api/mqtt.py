@@ -20,7 +20,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 import aiomqtt
-from inky_image_display_shared.models import Device
+from fastapi import HTTPException, status
+from inky_image_display_shared.models import Device, DeviceProfile
 from inky_image_display_shared.schemas import (
     DeviceAcknowledge,
     DeviceRegistration,
@@ -71,6 +72,16 @@ async def upsert_device(
 ) -> Literal["registered", "updated"]:
     """Create or update a Device row; used by the HTTP /register endpoint."""
     async with AsyncSession(engine) as session:
+        profile_result = await session.exec(
+            select(DeviceProfile).where(DeviceProfile.key == registration.device_profile_key)
+        )
+        profile = profile_result.first()
+        if profile is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown device_profile_key '{registration.device_profile_key}'",
+            )
+
         result = await session.exec(select(Device).where(Device.device_id == device_id))
         device = result.first()
         now = datetime.now()
@@ -79,27 +90,23 @@ async def upsert_device(
             device = Device(
                 device_id=device_id,
                 room=registration.room,
-                display_width=registration.display.width,
-                display_height=registration.display.height,
-                display_orientation=registration.display.orientation,
-                display_model=registration.display.model,
+                device_profile_id=profile.id,
+                display_orientation=registration.orientation,
                 is_online=False,  # Becomes True once we see the MQTT online status.
                 last_seen=now,
             )
             session.add(device)
-            status: Literal["registered", "updated"] = "registered"
+            outcome: Literal["registered", "updated"] = "registered"
         else:
             device.room = registration.room
-            device.display_width = registration.display.width
-            device.display_height = registration.display.height
-            device.display_orientation = registration.display.orientation
-            device.display_model = registration.display.model
+            device.device_profile_id = profile.id
+            device.display_orientation = registration.orientation
             device.last_seen = now
             session.add(device)
-            status = "updated"
+            outcome = "updated"
 
         await session.commit()
-    return status
+    return outcome
 
 
 async def _touch_last_seen(engine: AsyncEngine, device_id: str) -> None:

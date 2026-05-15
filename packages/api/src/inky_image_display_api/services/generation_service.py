@@ -9,12 +9,13 @@ an MQTT display command so the picture shows up without polling.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+import random
+from datetime import timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from inky_image_display_shared.ai import RenderedPrompt, generate_image_bytes
-from inky_image_display_shared.models import Device, Image, PromptBlock, PromptPreset
+from inky_image_display_shared.models import Device, DeviceProfile, Image, PromptBlock, PromptPreset
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -76,6 +77,20 @@ def _build_rendered_prompt(preset: PromptPreset, blocks: dict[UUID, PromptBlock]
     )
 
 
+async def _resolve_profile(session: AsyncSession, profile_id: UUID | None) -> DeviceProfile | None:
+    """Load the named profile, or fall back to the default-marked row."""
+    if profile_id is not None:
+        result = await session.exec(select(DeviceProfile).where(col(DeviceProfile.id) == profile_id))
+        return result.first()
+    result = await session.exec(select(DeviceProfile).where(col(DeviceProfile.is_default).is_(True)))
+    profile = result.first()
+    if profile is not None:
+        return profile
+    # No explicit default — fall back to any seeded profile so generation still works.
+    result = await session.exec(select(DeviceProfile).limit(1))
+    return result.first()
+
+
 async def generate_and_publish(  # noqa: PLR0913
     engine: AsyncEngine,
     settings: Settings,
@@ -84,9 +99,9 @@ async def generate_and_publish(  # noqa: PLR0913
     *,
     task_id: UUID,
     subject: str,
-    target_device_id: UUID,
+    target_device_profile_id: UUID | None,
     preset_id: UUID | None,
-    is_portrait: bool,
+    orientation: str,
     push_immediately: bool,
 ) -> None:
     """Run a single on-demand generation request end to end.
@@ -98,24 +113,26 @@ async def generate_and_publish(  # noqa: PLR0913
         logger.error("Generation task %s aborted: GEMINI_API_KEY is not configured", task_id)
         return
 
+    is_portrait = orientation == "portrait"
+
     try:
         async with AsyncSession(engine) as session:
-            dev_result = await session.exec(select(Device).where(col(Device.id) == target_device_id))
-            device = dev_result.first()
-            if device is None:
-                logger.error("Generation task %s: device %s not found", task_id, target_device_id)
+            profile = await _resolve_profile(session, target_device_profile_id)
+            if profile is None:
+                logger.error("Generation task %s: no device profile available", task_id)
                 return
+            profile_id = profile.id
 
             preset, blocks = await _resolve_preset(session, preset_id)
             rendered = _build_rendered_prompt(preset, blocks, is_portrait)
             model_name = preset.model_name
 
-            # The device's display dims are stored landscape-native; swap for
-            # portrait so the generated image matches the orientation flag.
+            # Profile.width/height are panel-native (landscape); swap for portrait
+            # so the generated image matches the requested orientation.
             if is_portrait:
-                target_width, target_height = device.display_height, device.display_width
+                target_width, target_height = profile.height, profile.width
             else:
-                target_width, target_height = device.display_width, device.display_height
+                target_width, target_height = profile.width, profile.height
 
         logger.info("Generation task %s: calling Gemini model=%s for subject=%r", task_id, model_name, subject)
         jpeg_bytes, score = await generate_image_bytes(
@@ -149,33 +166,33 @@ async def generate_and_publish(  # noqa: PLR0913
             session.add(image)
             await session.commit()
             await session.refresh(image)
+            image_pk = image.id
 
             if not push_immediately:
-                logger.info("Generation task %s: image %s registered, push skipped", task_id, image.id)
+                logger.info("Generation task %s: image %s registered, push skipped", task_id, image_pk)
                 return
 
-            dev_result = await session.exec(select(Device).where(col(Device.id) == target_device_id))
-            device = dev_result.first()
-            if device is None:
-                return
-            if not mqtt.is_connected(device.device_id):
-                logger.info(
-                    "Generation task %s: device %s offline, image %s waits for next rotation",
-                    task_id,
-                    device.device_id,
-                    image.id,
+            # Dispatch to a random *online* device that matches profile + orientation.
+            cand_result = await session.exec(
+                select(Device).where(
+                    col(Device.device_profile_id) == profile_id,
+                    col(Device.display_orientation) == orientation,
                 )
-                # Surface the new image to the next rotation by clearing the
-                # scheduled-next timestamp so it fires immediately on reconnect.
-                device.scheduled_next_at = datetime.now()
-                session.add(device)
-                await session.commit()
+            )
+            candidates = [d for d in cand_result.all() if mqtt.is_connected(d.device_id)]
+            if not candidates:
+                logger.info(
+                    "Generation task %s: image %s persisted but no online device matches profile %s + %s",
+                    task_id,
+                    image_pk,
+                    profile_id,
+                    orientation,
+                )
                 return
 
-            command = build_display_command(image)
-            # Snapshot identifiers before update_display_state's commit expires the ORM instances.
+            device = random.choice(candidates)
             device_mqtt_id = device.device_id
-            image_pk = image.id
+            command = build_display_command(image)
             await mqtt.send_command(device_mqtt_id, command)
             await update_display_state(session, device, image, settings)
             logger.info("Generation task %s: pushed image %s to %s", task_id, image_pk, device_mqtt_id)
