@@ -11,7 +11,7 @@ authors = [
 ]
 license = "GPL-3.0-only"
 dependencies = [
-    "inky-image-display-shared~=2.2",
+    "inky-image-display-shared~=3.0",
     "fastapi~=0.135.3",
     "uvicorn[standard]~=0.44.0",
     "httpx~=0.28.1",
