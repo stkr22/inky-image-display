@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from inky_image_display_sync.api_client import DeviceItem, ImageItem
+from inky_image_display_sync.api_client import DeviceItem, DeviceProfileItem, ImageItem
 from inky_image_display_sync.immich.api_client import ImmichDisplayAPIClient, SyncJobItem
 from inky_image_display_sync.immich.config import DeviceRequirements, ImmichSyncConfig, S3WriterConfig
 from inky_image_display_sync.immich.models import ImmichAsset, ImmichExifInfo
@@ -161,10 +161,8 @@ def _make_device_item(
     return DeviceItem(
         id=uuid4(),
         device_id="test-display",
-        display_width=1600,
-        display_height=1200,
+        device_profile_id=uuid4(),
         display_orientation="landscape",
-        display_model="test-model",
         current_image_id=current_image_id,
     )
 
@@ -323,28 +321,30 @@ async def test_cleanup_called_before_capacity_check() -> None:
     assert "count" in call_order
 
 
+def _make_profile_item(width: int = 1600, height: int = 1200):
+    return DeviceProfileItem(
+        id=uuid4(),
+        key="inky_impression_13_spectra6",
+        name="Test profile",
+        width=width,
+        height=height,
+        model="test-model",
+        is_default=True,
+    )
+
+
 class TestGetDeviceRequirementsPortrait:
-    """Test that _get_device_requirements swaps dimensions for portrait devices."""
+    """Test that _get_device_requirements swaps dimensions for portrait orientation."""
 
     @pytest.mark.asyncio
     async def test_landscape_preserves_dimensions(self) -> None:
         api_client = AsyncMock(spec=ImmichDisplayAPIClient)
-        api_client.get_devices.return_value = [
-            DeviceItem(
-                id=uuid4(),
-                device_id="test",
-                display_width=1600,
-                display_height=1200,
-                display_orientation="landscape",
-                display_model="test-model",
-                current_image_id=None,
-            )
-        ]
+        api_client.get_device_profile.return_value = _make_profile_item()
         service = ImmichSyncService.__new__(ImmichSyncService)
         service.api_client = api_client
         service.logger = MagicMock()
 
-        reqs = await service._get_device_requirements(uuid4())
+        reqs = await service._get_device_requirements(uuid4(), "landscape")
 
         assert reqs.width == 1600
         assert reqs.height == 1200
@@ -353,37 +353,29 @@ class TestGetDeviceRequirementsPortrait:
     @pytest.mark.asyncio
     async def test_portrait_swaps_dimensions(self) -> None:
         api_client = AsyncMock(spec=ImmichDisplayAPIClient)
-        api_client.get_devices.return_value = [
-            DeviceItem(
-                id=uuid4(),
-                device_id="test",
-                display_width=1600,
-                display_height=1200,
-                display_orientation="portrait",
-                display_model="test-model",
-                current_image_id=None,
-            )
-        ]
+        api_client.get_device_profile.return_value = _make_profile_item()
         service = ImmichSyncService.__new__(ImmichSyncService)
         service.api_client = api_client
         service.logger = MagicMock()
 
-        reqs = await service._get_device_requirements(uuid4())
+        reqs = await service._get_device_requirements(uuid4(), "portrait")
 
         assert reqs.width == 1200
         assert reqs.height == 1600
         assert reqs.orientation == "portrait"
 
     @pytest.mark.asyncio
-    async def test_device_not_found_raises(self) -> None:
+    async def test_orientation_none_defaults_landscape(self) -> None:
         api_client = AsyncMock(spec=ImmichDisplayAPIClient)
-        api_client.get_devices.return_value = []
+        api_client.get_device_profile.return_value = _make_profile_item()
         service = ImmichSyncService.__new__(ImmichSyncService)
         service.api_client = api_client
         service.logger = MagicMock()
 
-        with pytest.raises(ValueError, match="Target device not found"):
-            await service._get_device_requirements(uuid4())
+        reqs = await service._get_device_requirements(uuid4(), None)
+
+        assert reqs.orientation == "landscape"
+        assert reqs.width == 1600
 
 
 class TestFilterAssets:
@@ -435,7 +427,8 @@ class TestFilterAssets:
             id=uuid4(),
             name="test-job",
             is_active=True,
-            target_device_id=uuid4(),
+            target_device_profile_id=uuid4(),
+            orientation=None,
             strategy="RANDOM",
             query=None,
             count=count,
@@ -558,7 +551,8 @@ class TestVibrancyFiltering:
             id=uuid4(),
             name="test-job",
             is_active=True,
-            target_device_id=uuid4(),
+            target_device_profile_id=uuid4(),
+            orientation=None,
             strategy="RANDOM",
             query=None,
             count=10,

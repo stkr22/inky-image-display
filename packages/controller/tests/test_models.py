@@ -5,40 +5,9 @@ from inky_image_display_shared.schemas import (
     DeviceAcknowledge,
     DeviceRegistration,
     DisplayCommand,
-    DisplayInfo,
     RegistrationResponse,
 )
 from pydantic import ValidationError
-
-
-class TestDisplayInfo:
-    """Tests for DisplayInfo model."""
-
-    def test_default_values(self) -> None:
-        """Test DisplayInfo with default values."""
-        info = DisplayInfo()
-        assert info.width == 1600
-        assert info.height == 1200
-        assert info.orientation == "landscape"
-        assert info.model == "inky_impression_13_spectra6"
-
-    def test_custom_values(self) -> None:
-        """Test DisplayInfo with custom values."""
-        info = DisplayInfo(
-            width=800,
-            height=480,
-            orientation="portrait",
-            model="custom_display",
-        )
-        assert info.width == 800
-        assert info.height == 480
-        assert info.orientation == "portrait"
-        assert info.model == "custom_display"
-
-    def test_invalid_orientation(self) -> None:
-        """Test that invalid orientation raises validation error."""
-        with pytest.raises(ValidationError):
-            DisplayInfo(orientation="diagonal")  # ty: ignore[invalid-argument-type]
 
 
 class TestDeviceRegistration:
@@ -46,28 +15,47 @@ class TestDeviceRegistration:
 
     def test_minimal_registration(self) -> None:
         """Test registration with only required fields."""
-        reg = DeviceRegistration(device_id="test-device")
+        reg = DeviceRegistration(
+            device_id="test-device",
+            device_profile_key="inky_impression_13_spectra6",
+        )
         assert reg.device_id == "test-device"
-        assert reg.display is not None
+        assert reg.device_profile_key == "inky_impression_13_spectra6"
+        assert reg.orientation == "landscape"
         assert reg.room is None
 
     def test_full_registration(self) -> None:
         """Test registration with all fields."""
         reg = DeviceRegistration(
             device_id="living-room-display",
-            display=DisplayInfo(width=1600, height=1200),
+            device_profile_key="inky_impression_13_spectra6",
+            orientation="portrait",
             room="Living Room",
         )
         assert reg.device_id == "living-room-display"
-        assert reg.display.width == 1600
+        assert reg.orientation == "portrait"
         assert reg.room == "Living Room"
+
+    def test_invalid_orientation(self) -> None:
+        """Invalid orientation values should fail validation."""
+        with pytest.raises(ValidationError):
+            DeviceRegistration(
+                device_id="test-device",
+                device_profile_key="inky_impression_13_spectra6",
+                orientation="diagonal",  # ty: ignore[invalid-argument-type]
+            )
 
     def test_json_serialization(self) -> None:
         """Test JSON serialization/deserialization."""
-        reg = DeviceRegistration(device_id="test-device", room="Kitchen")
+        reg = DeviceRegistration(
+            device_id="test-device",
+            device_profile_key="inky_impression_13_spectra6",
+            room="Kitchen",
+        )
         json_str = reg.model_dump_json()
         parsed = DeviceRegistration.model_validate_json(json_str)
         assert parsed.device_id == reg.device_id
+        assert parsed.device_profile_key == reg.device_profile_key
         assert parsed.room == reg.room
 
 

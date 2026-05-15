@@ -13,7 +13,7 @@ The top nav has four sections:
 | `/jobs` | Tabbed list of Immich and Gemini sync jobs. The "New job" button follows the active tab and routes to `/sync-jobs/new` or `/gemini-jobs/new`; the per-source forms still live there for editing existing jobs |
 | `/genai` | On-demand generation form on top, prompt library tucked behind an "Advanced" expansion below |
 
-The GenAI page is the full AI surface: a Subject textarea (capped at 200 characters) plus target-device, preset, orientation, and "push immediately" toggles for one-off generation. The collapsed Advanced section lets operators add or edit prompt blocks (style / palette / legibility / composition / background) and prompt presets — including the Gemini model name each preset binds to.
+The GenAI page is the full AI surface: a Subject textarea (capped at 200 characters) plus target device-profile, preset, orientation, and "push immediately" toggles for one-off generation. The profile dropdown defaults to the row marked `is_default` in `device_profiles`; the resulting image lands on a random online device whose profile + orientation match (no device picker — that decision happens server-side at dispatch time). The collapsed Advanced section lets operators add or edit prompt blocks (style / palette / legibility / composition / background) and prompt presets — including the Gemini model name each preset binds to.
 
 ## Architecture
 

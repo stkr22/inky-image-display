@@ -31,10 +31,14 @@ def register() -> None:
 
 async def _render() -> None:
     api = require_api_client()
-    devices = await _devices(api)
+    profiles = await _profiles(api)
     presets = await _presets(api)
 
-    device_options = {d["id"]: d.get("device_id") or d["id"] for d in devices}
+    profile_options = {p["id"]: f"{p['name']} ({p['width']}x{p['height']})" for p in profiles}
+    default_profile_id = next(
+        (p["id"] for p in profiles if p.get("is_default")),
+        next(iter(profile_options), None),
+    )
     preset_options = {p["id"]: p["name"] for p in presets}
     default_preset_id = next(
         (p["id"] for p in presets if p.get("is_default")),
@@ -45,8 +49,8 @@ async def _render() -> None:
         ui.label("AI generation").classes("ink-eyebrow")
         ui.label("Generate an image").classes("ink-h2")
         ui.label(
-            "Type a subject — the API renders it with Gemini and pushes the result "
-            "to your selected device as soon as it's ready."
+            "Type a subject — the API renders it with Gemini and dispatches the result "
+            "to a random matching device as soon as it's ready."
         ).classes("ink-body ink-muted").style("max-width: 640px;")
 
     with (
@@ -58,11 +62,11 @@ async def _render() -> None:
             .classes("w-full")
             .props("outlined autofocus")
         )
-        device_field = (
+        profile_field = (
             ui.select(
-                device_options,
-                value=devices[0]["id"] if devices else None,
-                label="Target device",
+                profile_options,
+                value=default_profile_id,
+                label="Target device profile",
             )
             .classes("w-full")
             .props("outlined")
@@ -82,14 +86,14 @@ async def _render() -> None:
         if not subject_field.value:
             error_label.text = "Subject is required"
             return
-        if not device_field.value:
-            error_label.text = "Target device is required"
+        if not profile_field.value:
+            error_label.text = "Target device profile is required"
             return
         body = {
             "subject": subject_field.value,
-            "target_device_id": device_field.value,
+            "target_device_profile_id": profile_field.value,
             "preset_id": preset_field.value,
-            "is_portrait": bool(portrait_switch.value),
+            "orientation": "portrait" if portrait_switch.value else "landscape",
             "push_immediately": bool(push_switch.value),
         }
         try:
@@ -107,9 +111,9 @@ async def _render() -> None:
         ui.button("Generate", icon="auto_awesome", on_click=submit).props("unelevated color=primary")
 
 
-async def _devices(api: ApiClient) -> list[dict[str, Any]]:
+async def _profiles(api: ApiClient) -> list[dict[str, Any]]:
     try:
-        return await api.list_devices()
+        return await api.list_device_profiles()
     except ApiError:
         return []
 

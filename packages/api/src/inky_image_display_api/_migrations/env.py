@@ -4,7 +4,15 @@ import os
 from logging.config import fileConfig
 
 from alembic import context
-from inky_image_display_shared.models import Device, Image, ImmichSyncJob
+from inky_image_display_shared.models import (
+    Device,
+    DeviceProfile,
+    GeminiSyncJob,
+    Image,
+    ImmichSyncJob,
+    PromptBlock,
+    PromptPreset,
+)
 from sqlalchemy import engine_from_config, pool
 from sqlmodel import SQLModel
 
@@ -25,7 +33,7 @@ if database_path:
     config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
 
 # Keep references so the models are registered on the metadata
-_models = (Device, Image, ImmichSyncJob)
+_models = (Device, DeviceProfile, GeminiSyncJob, Image, ImmichSyncJob, PromptBlock, PromptPreset)
 
 
 def run_migrations_offline() -> None:

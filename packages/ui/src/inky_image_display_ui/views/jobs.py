@@ -36,7 +36,7 @@ def register() -> None:
 
 async def _render(initial: str) -> None:
     api = require_api_client()
-    device_map = await _device_map(api)
+    profile_map = await _profile_map(api)
 
     # Mutable state shared between the tab control, the "New job" button,
     # and the body renderer. Rebuilding from scratch on every tab change
@@ -89,15 +89,15 @@ async def _render(initial: str) -> None:
         body.clear()
         with body:
             if state["active"] == "gemini":
-                await _render_gemini_list(api, device_map)
+                await _render_gemini_list(api, profile_map)
             else:
-                await _render_immich_list(api, device_map)
+                await _render_immich_list(api, profile_map)
 
     style_tab_buttons()
     await render_list()
 
 
-async def _render_immich_list(api: ApiClient, device_map: dict[str, str]) -> None:
+async def _render_immich_list(api: ApiClient, profile_map: dict[str, str]) -> None:
     try:
         jobs = await api.list_sync_jobs()
     except ApiError as exc:
@@ -113,14 +113,14 @@ async def _render_immich_list(api: ApiClient, device_map: dict[str, str]) -> Non
         with container:
             fresh = await api.list_sync_jobs()
             for job in fresh:
-                immich_view._render_row(api, job, device_map, reload)
+                immich_view._render_row(api, job, profile_map, reload)
 
     with container:
         for job in jobs:
-            immich_view._render_row(api, job, device_map, reload)
+            immich_view._render_row(api, job, profile_map, reload)
 
 
-async def _render_gemini_list(api: ApiClient, device_map: dict[str, str]) -> None:
+async def _render_gemini_list(api: ApiClient, profile_map: dict[str, str]) -> None:
     try:
         jobs = await api.list_gemini_jobs()
     except ApiError as exc:
@@ -136,19 +136,19 @@ async def _render_gemini_list(api: ApiClient, device_map: dict[str, str]) -> Non
         with container:
             fresh = await api.list_gemini_jobs()
             for job in fresh:
-                gemini_view._render_row(api, job, device_map, reload)
+                gemini_view._render_row(api, job, profile_map, reload)
 
     with container:
         for job in jobs:
-            gemini_view._render_row(api, job, device_map, reload)
+            gemini_view._render_row(api, job, profile_map, reload)
 
 
-async def _device_map(api: ApiClient) -> dict[str, str]:
+async def _profile_map(api: ApiClient) -> dict[str, str]:
     try:
-        devices = await api.list_devices()
+        profiles = await api.list_device_profiles()
     except ApiError:
         return {}
-    return {d["id"]: d.get("device_id") or d["id"] for d in devices}
+    return {p["id"]: p["name"] for p in profiles}
 
 
 async def tile() -> None:

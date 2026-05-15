@@ -11,7 +11,6 @@ from inky_image_display_shared.schemas import (
     DeviceAcknowledge,
     DeviceRegistration,
     DisplayCommand,
-    DisplayInfo,
     RegistrationResponse,
 )
 
@@ -33,7 +32,6 @@ __all__ = [
     "DisplayController",
     "DisplayControllerError",
     "DisplayError",
-    "DisplayInfo",
     "RegistrationResponse",
     "Settings",
     "__version__",

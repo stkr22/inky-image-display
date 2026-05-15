@@ -30,7 +30,8 @@ class ImmichSyncJob(SQLModel, table=True):
         id: Unique job identifier
         name: Human-readable job name (unique)
         is_active: Whether job should be executed during sync
-        target_device_id: Device this job syncs for (determines dimensions/orientation)
+        target_device_profile_id: Profile this job syncs for (determines panel dimensions)
+        orientation: Optional per-job orientation override; NULL means any
         strategy: Selection strategy - 'random' or 'smart' (CLIP search)
         query: Semantic search query (required for 'smart' strategy)
         count: Number of images to sync per run
@@ -59,10 +60,14 @@ class ImmichSyncJob(SQLModel, table=True):
     name: str = Field(unique=True, index=True, description="Unique job name")
     is_active: bool = Field(default=True, description="Whether job is active")
 
-    # Target device - determines display requirements (width, height, orientation)
-    target_device_id: UUID = Field(
-        foreign_key="devices.id",
-        description="Device this job syncs for. Display dimensions from the device record.",
+    # Target device profile - determines panel size; orientation may override per-job.
+    target_device_profile_id: UUID = Field(
+        foreign_key="device_profiles.id",
+        description="Profile this job syncs for. Panel dimensions come from the profile.",
+    )
+    orientation: str | None = Field(
+        default=None,
+        description="Optional orientation override ('landscape' or 'portrait'). NULL = match any.",
     )
 
     # Selection strategy

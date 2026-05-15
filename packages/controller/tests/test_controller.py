@@ -56,14 +56,14 @@ class TestMockDisplay:
 
     def test_mock_dimensions_unchanged_by_create_display(self) -> None:
         """create_display passes mock dimensions through unchanged."""
-        display = create_display(mock=True, mock_width=1600, mock_height=1200)
+        display = create_display(mock=True, mock_profile_key="inky_impression_13_spectra6")
         assert display.width == 1600
         assert display.height == 1200
 
     @pytest.mark.asyncio
     async def test_portrait_image_auto_rotated_to_landscape(self) -> None:
         """MockDisplay auto-rotates a portrait image to landscape before displaying."""
-        display = create_display(mock=True, mock_width=1600, mock_height=1200)
+        display = create_display(mock=True, mock_profile_key="inky_impression_13_spectra6")
         assert isinstance(display, MockDisplay)
         portrait_image = Image.new("RGB", (1200, 1600), "blue")
         await display.show_image(portrait_image)

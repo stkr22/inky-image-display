@@ -22,17 +22,17 @@ class GeminiSyncJob(SQLModel, table=True):
     name: str = Field(unique=True, index=True, description="Unique job name")
     is_active: bool = Field(default=True)
 
-    target_device_id: UUID = Field(
-        foreign_key="devices.id",
-        description="Device this job generates for; provides target dimensions.",
+    target_device_profile_id: UUID = Field(
+        foreign_key="device_profiles.id",
+        description="Device profile this job generates for; provides target panel dimensions.",
     )
     prompt_preset_id: UUID = Field(
         foreign_key="prompt_presets.id",
         description="Prompt blocks to use when calling Gemini.",
     )
-    is_portrait: bool = Field(
-        default=True,
-        description="Generates 3:4 portrait when True, otherwise 4:3 landscape.",
+    orientation: str = Field(
+        default="portrait",
+        description="Orientation for generated images ('landscape' or 'portrait').",
     )
 
     subjects: list[str] = Field(

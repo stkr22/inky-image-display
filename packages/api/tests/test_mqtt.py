@@ -38,13 +38,12 @@ def settings() -> Settings:
 
 
 @pytest.fixture
-async def seeded_device(async_engine: AsyncEngine) -> Device:
+async def seeded_device(async_engine: AsyncEngine, seed_profile) -> Device:
     """A persisted device whose ``is_online`` flag we can flip in tests."""
     device = Device(
         id=uuid4(),
         device_id="dev-1",
-        display_width=1600,
-        display_height=1200,
+        device_profile_id=seed_profile.id,
         is_online=False,
         last_seen=datetime(2000, 1, 1),
     )

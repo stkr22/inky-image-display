@@ -14,6 +14,7 @@ from inky_image_display_api.config import Settings
 from inky_image_display_api.database import create_engine, create_tables
 from inky_image_display_api.mqtt import MQTTService
 from inky_image_display_api.routes import (
+    device_profiles,
     devices,
     gemini_sync_jobs,
     genai_generate,
@@ -68,6 +69,7 @@ app = FastAPI(title="Inky Image Display API", lifespan=lifespan)
 app.include_router(health_router)
 app.include_router(images.router)
 app.include_router(devices.router)
+app.include_router(device_profiles.router)
 app.include_router(sync_jobs.router)
 app.include_router(prompt_blocks.router)
 app.include_router(prompt_presets.router)

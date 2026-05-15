@@ -27,10 +27,22 @@ def _has_tables(bind: sa.engine.Connection, *tables: str) -> bool:
     return all(table in existing for table in tables)
 
 
+def _has_column(bind: sa.engine.Connection, table: str, column: str) -> bool:
+    cols = {c["name"] for c in sa.inspect(bind).get_columns(table)}
+    return column in cols
+
+
 def upgrade() -> None:
-    """Flip dims + is_portrait for images synced against portrait devices."""
+    """Flip dims + is_portrait for images synced against portrait devices.
+
+    No-op on fresh databases where ``target_device_id`` has already been
+    replaced by ``target_device_profile_id`` (the retrofit only applied to
+    rows written under the old schema).
+    """
     bind = op.get_bind()
     if not _has_tables(bind, "images", "immich_sync_jobs", "devices"):
+        return
+    if not _has_column(bind, "immich_sync_jobs", "target_device_id"):
         return
 
     bind.execute(
@@ -58,6 +70,8 @@ def downgrade() -> None:
     """Revert dims + is_portrait for portrait-device sync'd images."""
     bind = op.get_bind()
     if not _has_tables(bind, "images", "immich_sync_jobs", "devices"):
+        return
+    if not _has_column(bind, "immich_sync_jobs", "target_device_id"):
         return
 
     bind.execute(

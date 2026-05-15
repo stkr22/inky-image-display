@@ -49,7 +49,7 @@ def register() -> None:
 
 async def _render_list() -> None:
     api = require_api_client()
-    device_map = await _load_device_map(api)
+    profile_map = await _load_profile_map(api)
 
     with ui.row().classes("w-full items-end justify-between"):
         with ui.column().classes("gap-0"):
@@ -75,15 +75,16 @@ async def _render_list() -> None:
                 ui.label("No sync jobs yet.").classes("italic text-gray-500")
                 return
             for job in jobs:
-                _render_row(api, job, device_map, reload)
+                _render_row(api, job, profile_map, reload)
 
     refresh_button.on_click(reload)
     await reload()
 
 
-def _render_row(api: ApiClient, job: dict[str, Any], device_map: dict[str, str], on_changed: Any) -> None:
+def _render_row(api: ApiClient, job: dict[str, Any], profile_map: dict[str, str], on_changed: Any) -> None:
     job_id = UUID(job["id"])
-    target_name = device_map.get(job["target_device_id"], job["target_device_id"])
+    target_name = profile_map.get(job["target_device_profile_id"], job["target_device_profile_id"])
+    orientation = job.get("orientation") or "any orientation"
 
     async def toggle_active(e: events.ValueChangeEventArguments) -> None:
         new_value = bool(e.value)
@@ -115,7 +116,7 @@ def _render_row(api: ApiClient, job: dict[str, Any], device_map: dict[str, str],
             ui.label(job["name"]).classes("ink-h3").style(
                 "white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"
             )
-            ui.label(f"{job['strategy']} · count {job['count']} · → {target_name}").classes("ink-small")
+            ui.label(f"{job['strategy']} · count {job['count']} · → {target_name} · {orientation}").classes("ink-small")
             ui.label(f"Updated {format_datetime(job.get('updated_at'))}").classes("ink-small")
         switch = ui.switch(value=bool(job.get("is_active"))).tooltip("Active")
         switch.on_value_change(toggle_active)
@@ -127,8 +128,9 @@ def _render_row(api: ApiClient, job: dict[str, Any], device_map: dict[str, str],
 
 async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
     api = require_api_client()
-    devices = await _load_devices(api)
-    device_options: dict[str, str] = {d["id"]: d.get("device_id") or d["id"] for d in devices}
+    profiles = await _load_profiles(api)
+    profile_options: dict[str, str] = {p["id"]: f"{p['name']} ({p['width']}x{p['height']})" for p in profiles}
+    orientation_options: dict[str, str] = {"": "Any orientation", "landscape": "Landscape", "portrait": "Portrait"}
 
     job: dict[str, Any] = {}
     if job_id is not None:
@@ -167,9 +169,18 @@ async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
             )
         target_field = (
             ui.select(
-                device_options,
-                value=job.get("target_device_id") or (devices[0]["id"] if devices else None),
-                label="Target device",
+                profile_options,
+                value=job.get("target_device_profile_id") or (profiles[0]["id"] if profiles else None),
+                label="Target device profile",
+            )
+            .classes("w-full")
+            .props("outlined")
+        )
+        orientation_field = (
+            ui.select(
+                orientation_options,
+                value=job.get("orientation") or "",
+                label="Orientation override",
             )
             .classes("w-full")
             .props("outlined")
@@ -279,7 +290,8 @@ async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
             name=name_field.value,
             strategy=strategy_field.value or "RANDOM",
             query=query_field.value,
-            target_device_id=target_field.value,
+            target_device_profile_id=target_field.value,
+            orientation=orientation_field.value or None,
             count_raw=count_field.value,
             random_pick=bool(random_pick.value),
             overfetch=overfetch_slider.value,
@@ -321,7 +333,8 @@ def _collect_form(  # noqa: PLR0913, PLR0911
     name: str | None,
     strategy: str,
     query: str | None,
-    target_device_id: str | None,
+    target_device_profile_id: str | None,
+    orientation: str | None,
     count_raw: Any,
     random_pick: bool,
     overfetch: Any,
@@ -341,8 +354,8 @@ def _collect_form(  # noqa: PLR0913, PLR0911
 ) -> dict[str, Any] | str:
     if not name:
         return "Name is required"
-    if not target_device_id:
-        return "Target device is required"
+    if not target_device_profile_id:
+        return "Target device profile is required"
     try:
         count = int(count_raw if count_raw is not None else 10)
     except (TypeError, ValueError):
@@ -370,7 +383,8 @@ def _collect_form(  # noqa: PLR0913, PLR0911
         "name": name,
         "strategy": strategy,
         "query": (query or None) if strategy == "SMART" else None,
-        "target_device_id": target_device_id,
+        "target_device_profile_id": target_device_profile_id,
+        "orientation": orientation,
         "count": count,
         "random_pick": random_pick,
         "overfetch_multiplier": int(overfetch or 3),
@@ -443,17 +457,17 @@ async def tile() -> None:
         stat(label="Sync jobs", value=f"{active}/{total}", hint="Active / configured")
 
 
-async def _load_devices(api: ApiClient) -> list[dict[str, Any]]:
+async def _load_profiles(api: ApiClient) -> list[dict[str, Any]]:
     try:
-        return await api.list_devices()
+        return await api.list_device_profiles()
     except ApiError:
-        logger.exception("Failed to load device list for sync-jobs view")
+        logger.exception("Failed to load device profiles for sync-jobs view")
         return []
 
 
-async def _load_device_map(api: ApiClient) -> dict[str, str]:
-    devices = await _load_devices(api)
-    return {d["id"]: d.get("device_id") or d["id"] for d in devices}
+async def _load_profile_map(api: ApiClient) -> dict[str, str]:
+    profiles = await _load_profiles(api)
+    return {p["id"]: p["name"] for p in profiles}
 
 
 async def _confirm(message: str) -> bool:

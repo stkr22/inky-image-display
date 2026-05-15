@@ -39,11 +39,11 @@ def register() -> None:
 
 async def _render() -> None:
     api = require_api_client()
-    devices = await _list_devices(api)
+    profiles = await _list_device_profiles(api)
     presets = await api.list_prompt_presets()
     blocks = await api.list_prompt_blocks()
 
-    _render_generate_section(api, devices, presets)
+    _render_generate_section(api, profiles, presets)
 
     ui.element("div").style("height: 24px;")
 
@@ -55,10 +55,14 @@ async def _render() -> None:
 
 def _render_generate_section(
     api: ApiClient,
-    devices: list[dict[str, Any]],
+    profiles: list[dict[str, Any]],
     presets: list[dict[str, Any]],
 ) -> None:
-    device_options = {d["id"]: d.get("device_id") or d["id"] for d in devices}
+    profile_options = {p["id"]: f"{p['name']} ({p['width']}x{p['height']})" for p in profiles}
+    default_profile_id = next(
+        (p["id"] for p in profiles if p.get("is_default")),
+        next(iter(profile_options), None),
+    )
     preset_options = {p["id"]: p["name"] for p in presets}
     default_preset_id = next(
         (p["id"] for p in presets if p.get("is_default")),
@@ -70,7 +74,7 @@ def _render_generate_section(
         ui.label("Generate an image").classes("ink-h2")
         ui.label(
             "Describe what you want to see. The API renders it with Gemini "
-            "and pushes the result to the selected device as soon as it's ready."
+            "and dispatches the result to a random matching device as soon as it's ready."
         ).classes("ink-body ink-muted").style("max-width: 640px;")
 
     with (
@@ -88,11 +92,11 @@ def _render_generate_section(
             .style("font-size: 15px;")
         )
         with ui.row().classes("w-full ink-form-row"):
-            device_field = (
+            profile_field = (
                 ui.select(
-                    device_options,
-                    value=devices[0]["id"] if devices else None,
-                    label="Target device",
+                    profile_options,
+                    value=default_profile_id,
+                    label="Target device profile",
                 )
                 .classes("flex-1")
                 .props("outlined")
@@ -115,14 +119,14 @@ def _render_generate_section(
         if len(subject_field.value) > _SUBJECT_MAX_CHARS:
             error_label.text = f"Subject must be at most {_SUBJECT_MAX_CHARS} characters"
             return
-        if not device_field.value:
-            error_label.text = "Target device is required"
+        if not profile_field.value:
+            error_label.text = "Target device profile is required"
             return
         body = {
             "subject": subject_field.value.strip(),
-            "target_device_id": device_field.value,
+            "target_device_profile_id": profile_field.value,
             "preset_id": preset_field.value,
-            "is_portrait": bool(portrait_switch.value),
+            "orientation": "portrait" if portrait_switch.value else "landscape",
             "push_immediately": bool(push_switch.value),
         }
         try:
@@ -403,9 +407,9 @@ def _render_new_preset_form(
         ui.button("Add preset", icon="add", on_click=create).props("unelevated color=primary")
 
 
-async def _list_devices(api: ApiClient) -> list[dict[str, Any]]:
+async def _list_device_profiles(api: ApiClient) -> list[dict[str, Any]]:
     try:
-        return await api.list_devices()
+        return await api.list_device_profiles()
     except ApiError:
         return []
 

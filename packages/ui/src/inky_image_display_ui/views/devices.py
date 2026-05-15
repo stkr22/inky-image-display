@@ -41,22 +41,29 @@ async def _render() -> None:
     async def reload() -> None:
         try:
             devices = await api.list_devices()
+            profiles = await api.list_device_profiles()
         except ApiError as exc:
             ui.notify(f"Failed to load devices: {exc.detail or exc}", type="negative")
             return
+        profile_by_id = {p["id"]: p for p in profiles}
         container.clear()
         with container:
             if not devices:
                 ui.label("No devices registered yet.").classes("italic text-gray-500")
                 return
             for device in devices:
-                await _render_device(api, device, reload)
+                await _render_device(api, device, profile_by_id, reload)
 
     refresh_button.on_click(reload)
     await reload()
 
 
-async def _render_device(api: Any, device: dict[str, Any], on_changed: Any) -> None:  # noqa: PLR0915
+async def _render_device(  # noqa: PLR0915
+    api: Any,
+    device: dict[str, Any],
+    profile_by_id: dict[str, dict[str, Any]],
+    on_changed: Any,
+) -> None:
     device_id: str = device["device_id"]
     is_online: bool = bool(device.get("is_online"))
 
@@ -136,10 +143,14 @@ async def _render_device(api: Any, device: dict[str, Any], on_changed: Any) -> N
                     ui.label(device_id).classes("ink-h3")
                     badge("Online" if is_online else "Offline", tone="ok" if is_online else "muted")
                 ui.label(device.get("room") or "(no room)").classes("ink-small")
-                ui.label(
-                    f"{device['display_width']}x{device['display_height']} · {device['display_orientation']}"
-                    f" · {device.get('display_model', '?')}"
-                ).classes("ink-small")
+                profile_id = device.get("device_profile_id")
+                profile = profile_by_id.get(profile_id) if profile_id else None
+                profile_summary = (
+                    f"{profile['name']} ({profile['width']}x{profile['height']})"
+                    if profile is not None
+                    else "(unknown profile)"
+                )
+                ui.label(f"{profile_summary} · {device['display_orientation']}").classes("ink-small")
                 ui.label(f"Displayed since {format_datetime(device.get('displayed_since'))}").classes("ink-small")
                 ui.label(f"Next scheduled {format_datetime(device.get('scheduled_next_at'))}").classes("ink-small")
 
@@ -218,10 +229,19 @@ async def _render_mini_device(api: Any, device: dict[str, Any]) -> None:
 
 async def _open_image_picker(api: Any, device: dict[str, Any], *, on_selected: Any) -> None:
     is_portrait = device["display_orientation"] == "portrait"
+    try:
+        profiles = await api.list_device_profiles()
+    except ApiError as exc:
+        ui.notify(f"Failed to load device profiles: {exc.detail or exc}", type="negative")
+        return
+    profile = next((p for p in profiles if p["id"] == device.get("device_profile_id")), None)
+    if profile is None:
+        ui.notify("Device profile not found", type="negative")
+        return
     if is_portrait:
-        target_w, target_h = device["display_height"], device["display_width"]
+        target_w, target_h = profile["height"], profile["width"]
     else:
-        target_w, target_h = device["display_width"], device["display_height"]
+        target_w, target_h = profile["width"], profile["height"]
     try:
         images = await api.list_images(is_portrait=is_portrait, limit=100)
     except ApiError as exc:

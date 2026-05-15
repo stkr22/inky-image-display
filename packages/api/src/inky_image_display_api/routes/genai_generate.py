@@ -48,9 +48,9 @@ async def generate_image(
         request.app.state.mqtt,
         task_id=task_id,
         subject=body.subject,
-        target_device_id=body.target_device_id,
+        target_device_profile_id=body.target_device_profile_id,
         preset_id=body.preset_id,
-        is_portrait=body.is_portrait,
+        orientation=body.orientation,
         push_immediately=body.push_immediately,
     )
     logger.info("Queued generation task %s for subject=%r", task_id, body.subject)

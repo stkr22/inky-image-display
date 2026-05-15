@@ -21,9 +21,9 @@ class GeminiSyncJobItem(BaseModel):
     id: UUID
     name: str
     is_active: bool
-    target_device_id: UUID
+    target_device_profile_id: UUID
     prompt_preset_id: UUID
-    is_portrait: bool
+    orientation: str
     subjects: list[str]
     images_per_subject: int
     retention_days: int | None
