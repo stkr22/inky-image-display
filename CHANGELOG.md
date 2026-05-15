@@ -1,5 +1,26 @@
 # Changelog
 
+## [4.0.0](https://github.com/stkr22/inky-image-display/compare/v3.0.2...v4.0.0) (2026-05-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* ``DisplayInfo`` removed; ``DeviceRegistration`` reshaped; ``Device`` and both job models swap their spec / ``target_device_id`` fields for FKs to ``device_profiles``. Controllers must upgrade with the API.
+
+### Features
+
+* introduce device profiles to replace per-device hardware specs ([1268bbe](https://github.com/stkr22/inky-image-display/commit/1268bbe592b6fb6d92697b04ea09df1557582a5d))
+
+
+### Bug Fixes
+
+* **deps:** bump inky-image-display-shared pin to ~=3.0 ([b49cc93](https://github.com/stkr22/inky-image-display/commit/b49cc9394cf08cb63e16b096019e3f0ea3c261bc))
+
+
+### Documentation
+
+* reflect device profiles in main/configuration/ui guides ([86d8cbe](https://github.com/stkr22/inky-image-display/commit/86d8cbe92101fc576d936c49b901066aa7a32dcc))
+
 ## [3.0.2](https://github.com/stkr22/inky-image-display/compare/v3.0.1...v3.0.2) (2026-05-13)
 
 
