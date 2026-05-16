@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.1.0](https://github.com/stkr22/inky-image-display/compare/v4.0.0...v4.1.0) (2026-05-16)
+
+
+### Features
+
+* add grids for shared display across multiple Inky panels ([3b8db42](https://github.com/stkr22/inky-image-display/commit/3b8db423fd518edc1f49b80a697b1c4aad124385))
+* add grids for shared display across multiple Inky panels ([a1d9fde](https://github.com/stkr22/inky-image-display/commit/a1d9fdedb3fb811c0c8e42b1da89e58ab22fd685))
+
 ## [4.0.0](https://github.com/stkr22/inky-image-display/compare/v3.0.2...v4.0.0) (2026-05-15)
 
 
