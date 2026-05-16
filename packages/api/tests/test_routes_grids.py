@@ -44,27 +44,28 @@ class TestGridDevicePlacement:
 
         resp = client.post(
             f"/api/grids/{grid_id}/devices",
-            json={"device_id": str(seed_device.id), "midpoint_x_cm": 14.0, "midpoint_y_cm": 11.0},
+            json={"device_id": str(seed_device.id), "bottom_left_x_cm": 0.5, "bottom_left_y_cm": 1.0},
         )
         assert resp.status_code == 201
         placement = resp.json()
-        # 13.3" profile is 27.1x20.3 cm; midpoint (14, 11) places it inside the canvas.
+        # 13.3" profile is 27.1x20.3 cm; bottom-left (0.5, 1.0) on an 80x40 canvas fits.
         assert placement["width_cm"] > 0
-        assert placement["top_left_x_cm"] >= 0
+        assert placement["bottom_left_x_cm"] == 0.5
+        assert placement["bottom_left_y_cm"] == 1.0
 
     def test_add_device_overflowing_canvas_rejected(self, client: TestClient, seed_device: Device):
         grid_resp = client.post("/api/grids", json={"name": "g2", "width_cm": 80.0, "height_cm": 40.0})
         grid_id = grid_resp.json()["id"]
         resp = client.post(
             f"/api/grids/{grid_id}/devices",
-            json={"device_id": str(seed_device.id), "midpoint_x_cm": 75.0, "midpoint_y_cm": 20.0},
+            json={"device_id": str(seed_device.id), "bottom_left_x_cm": 60.0, "bottom_left_y_cm": 1.0},
         )
         assert resp.status_code == 400
 
     def test_duplicate_device_rejected(self, client: TestClient, seed_device: Device):
         grid_resp = client.post("/api/grids", json={"name": "g3", "width_cm": 80.0, "height_cm": 40.0})
         grid_id = grid_resp.json()["id"]
-        body = {"device_id": str(seed_device.id), "midpoint_x_cm": 14.0, "midpoint_y_cm": 11.0}
+        body = {"device_id": str(seed_device.id), "bottom_left_x_cm": 0.5, "bottom_left_y_cm": 1.0}
         first = client.post(f"/api/grids/{grid_id}/devices", json=body)
         assert first.status_code == 201
         second = client.post(f"/api/grids/{grid_id}/devices", json=body)
@@ -75,7 +76,7 @@ class TestGridDevicePlacement:
         grid_id = grid_resp.json()["id"]
         client.post(
             f"/api/grids/{grid_id}/devices",
-            json={"device_id": str(seed_device.id), "midpoint_x_cm": 14.0, "midpoint_y_cm": 11.0},
+            json={"device_id": str(seed_device.id), "bottom_left_x_cm": 0.5, "bottom_left_y_cm": 1.0},
         )
         resp = client.delete(f"/api/grids/{grid_id}/devices/{seed_device.id}")
         assert resp.status_code == 204
@@ -103,7 +104,7 @@ class TestGridDisplay:
         grid_id = grid_resp.json()["id"]
         client.post(
             f"/api/grids/{grid_id}/devices",
-            json={"device_id": str(seed_device.id), "midpoint_x_cm": 14.0, "midpoint_y_cm": 11.0},
+            json={"device_id": str(seed_device.id), "bottom_left_x_cm": 0.5, "bottom_left_y_cm": 1.0},
         )
 
         resp = client.post(f"/api/grids/{grid_id}/display", json={"image_id": str(seed_image.id)})
@@ -127,7 +128,7 @@ class TestGridDisplay:
         grid_b = client.post("/api/grids", json={"name": "b", "width_cm": 80.0, "height_cm": 40.0}).json()
         client.post(
             f"/api/grids/{grid_a['id']}/devices",
-            json={"device_id": str(seed_device.id), "midpoint_x_cm": 14.0, "midpoint_y_cm": 11.0},
+            json={"device_id": str(seed_device.id), "bottom_left_x_cm": 0.5, "bottom_left_y_cm": 1.0},
         )
         # Tag the image to grid B, then try to display on A → 400.
         client.put(f"/api/images/{seed_image.id}", json={"target_grid_id": grid_b["id"]})

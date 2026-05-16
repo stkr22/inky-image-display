@@ -29,39 +29,37 @@ def _grid(width_cm: float = 80.0, height_cm: float = 40.0) -> Grid:
 
 
 class TestDeriveRect:
-    """Validate placement derivation from midpoint or top-left."""
+    """Validate placement derivation from a bottom-left (Y-up) corner."""
 
-    def test_midpoint_at_center(self):
+    def test_bottom_left_at_origin_maps_to_top(self):
+        """bottom_left=(0,0) sits at the floor of the canvas → top_left_y = grid_h - dev_h."""
         grid = _grid(80, 40)
         profile = _profile(w_cm=20, h_cm=10)
         rect = grid_service.derive_rect(
             grid,
             profile,
             "landscape",
-            midpoint_x_cm=40.0,
-            midpoint_y_cm=20.0,
-            top_left_x_cm=None,
-            top_left_y_cm=None,
+            bottom_left_x_cm=0.0,
+            bottom_left_y_cm=0.0,
         )
-        assert rect.top_left_x_cm == pytest.approx(30.0)
-        assert rect.top_left_y_cm == pytest.approx(15.0)
+        assert rect.top_left_x_cm == pytest.approx(0.0)
+        assert rect.top_left_y_cm == pytest.approx(30.0)
         assert rect.width_cm == pytest.approx(20.0)
         assert rect.height_cm == pytest.approx(10.0)
+        assert rect.bottom_left_y_cm(grid.height_cm) == pytest.approx(0.0)
 
-    def test_explicit_top_left(self):
+    def test_bottom_left_at_top_of_canvas(self):
+        """bottom_left_y = grid_h - dev_h puts the device flush with the top edge."""
         grid = _grid(80, 40)
         profile = _profile(w_cm=20, h_cm=10)
         rect = grid_service.derive_rect(
             grid,
             profile,
             "landscape",
-            midpoint_x_cm=None,
-            midpoint_y_cm=None,
-            top_left_x_cm=0.0,
-            top_left_y_cm=0.0,
+            bottom_left_x_cm=0.0,
+            bottom_left_y_cm=30.0,
         )
-        assert rect.top_left_x_cm == 0.0
-        assert rect.top_left_y_cm == 0.0
+        assert rect.top_left_y_cm == pytest.approx(0.0)
 
     def test_portrait_swaps_dims(self):
         grid = _grid(40, 80)
@@ -70,10 +68,8 @@ class TestDeriveRect:
             grid,
             profile,
             "portrait",
-            midpoint_x_cm=5.0,
-            midpoint_y_cm=10.0,
-            top_left_x_cm=None,
-            top_left_y_cm=None,
+            bottom_left_x_cm=0.0,
+            bottom_left_y_cm=0.0,
         )
         assert rect.width_cm == pytest.approx(10.0)
         assert rect.height_cm == pytest.approx(20.0)
@@ -86,25 +82,22 @@ class TestDeriveRect:
                 grid,
                 profile,
                 "landscape",
-                midpoint_x_cm=75.0,
-                midpoint_y_cm=20.0,
-                top_left_x_cm=None,
-                top_left_y_cm=None,
+                bottom_left_x_cm=65.0,
+                bottom_left_y_cm=0.0,
             )
         assert exc.value.status_code == 400
 
-    def test_no_coords_raises(self):
-        grid = _grid()
-        profile = _profile()
+    def test_negative_height_raises(self):
+        """bottom_left_y too high pushes the rect above the canvas top."""
+        grid = _grid(80, 40)
+        profile = _profile(w_cm=20, h_cm=10)
         with pytest.raises(grid_service.GridValidationError):
             grid_service.derive_rect(
                 grid,
                 profile,
                 "landscape",
-                midpoint_x_cm=None,
-                midpoint_y_cm=None,
-                top_left_x_cm=None,
-                top_left_y_cm=None,
+                bottom_left_x_cm=0.0,
+                bottom_left_y_cm=35.0,
             )
 
 

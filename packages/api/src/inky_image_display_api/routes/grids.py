@@ -24,16 +24,15 @@ router = APIRouter(prefix="/api/grids", tags=["grids"])
 logger = logging.getLogger(__name__)
 
 
-def _to_device_response(placement: GridDevice) -> GridDeviceResponse:
+def _to_device_response(placement: GridDevice, grid_height_cm: float) -> GridDeviceResponse:
+    # Convert stored top-left (Y-down) back to user-facing bottom-left (Y-up).
     return GridDeviceResponse(
         grid_id=placement.grid_id,
         device_id=placement.device_id,
-        top_left_x_cm=placement.top_left_x_cm,
-        top_left_y_cm=placement.top_left_y_cm,
+        bottom_left_x_cm=placement.top_left_x_cm,
+        bottom_left_y_cm=grid_height_cm - placement.top_left_y_cm - placement.height_cm,
         width_cm=placement.width_cm,
         height_cm=placement.height_cm,
-        midpoint_x_cm=placement.top_left_x_cm + placement.width_cm / 2,
-        midpoint_y_cm=placement.top_left_y_cm + placement.height_cm / 2,
     )
 
 
@@ -41,7 +40,7 @@ async def _build_response(session: AsyncSession, grid: Grid, *, include_devices:
     response = GridResponse.model_validate(grid)
     if include_devices:
         placements = await grid_service.list_grid_devices(session, grid.id)
-        response.devices = [_to_device_response(p) for p in placements]
+        response.devices = [_to_device_response(p, grid.height_cm) for p in placements]
     return response
 
 
@@ -143,10 +142,8 @@ async def add_device_to_grid(request: Request, grid_id: UUID, body: GridDeviceAd
             grid,
             profile,
             device.display_orientation,
-            midpoint_x_cm=body.midpoint_x_cm,
-            midpoint_y_cm=body.midpoint_y_cm,
-            top_left_x_cm=body.top_left_x_cm,
-            top_left_y_cm=body.top_left_y_cm,
+            bottom_left_x_cm=body.bottom_left_x_cm,
+            bottom_left_y_cm=body.bottom_left_y_cm,
         )
         _warn_on_overlap(grid_id, rect, await grid_service.list_grid_devices(session, grid_id))
 
@@ -158,10 +155,12 @@ async def add_device_to_grid(request: Request, grid_id: UUID, body: GridDeviceAd
             width_cm=rect.width_cm,
             height_cm=rect.height_cm,
         )
+        # Capture grid height before commit — the ORM expires `grid` on commit.
+        grid_height_cm = grid.height_cm
         session.add(placement)
         await session.commit()
         await session.refresh(placement)
-        return _to_device_response(placement)
+        return _to_device_response(placement, grid_height_cm)
 
 
 @router.put("/{grid_id}/devices/{device_id}")
@@ -171,7 +170,7 @@ async def update_device_placement(
     device_id: UUID,
     body: GridDeviceUpdate,
 ) -> GridDeviceResponse:
-    """Move a placed device to a new midpoint or top-left corner."""
+    """Move a placed device to a new bottom-left corner."""
     async with AsyncSession(request.app.state.engine) as session:
         grid = await grid_service.get_grid_or_404(session, grid_id)
         device = await grid_service.get_device_or_404(session, device_id)
@@ -190,19 +189,18 @@ async def update_device_placement(
             grid,
             profile,
             device.display_orientation,
-            midpoint_x_cm=body.midpoint_x_cm,
-            midpoint_y_cm=body.midpoint_y_cm,
-            top_left_x_cm=body.top_left_x_cm,
-            top_left_y_cm=body.top_left_y_cm,
+            bottom_left_x_cm=body.bottom_left_x_cm,
+            bottom_left_y_cm=body.bottom_left_y_cm,
         )
         placement.top_left_x_cm = rect.top_left_x_cm
         placement.top_left_y_cm = rect.top_left_y_cm
         placement.width_cm = rect.width_cm
         placement.height_cm = rect.height_cm
+        grid_height_cm = grid.height_cm
         session.add(placement)
         await session.commit()
         await session.refresh(placement)
-        return _to_device_response(placement)
+        return _to_device_response(placement, grid_height_cm)
 
 
 @router.delete("/{grid_id}/devices/{device_id}", status_code=204)
