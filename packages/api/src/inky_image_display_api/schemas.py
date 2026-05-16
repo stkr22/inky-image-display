@@ -410,39 +410,34 @@ class GridUpdate(BaseModel):
 class GridDeviceAdd(BaseModel):
     """Place a device on a grid.
 
-    Accepts either a midpoint (UX convenience) or an explicit top-left corner.
-    The service layer derives the persisted rect either way.
+    Coordinates are the device's bottom-left corner on the canvas, with
+    the canvas origin at the bottom-left of the grid and Y growing
+    upward — the orientation a user reads off a tape measure on a wall.
     """
 
     device_id: UUID
-    midpoint_x_cm: float | None = None
-    midpoint_y_cm: float | None = None
-    top_left_x_cm: float | None = None
-    top_left_y_cm: float | None = None
+    bottom_left_x_cm: float
+    bottom_left_y_cm: float
 
 
 class GridDeviceUpdate(BaseModel):
-    """Move a placed device on a grid."""
+    """Move a placed device on a grid (bottom-left corner, Y-up)."""
 
-    midpoint_x_cm: float | None = None
-    midpoint_y_cm: float | None = None
-    top_left_x_cm: float | None = None
-    top_left_y_cm: float | None = None
+    bottom_left_x_cm: float
+    bottom_left_y_cm: float
 
 
 class GridDeviceResponse(BaseModel):
-    """A device's placement on a grid."""
+    """A device's placement on a grid (bottom-left corner, Y-up)."""
 
     model_config = ConfigDict(from_attributes=True)
 
     grid_id: UUID
     device_id: UUID
-    top_left_x_cm: float
-    top_left_y_cm: float
+    bottom_left_x_cm: float
+    bottom_left_y_cm: float
     width_cm: float
     height_cm: float
-    midpoint_x_cm: float
-    midpoint_y_cm: float
 
 
 class GridResponse(BaseModel):

@@ -315,7 +315,7 @@ class ApiClient:
         _raise_for_status(response)
 
     async def add_device_to_grid(self, grid_id: UUID, body: Mapping[str, Any]) -> dict[str, Any]:
-        """Place a device on the grid using a midpoint or explicit corner."""
+        """Place a device on the grid using its bottom-left corner (Y-up)."""
         response = await self._client.post(f"/api/grids/{grid_id}/devices", json=_json_safe(body))
         return _parse_json_dict(response)
 
@@ -325,7 +325,7 @@ class ApiClient:
         device_id: UUID,
         body: Mapping[str, Any],
     ) -> dict[str, Any]:
-        """Move a placed device to a new midpoint or corner."""
+        """Move a placed device to a new bottom-left corner (Y-up)."""
         response = await self._client.put(
             f"/api/grids/{grid_id}/devices/{device_id}",
             json=_json_safe(body),

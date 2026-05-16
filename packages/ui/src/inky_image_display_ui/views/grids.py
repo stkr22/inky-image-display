@@ -111,7 +111,7 @@ async def _render_detail(grid_id: UUID) -> None:
         with container:
             _render_grid_header(api, grid, reload)
             _render_canvas_preview(grid, devices, preview_image, max_pxcm)
-            _render_placements(api, grid, devices, reload)
+            _render_placements(api, grid, devices, profiles, reload)
             _render_image_actions(api, grid, images, state, max_pxcm, reload)
 
     await reload()
@@ -178,8 +178,9 @@ def _render_canvas_preview(
                 for placement in placements:
                     device = device_by_id.get(placement["device_id"])
                     label = device["device_id"] if device else placement["device_id"][:8]
-                    left_pct = placement["top_left_x_cm"] / grid_w * 100
-                    top_pct = placement["top_left_y_cm"] / grid_h * 100
+                    # API gives bottom-left (Y-up); CSS wants top-left (Y-down).
+                    left_pct = placement["bottom_left_x_cm"] / grid_w * 100
+                    top_pct = (grid_h - placement["bottom_left_y_cm"] - placement["height_cm"]) / grid_h * 100
                     width_pct = placement["width_cm"] / grid_w * 100
                     height_pct = placement["height_cm"] / grid_h * 100
                     with ui.element("div").style(
@@ -383,8 +384,10 @@ def _render_placements(
     api: Any,
     grid: dict[str, Any],
     all_devices: list[dict[str, Any]],
+    profiles: list[dict[str, Any]],
     on_changed: Any,
 ) -> None:
+    profile_by_id = {p["id"]: p for p in profiles}
     with ui.element("div").style(
         "width: 100%; padding: 16px; background: var(--ink-surface);"
         " border: 1px solid var(--ink-border); border-radius: 16px; display: flex;"
@@ -397,7 +400,7 @@ def _render_placements(
             add_btn = ui.button(
                 "Add device",
                 icon="add",
-                on_click=lambda: _open_add_device_dialog(api, grid, unplaced, on_changed),
+                on_click=lambda: _open_add_device_dialog(api, grid, unplaced, profile_by_id, on_changed),
             ).props("unelevated color=primary")
             add_btn.set_enabled(bool(unplaced))
 
@@ -438,7 +441,7 @@ def _render_placement_row(
         with ui.column().classes("gap-0"):
             ui.label(device_label).classes("ink-body")
             ui.label(
-                f"midpoint ({placement['midpoint_x_cm']:.1f}, {placement['midpoint_y_cm']:.1f}) cm · "
+                f"bottom-left ({placement['bottom_left_x_cm']:.1f}, {placement['bottom_left_y_cm']:.1f}) cm · "
                 f"{placement['width_cm']:.1f} x {placement['height_cm']:.1f} cm"
             ).classes("ink-small")
         with ui.row().classes("gap-2"):
@@ -594,10 +597,21 @@ async def _open_create_dialog(api: Any, on_done: Any) -> None:
     dialog.open()
 
 
+def _device_dims_cm(device: dict[str, Any], profile_by_id: dict[str, dict[str, Any]]) -> tuple[float, float]:
+    """Return (width_cm, height_cm) for a device as mounted (portrait swaps axes)."""
+    profile = profile_by_id.get(device["device_profile_id"])
+    if profile is None:
+        return 0.0, 0.0
+    if device["display_orientation"] == "portrait":
+        return float(profile["physical_height_cm"]), float(profile["physical_width_cm"])
+    return float(profile["physical_width_cm"]), float(profile["physical_height_cm"])
+
+
 async def _open_add_device_dialog(
     api: Any,
     grid: dict[str, Any],
     unplaced: list[dict[str, Any]],
+    profile_by_id: dict[str, dict[str, Any]],
     on_done: Any,
 ) -> None:
     if not unplaced:
@@ -605,14 +619,35 @@ async def _open_add_device_dialog(
         return
 
     options = {d["id"]: d["device_id"] for d in unplaced}
-    default_x = grid["width_cm"] / 2
-    default_y = grid["height_cm"] / 2
+    device_by_id = {d["id"]: d for d in unplaced}
+    grid_w = float(grid["width_cm"])
+    grid_h = float(grid["height_cm"])
 
     with ui.dialog() as dialog, ui.card().style("padding: 20px; min-width: 380px; gap: 12px;"):
         ui.label("Place device").classes("ink-h3")
+        ui.label(f"Origin (0, 0) is the grid's bottom-left corner. Canvas: {grid_w:.1f} x {grid_h:.1f} cm.").classes(
+            "ink-small"
+        )
         device_select = ui.select(options=options, label="Device").props("outlined")
-        mid_x = ui.number("Midpoint x (cm)", value=default_x, step=0.5).props("outlined")
-        mid_y = ui.number("Midpoint y (cm)", value=default_y, step=0.5).props("outlined")
+        width_pos = ui.number("Width position (cm)", value=0.0, step=0.5).props("outlined")
+        width_hint = ui.label("Pick a device to see allowed range.").classes("ink-small")
+        height_pos = ui.number("Height position (cm)", value=0.0, step=0.5).props("outlined")
+        height_hint = ui.label("Pick a device to see allowed range.").classes("ink-small")
+
+        def update_hints() -> None:
+            sel = device_select.value
+            if not sel:
+                width_hint.text = "Pick a device to see allowed range."
+                height_hint.text = "Pick a device to see allowed range."
+                return
+            dev = device_by_id.get(str(sel))
+            if dev is None:
+                return
+            dev_w, dev_h = _device_dims_cm(dev, profile_by_id)
+            width_hint.text = f"Allowed: 0 to {max(0.0, grid_w - dev_w):.1f} cm (device width {dev_w:.1f} cm)"
+            height_hint.text = f"Allowed: 0 to {max(0.0, grid_h - dev_h):.1f} cm (device height {dev_h:.1f} cm)"
+
+        device_select.on_value_change(lambda _e: update_hints())
 
         async def submit() -> None:
             if not device_select.value:
@@ -623,8 +658,8 @@ async def _open_add_device_dialog(
                     UUID(grid["id"]),
                     {
                         "device_id": str(device_select.value),
-                        "midpoint_x_cm": mid_x.value,
-                        "midpoint_y_cm": mid_y.value,
+                        "bottom_left_x_cm": width_pos.value,
+                        "bottom_left_y_cm": height_pos.value,
                     },
                 )
             except ApiError as exc:
@@ -646,17 +681,27 @@ async def _open_move_dialog(
     placement: dict[str, Any],
     on_done: Any,
 ) -> None:
+    grid_w = float(grid["width_cm"])
+    grid_h = float(grid["height_cm"])
+    dev_w = float(placement["width_cm"])
+    dev_h = float(placement["height_cm"])
+
     with ui.dialog() as dialog, ui.card().style("padding: 20px; min-width: 380px; gap: 12px;"):
         ui.label("Move device").classes("ink-h3")
-        mid_x = ui.number("Midpoint x (cm)", value=placement["midpoint_x_cm"], step=0.5).props("outlined")
-        mid_y = ui.number("Midpoint y (cm)", value=placement["midpoint_y_cm"], step=0.5).props("outlined")
+        ui.label(f"Origin (0, 0) is the grid's bottom-left corner. Canvas: {grid_w:.1f} x {grid_h:.1f} cm.").classes(
+            "ink-small"
+        )
+        width_pos = ui.number("Width position (cm)", value=placement["bottom_left_x_cm"], step=0.5).props("outlined")
+        ui.label(f"Allowed: 0 to {max(0.0, grid_w - dev_w):.1f} cm (device width {dev_w:.1f} cm)").classes("ink-small")
+        height_pos = ui.number("Height position (cm)", value=placement["bottom_left_y_cm"], step=0.5).props("outlined")
+        ui.label(f"Allowed: 0 to {max(0.0, grid_h - dev_h):.1f} cm (device height {dev_h:.1f} cm)").classes("ink-small")
 
         async def submit() -> None:
             try:
                 await api.update_device_placement(
                     UUID(grid["id"]),
                     UUID(placement["device_id"]),
-                    {"midpoint_x_cm": mid_x.value, "midpoint_y_cm": mid_y.value},
+                    {"bottom_left_x_cm": width_pos.value, "bottom_left_y_cm": height_pos.value},
                 )
             except ApiError as exc:
                 ui.notify(f"Move failed: {exc.detail or exc}", type="negative")

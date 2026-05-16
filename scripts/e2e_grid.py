@@ -223,9 +223,9 @@ def run() -> None:  # noqa: PLR0915 — scripted recipe; readability beats decom
 
         client = httpx.Client(base_url=api_url, timeout=10.0)
 
-        device_specs = [
-            ("inky-mock-a", "inky_impression_13_spectra6", 20.0, 20.0),  # 27.1 x 20.3 cm
-            ("inky-mock-b", "inky_impression_7_spectra6", 60.0, 25.0),  # 16.3 x 9.8 cm
+        device_specs = [  # (device_id, profile_key, bottom_left_x_cm, bottom_left_y_cm)
+            ("inky-mock-a", "inky_impression_13_spectra6", 6.5, 10.0),  # 27.1 x 20.3 cm
+            ("inky-mock-b", "inky_impression_7_spectra6", 52.0, 15.0),  # 16.3 x 9.8 cm
         ]
         for device_id, profile_key, _, _ in device_specs:
             print(f"[step] launching controller {device_id} ({profile_key})")
@@ -245,14 +245,14 @@ def run() -> None:  # noqa: PLR0915 — scripted recipe; readability beats decom
         grid = create.json()
         grid_id = grid["id"]
 
-        for device_id, _, mid_x, mid_y in device_specs:
-            print(f"[step] placing {device_id} at midpoint ({mid_x}, {mid_y})")
+        for device_id, _, bl_x, bl_y in device_specs:
+            print(f"[step] placing {device_id} at bottom-left ({bl_x}, {bl_y}) cm")
             place = client.post(
                 f"/api/grids/{grid_id}/devices",
                 json={
                     "device_id": device_by_id[device_id]["id"],
-                    "midpoint_x_cm": mid_x,
-                    "midpoint_y_cm": mid_y,
+                    "bottom_left_x_cm": bl_x,
+                    "bottom_left_y_cm": bl_y,
                 },
             )
             place.raise_for_status()

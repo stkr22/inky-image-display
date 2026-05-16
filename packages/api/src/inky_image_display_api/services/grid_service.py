@@ -40,22 +40,25 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class DeviceRect:
-    """A device's stored placement plus its derived midpoint."""
+    """A device's stored placement.
+
+    Internal coordinates are top-left origin because PIL crop and CSS
+    positioning both want top-left. Callers translate to/from the
+    user-facing bottom-left origin at the API boundary.
+    """
 
     top_left_x_cm: float
     top_left_y_cm: float
     width_cm: float
     height_cm: float
 
-    @property
-    def midpoint_x_cm(self) -> float:
-        """Midpoint x-coordinate in cm."""
-        return self.top_left_x_cm + self.width_cm / 2
+    def bottom_left_x_cm(self) -> float:
+        """Bottom-left x in user-facing (Y-up) coordinates."""
+        return self.top_left_x_cm
 
-    @property
-    def midpoint_y_cm(self) -> float:
-        """Midpoint y-coordinate in cm."""
-        return self.top_left_y_cm + self.height_cm / 2
+    def bottom_left_y_cm(self, grid_height_cm: float) -> float:
+        """Bottom-left y in user-facing (Y-up) coordinates."""
+        return grid_height_cm - self.top_left_y_cm - self.height_cm
 
 
 class GridValidationError(HTTPException):
@@ -84,17 +87,15 @@ def oriented_pixel_dims(profile: DeviceProfile, orientation: str) -> tuple[int, 
     return profile.width, profile.height
 
 
-def derive_rect(  # noqa: PLR0913 — placement signature mirrors API payload shape
+def derive_rect(
     grid: Grid,
     profile: DeviceProfile,
     orientation: str,
     *,
-    midpoint_x_cm: float | None,
-    midpoint_y_cm: float | None,
-    top_left_x_cm: float | None,
-    top_left_y_cm: float | None,
+    bottom_left_x_cm: float,
+    bottom_left_y_cm: float,
 ) -> DeviceRect:
-    """Resolve a device placement from either a midpoint or a top-left corner.
+    """Resolve a device placement from a bottom-left (Y-up) corner.
 
     The persisted rectangle has dimensions snapshotted from the profile so
     later profile-spec corrections don't silently move existing placements.
@@ -102,15 +103,16 @@ def derive_rect(  # noqa: PLR0913 — placement signature mirrors API payload sh
     """
     width_cm, height_cm = oriented_physical_dims(profile, orientation)
 
-    if top_left_x_cm is not None and top_left_y_cm is not None:
-        x, y = top_left_x_cm, top_left_y_cm
-    elif midpoint_x_cm is not None and midpoint_y_cm is not None:
-        x = midpoint_x_cm - width_cm / 2
-        y = midpoint_y_cm - height_cm / 2
-    else:
-        raise GridValidationError(400, "Provide either midpoint_x_cm/y_cm or top_left_x_cm/y_cm")
+    # Bottom-left (Y-up, user-facing) → top-left (Y-down, internal).
+    top_left_x = bottom_left_x_cm
+    top_left_y = grid.height_cm - bottom_left_y_cm - height_cm
 
-    rect = DeviceRect(top_left_x_cm=x, top_left_y_cm=y, width_cm=width_cm, height_cm=height_cm)
+    rect = DeviceRect(
+        top_left_x_cm=top_left_x,
+        top_left_y_cm=top_left_y,
+        width_cm=width_cm,
+        height_cm=height_cm,
+    )
     _validate_rect_in_canvas(grid, rect)
     return rect
 
