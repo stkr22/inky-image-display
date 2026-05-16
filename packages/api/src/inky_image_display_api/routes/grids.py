@@ -113,8 +113,11 @@ async def delete_grid(request: Request, grid_id: UUID) -> None:
     async with AsyncSession(request.app.state.engine) as session:
         grid = await grid_service.get_grid_or_404(session, grid_id)
         # Clear claims and decouple images from the grid pool before deletion.
+        # `release_grid` commits and expires `grid`; refresh so later attribute
+        # access and `session.delete(grid)` don't trigger an async lazy-load.
         await grid_service.release_grid(session, grid)
-        targeted = await session.exec(select(Image).where(col(Image.target_grid_id) == grid.id))
+        await session.refresh(grid)
+        targeted = await session.exec(select(Image).where(col(Image.target_grid_id) == grid_id))
         for image in targeted.all():
             image.target_grid_id = None
             session.add(image)
