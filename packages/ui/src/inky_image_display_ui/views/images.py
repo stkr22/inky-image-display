@@ -3,15 +3,23 @@
 from __future__ import annotations
 
 import logging
+from io import BytesIO
 from typing import Any
 from uuid import UUID
 
 from nicegui import events, ui
+from PIL import Image as PILImage
 
 from inky_image_display_ui.api_client import ApiError
 from inky_image_display_ui.formatting import format_datetime
 from inky_image_display_ui.session import require_api_client
 from inky_image_display_ui.views._layout import frame
+from inky_image_display_ui.views._quality import (
+    CROP_NEGLIGIBLE,
+    image_fit,
+    max_device_pxcm,
+    resolution_band,
+)
 from inky_image_display_ui.views._ui import stat
 from inky_image_display_ui.views._ui import tile as bento_tile
 
@@ -32,7 +40,7 @@ def register() -> None:
     @ui.page("/images/new")
     async def new_page() -> None:
         with frame("/images"):
-            _render_upload_page()
+            await _render_upload_page()
 
     @ui.page("/images/{image_id}")
     async def detail_page(image_id: str) -> None:
@@ -40,16 +48,27 @@ def register() -> None:
             await _render_detail(image_id)
 
 
-async def _render_gallery() -> None:
+async def _render_gallery() -> None:  # noqa: PLR0915
     api = require_api_client()
-    state: dict[str, Any] = {"offset": 0, "source_name": "", "is_portrait": False}
+    state: dict[str, Any] = {"offset": 0, "source_name": "", "is_portrait": False, "grid_filter": ""}
+
+    try:
+        grids_list = await api.list_grids()
+    except ApiError:
+        logger.exception("Failed to load grids for filter")
+        grids_list = []
 
     with ui.column().classes("gap-0"):
         ui.label("Library").classes("ink-eyebrow")
         ui.label("Images").classes("ink-h2")
 
+    grid_options: dict[str, str] = {"": "All", "__solo__": "Solo (no grid)"}
+    for g in grids_list:
+        grid_options[g["id"]] = f"Grid: {g['name']}"
+
     with ui.row().classes("w-full items-end gap-3 flex-wrap"):
         source_select = ui.select(_SOURCE_OPTIONS, value="", label="Source").classes("min-w-[160px]")
+        grid_select = ui.select(grid_options, value="", label="Grid").classes("min-w-[180px]")
         portrait_switch = ui.switch("Portrait only", value=False)
         ui.space()
         prev_button = ui.button(icon="chevron_left").props("flat round")
@@ -63,13 +82,19 @@ async def _render_gallery() -> None:
     )
 
     async def reload() -> None:
+        grid_filter = state["grid_filter"]
+        list_kwargs: dict[str, Any] = {
+            "source_name": state["source_name"] or None,
+            "is_portrait": True if state["is_portrait"] else None,
+            "limit": _PAGE_SIZE,
+            "offset": state["offset"],
+        }
+        if grid_filter == "__solo__":
+            list_kwargs["solo_only"] = True
+        elif grid_filter:
+            list_kwargs["target_grid_id"] = grid_filter
         try:
-            rows = await api.list_images(
-                source_name=state["source_name"] or None,
-                is_portrait=True if state["is_portrait"] else None,
-                limit=_PAGE_SIZE,
-                offset=state["offset"],
-            )
+            rows = await api.list_images(**list_kwargs)
         except ApiError as exc:
             logger.exception("list_images failed")
             ui.notify(f"Failed to load images: {exc.detail or exc}", type="negative")
@@ -95,6 +120,11 @@ async def _render_gallery() -> None:
         state["offset"] = 0
         await reload()
 
+    async def on_grid(e: events.ValueChangeEventArguments) -> None:
+        state["grid_filter"] = e.value or ""
+        state["offset"] = 0
+        await reload()
+
     async def on_prev() -> None:
         state["offset"] = max(0, state["offset"] - _PAGE_SIZE)
         await reload()
@@ -104,6 +134,7 @@ async def _render_gallery() -> None:
         await reload()
 
     source_select.on_value_change(on_source)
+    grid_select.on_value_change(on_grid)
     portrait_switch.on_value_change(on_portrait)
     prev_button.on_click(on_prev)
     next_button.on_click(on_next)
@@ -289,10 +320,25 @@ def _render_metadata(image: dict[str, Any]) -> None:
                 ui.label(str(source_url)).classes("text-xs break-all")
 
 
-def _render_upload_page() -> None:  # noqa: PLR0915
+async def _render_upload_page() -> None:  # noqa: PLR0915
     """Render the full-page upload form at ``/images/new``."""
     api = require_api_client()
-    selected: dict[str, Any] = {"bytes": None, "name": None}
+    selected: dict[str, Any] = {"bytes": None, "name": None, "width": None, "height": None}
+    try:
+        grids_list = await api.list_grids(include_devices=True)
+        profiles_list = await api.list_device_profiles()
+        devices_list = await api.list_devices()
+    except ApiError:
+        logger.exception("Failed to load grids/profiles for upload form")
+        grids_list, profiles_list, devices_list = [], [], []
+
+    # Precompute max px/cm per grid so the hint stays cheap to redraw.
+    grid_info: dict[str, dict[str, Any]] = {}
+    for g in grids_list:
+        grid_info[g["id"]] = {
+            "grid": g,
+            "max_pxcm": max_device_pxcm(g, devices_list, profiles_list),
+        }
 
     with ui.row().classes("w-full items-center gap-2"):
         ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/images")).props("flat round").tooltip(
@@ -313,7 +359,15 @@ def _render_upload_page() -> None:  # noqa: PLR0915
         async def on_upload(e: events.UploadEventArguments) -> None:
             selected["bytes"] = await e.file.read()
             selected["name"] = e.file.name
+            try:
+                with PILImage.open(BytesIO(selected["bytes"])) as parsed:
+                    selected["width"], selected["height"] = parsed.size
+            except Exception:
+                logger.exception("Failed to read selected image dimensions")
+                selected["width"] = None
+                selected["height"] = None
             ui.notify(f"Selected: {e.file.name}")
+            _refresh_quality_hint()
 
         upload = (
             ui.upload(label="Choose file", auto_upload=True, max_files=1, on_upload=on_upload)
@@ -346,6 +400,60 @@ def _render_upload_page() -> None:  # noqa: PLR0915
 
         portrait_switch = ui.switch("Portrait (for portrait-oriented devices)", value=False)
 
+        grid_options: dict[str, str] = {"": "(solo rotation)"}
+        for grid in grids_list:
+            grid_options[grid["id"]] = f"{grid['name']} ({grid['width_cm']:.0f}x{grid['height_cm']:.0f} cm)"
+        target_grid_select = ui.select(grid_options, value="", label="Target grid").classes("w-full").props("outlined")
+        hint_container = ui.column().classes("w-full gap-1")
+
+    def _refresh_quality_hint() -> None:
+        hint_container.clear()
+        grid_id = target_grid_select.value
+        if not grid_id:
+            return
+        info = grid_info.get(grid_id)
+        if info is None:
+            return
+        grid = info["grid"]
+        max_pxcm = info["max_pxcm"]
+        with hint_container:
+            if not selected.get("width") or not selected.get("height"):
+                ui.label("Pick a file to see how it fits this grid.").classes("ink-small")
+                return
+            fit = image_fit(selected["width"], selected["height"], grid)
+            if fit is None:
+                ui.label("Resolution unknown.").classes("ink-small")
+                return
+            crop_text = (
+                "no crop"
+                if fit["crop_pct"] < CROP_NEGLIGIBLE
+                else f"{fit['crop_pct'] * 100:.0f}% {fit['crop_axis']} crop"
+            )
+            aspect_line = (
+                f"{selected['width']}x{selected['height']} px · "
+                f"{fit['image_aspect']:.2f}:1 vs grid {fit['canvas_aspect']:.2f}:1 — {crop_text}"
+            )
+            with ui.row().classes("w-full items-center gap-2"):
+                ui.label(aspect_line).classes("ink-small").style("flex: 1 1 auto;")
+                if max_pxcm:
+                    ratio = fit["effective_pxcm"] / max_pxcm
+                    band, colour = resolution_band(ratio)
+                    glyph = {"sharp": "✓", "soft": "⚠", "upscaled": "✗"}[band]
+                    ui.label(f"{glyph} {band} ({ratio:.2f}x)").style(
+                        f"font-size: 11px; padding: 2px 6px; border-radius: 4px;"
+                        f" background: rgba(11,18,32,0.06); color: {colour}; white-space: nowrap;"
+                    )
+            if max_pxcm:
+                rec_w = int(grid["width_cm"] * max_pxcm + 0.999)
+                rec_h = int(grid["height_cm"] * max_pxcm + 0.999)
+                ui.label(f"Recommended ≥ {rec_w}x{rec_h} px (densest device: {max_pxcm:.0f} px/cm).").classes(
+                    "ink-small"
+                )
+            else:
+                ui.label("Place a device on this grid to compute a recommended resolution.").classes("ink-small")
+
+    target_grid_select.on_value_change(lambda _e: _refresh_quality_hint())
+
     error_label = ui.label("").style("color: var(--ink-danger); font-size: 13px;")
 
     async def submit() -> None:
@@ -367,6 +475,8 @@ def _render_upload_page() -> None:  # noqa: PLR0915
             "priority": int(priority_slider.value or 5),
             "is_portrait": bool(portrait_switch.value),
         }
+        if target_grid_select.value:
+            metadata["target_grid_id"] = target_grid_select.value
         try:
             await api.upload_image(selected["bytes"], selected["name"], metadata)
         except ApiError as exc:

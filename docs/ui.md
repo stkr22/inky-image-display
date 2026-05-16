@@ -4,14 +4,17 @@ NiceGUI-based web UI served by a FastAPI app. Lets an operator browse and upload
 
 ## Sections
 
-The top nav has four sections:
+The top nav has five sections:
 
 | Path | Purpose |
 |------|---------|
-| `/images` | Library: browse, upload, edit, delete |
+| `/images` | Library: browse, upload, edit, delete. Filter by source, orientation, or grid pool (Solo / per-grid) |
 | `/devices` | Online wall + per-device controls (push next, pick image, clear) |
+| `/grids` | Group devices into a shared physical canvas (cm) so they jointly show slices of one image. See [grids.md](grids.md) |
 | `/jobs` | Tabbed list of Immich and Gemini sync jobs. The "New job" button follows the active tab and routes to `/sync-jobs/new` or `/gemini-jobs/new`; the per-source forms still live there for editing existing jobs |
 | `/genai` | On-demand generation form on top, prompt library tucked behind an "Advanced" expansion below |
+
+The Grids page lists wall layouts; clicking a card opens the detail page with a proportional canvas that previews how a selected image will be cover-cropped onto each device. Numeric midpoint inputs add/move devices; a source-image thumbnail dims the cropped strips so the operator can see which content gets thrown away. A traffic-light badge (sharp / soft / upscaled) flags whether the image meets the resolution floor set by the densest member device. The same quality hint also appears live in the upload form when a target grid is picked.
 
 The GenAI page is the full AI surface: a Subject textarea (capped at 200 characters) plus target device-profile, preset, orientation, and "push immediately" toggles for one-off generation. The profile dropdown defaults to the row marked `is_default` in `device_profiles`; the resulting image lands on a random online device whose profile + orientation match (no device picker — that decision happens server-side at dispatch time). The collapsed Advanced section lets operators add or edit prompt blocks (style / palette / legibility / composition / background) and prompt presets — including the Gemini model name each preset binds to.
 

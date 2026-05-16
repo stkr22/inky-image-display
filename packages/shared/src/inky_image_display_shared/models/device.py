@@ -64,6 +64,9 @@ class Device(SQLModel, table=True):
     display_orientation: str = Field(default="landscape")
     is_online: bool = Field(default=False)
     current_image_id: UUID | None = Field(default=None, foreign_key="images.id")
+    # Non-null while a grid is actively driving this device. Solo rotation
+    # skips claimed devices; only one grid can hold the claim at a time.
+    claimed_by_grid_id: UUID | None = Field(default=None, foreign_key="grids.id", ondelete="SET NULL")
     displayed_since: datetime | None = Field(default=None)
     scheduled_next_at: datetime = Field(default_factory=datetime.now)
     last_seen: datetime = Field(default_factory=datetime.now)

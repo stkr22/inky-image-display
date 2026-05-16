@@ -50,6 +50,7 @@ def get_pages() -> list[PageSpec]:
         gemini_jobs,
         genai,
         generate,
+        grids,
         images,
         jobs,
         prompts,
@@ -72,6 +73,14 @@ def get_pages() -> list[PageSpec]:
             register=devices.register,
             tile=devices.tile,
             nav_order=20,
+        ),
+        PageSpec(
+            path="/grids",
+            label="Grids",
+            icon="grid_view",
+            register=grids.register,
+            tile=None,
+            nav_order=25,
         ),
         PageSpec(
             path="/jobs",

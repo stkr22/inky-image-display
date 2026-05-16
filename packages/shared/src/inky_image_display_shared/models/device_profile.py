@@ -23,6 +23,12 @@ class DeviceProfile(SQLModel, table=True):
     # lives on the Device row and callers swap dims when needed.
     width: int
     height: int
+    # Physical active-area dimensions (cm) from Pimoroni's published specs.
+    # Used by the grid feature to project a placed device onto a virtual
+    # wall canvas; the longer side is stored as the width to match the
+    # landscape-native convention for pixel dims.
+    physical_width_cm: float = Field(default=0.0)
+    physical_height_cm: float = Field(default=0.0)
     model: str = Field(description="Hardware identifier reported by inky.auto")
     is_default: bool = Field(default=False)
     created_at: datetime = Field(default_factory=datetime.now)

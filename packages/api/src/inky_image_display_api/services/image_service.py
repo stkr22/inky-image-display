@@ -45,6 +45,7 @@ async def get_next_image_for_device(session: AsyncSession, device: Device) -> Im
             col(Image.original_width) == expected_width,
             col(Image.original_height) == expected_height,
             Image.is_portrait == is_portrait,
+            col(Image.target_grid_id).is_(None),
         )
         .order_by(col(Image.last_displayed_at).asc().nullsfirst())
         .limit(1)

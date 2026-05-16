@@ -24,6 +24,7 @@ class ImageCreate(BaseModel):
     priority: int = 5
     tags: str | None = None
     is_portrait: bool | None = None
+    target_grid_id: UUID | None = None
 
 
 class ImageRegister(BaseModel):
@@ -60,6 +61,7 @@ class ImageUpdate(BaseModel):
     display_duration_seconds: int | None = None
     priority: int | None = None
     expires_at: datetime | None = None
+    target_grid_id: UUID | None = None
 
 
 class ImageResponse(BaseModel):
@@ -85,6 +87,7 @@ class ImageResponse(BaseModel):
     expires_at: datetime | None
     created_at: datetime
     tags: str | None
+    target_grid_id: UUID | None = None
 
 
 # --- Devices ---
@@ -100,6 +103,8 @@ class DeviceProfileResponse(BaseModel):
     name: str
     width: int
     height: int
+    physical_width_cm: float
+    physical_height_cm: float
     model: str
     is_default: bool
     created_at: datetime
@@ -124,6 +129,7 @@ class DeviceResponse(BaseModel):
     display_orientation: str
     is_online: bool
     current_image_id: UUID | None
+    claimed_by_grid_id: UUID | None
     displayed_since: datetime | None
     scheduled_next_at: datetime
     last_seen: datetime
@@ -377,3 +383,86 @@ class ImageGenerateResponse(BaseModel):
 
     task_id: UUID
     status: str
+
+
+# --- Grids ---
+
+
+class GridCreate(BaseModel):
+    """Payload to create a grid."""
+
+    name: str
+    width_cm: float
+    height_cm: float
+
+
+class GridUpdate(BaseModel):
+    """Patch fields on an existing grid (all optional).
+
+    Resizing a grid re-validates every member device rectangle.
+    """
+
+    name: str | None = None
+    width_cm: float | None = None
+    height_cm: float | None = None
+
+
+class GridDeviceAdd(BaseModel):
+    """Place a device on a grid.
+
+    Accepts either a midpoint (UX convenience) or an explicit top-left corner.
+    The service layer derives the persisted rect either way.
+    """
+
+    device_id: UUID
+    midpoint_x_cm: float | None = None
+    midpoint_y_cm: float | None = None
+    top_left_x_cm: float | None = None
+    top_left_y_cm: float | None = None
+
+
+class GridDeviceUpdate(BaseModel):
+    """Move a placed device on a grid."""
+
+    midpoint_x_cm: float | None = None
+    midpoint_y_cm: float | None = None
+    top_left_x_cm: float | None = None
+    top_left_y_cm: float | None = None
+
+
+class GridDeviceResponse(BaseModel):
+    """A device's placement on a grid."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    grid_id: UUID
+    device_id: UUID
+    top_left_x_cm: float
+    top_left_y_cm: float
+    width_cm: float
+    height_cm: float
+    midpoint_x_cm: float
+    midpoint_y_cm: float
+
+
+class GridResponse(BaseModel):
+    """Grid data returned by the API."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    width_cm: float
+    height_cm: float
+    current_image_id: UUID | None
+    displayed_since: datetime | None
+    scheduled_next_at: datetime
+    created_at: datetime
+    updated_at: datetime
+    devices: list[GridDeviceResponse] | None = None
+
+
+class GridDisplayRequest(BaseModel):
+    """Body for ``POST /api/grids/{id}/display``."""
+
+    image_id: UUID

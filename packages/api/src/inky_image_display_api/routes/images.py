@@ -28,6 +28,8 @@ async def list_images(
     source_url: str | None = None,
     source_url_prefix: str | None = None,
     expires_before: datetime | None = None,
+    target_grid_id: UUID | None = None,
+    solo_only: bool = False,
     limit: int = 100,
     offset: int = 0,
 ) -> list[Image]:
@@ -41,6 +43,8 @@ async def list_images(
         source_url: Filter by exact source URL.
         source_url_prefix: Filter by source URL prefix (LIKE match).
         expires_before: Return only images expiring before this datetime.
+        target_grid_id: Filter to images assigned to a specific grid's pool.
+        solo_only: Return only images without a ``target_grid_id`` (the solo pool).
         limit: Max results to return.
         offset: Number of results to skip.
 
@@ -62,6 +66,10 @@ async def list_images(
                 col(Image.expires_at).isnot(None),
                 col(Image.expires_at) < expires_before,
             )
+        if target_grid_id is not None:
+            query = query.where(col(Image.target_grid_id) == target_grid_id)
+        if solo_only:
+            query = query.where(col(Image.target_grid_id).is_(None))
         query = query.offset(offset).limit(limit)
         result = await session.exec(query)
         return list(result.all())
@@ -153,6 +161,7 @@ async def upload_image(
         original_height=height,
         is_portrait=is_portrait,
         tags=parsed.tags,
+        target_grid_id=parsed.target_grid_id,
     )
     async with AsyncSession(request.app.state.engine) as session:
         session.add(image)

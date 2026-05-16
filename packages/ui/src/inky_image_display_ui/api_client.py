@@ -51,20 +51,26 @@ class ApiClient:
 
     # --- Images ---
 
-    async def list_images(
+    async def list_images(  # noqa: PLR0913 — pass-through filters mirror the API params
         self,
         *,
         source_name: str | None = None,
         is_portrait: bool | None = None,
+        target_grid_id: UUID | str | None = None,
+        solo_only: bool = False,
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """List images with optional source/orientation filters and pagination."""
+        """List images with optional source/orientation/grid filters and pagination."""
         params: dict[str, Any] = {"limit": limit, "offset": offset}
         if source_name is not None:
             params["source_name"] = source_name
         if is_portrait is not None:
             params["is_portrait"] = is_portrait
+        if target_grid_id is not None:
+            params["target_grid_id"] = str(target_grid_id)
+        if solo_only:
+            params["solo_only"] = True
         response = await self._client.get("/api/images", params=params)
         return _parse_json_list(response)
 
@@ -277,6 +283,72 @@ class ApiClient:
         """Delete a Gemini sync job by UUID."""
         response = await self._client.delete(f"/api/genai/jobs/{job_id}")
         _raise_for_status(response)
+
+    # --- Grids ---
+
+    async def list_grids(self, *, include_devices: bool = False) -> list[dict[str, Any]]:
+        """List grids, optionally embedding device placements."""
+        params: dict[str, Any] = {}
+        if include_devices:
+            params["include_devices"] = include_devices
+        response = await self._client.get("/api/grids", params=params)
+        return _parse_json_list(response)
+
+    async def get_grid(self, grid_id: UUID) -> dict[str, Any]:
+        """Fetch a single grid by UUID (with placements)."""
+        response = await self._client.get(f"/api/grids/{grid_id}")
+        return _parse_json_dict(response)
+
+    async def create_grid(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """Create a new grid from a ``GridCreate``-shaped dict."""
+        response = await self._client.post("/api/grids", json=_json_safe(body))
+        return _parse_json_dict(response)
+
+    async def update_grid(self, grid_id: UUID, body: Mapping[str, Any]) -> dict[str, Any]:
+        """Patch a grid's name or dimensions."""
+        response = await self._client.put(f"/api/grids/{grid_id}", json=_json_safe(body))
+        return _parse_json_dict(response)
+
+    async def delete_grid(self, grid_id: UUID) -> None:
+        """Delete a grid (cascades placements; clears image targets)."""
+        response = await self._client.delete(f"/api/grids/{grid_id}")
+        _raise_for_status(response)
+
+    async def add_device_to_grid(self, grid_id: UUID, body: Mapping[str, Any]) -> dict[str, Any]:
+        """Place a device on the grid using a midpoint or explicit corner."""
+        response = await self._client.post(f"/api/grids/{grid_id}/devices", json=_json_safe(body))
+        return _parse_json_dict(response)
+
+    async def update_device_placement(
+        self,
+        grid_id: UUID,
+        device_id: UUID,
+        body: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Move a placed device to a new midpoint or corner."""
+        response = await self._client.put(
+            f"/api/grids/{grid_id}/devices/{device_id}",
+            json=_json_safe(body),
+        )
+        return _parse_json_dict(response)
+
+    async def remove_device_from_grid(self, grid_id: UUID, device_id: UUID) -> None:
+        """Remove a device's placement from the grid."""
+        response = await self._client.delete(f"/api/grids/{grid_id}/devices/{device_id}")
+        _raise_for_status(response)
+
+    async def display_grid_image(self, grid_id: UUID, image_id: UUID) -> dict[str, Any]:
+        """Render slices and push a specific image to every member device."""
+        response = await self._client.post(
+            f"/api/grids/{grid_id}/display",
+            json={"image_id": str(image_id)},
+        )
+        return _parse_json_dict(response)
+
+    async def release_grid(self, grid_id: UUID) -> dict[str, Any]:
+        """Release every claim this grid holds; members return to solo."""
+        response = await self._client.post(f"/api/grids/{grid_id}/release")
+        return _parse_json_dict(response)
 
     # --- On-demand image generation ---
 

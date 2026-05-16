@@ -12,9 +12,9 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from inky_image_display_api.routes import device_profiles, devices, images, sync_jobs
+from inky_image_display_api.routes import device_profiles, devices, grids, images, sync_jobs
 from inky_image_display_api.routes.health import router as health_router
-from inky_image_display_shared.models import Device, DeviceProfile, Image
+from inky_image_display_shared.models import Device, DeviceProfile, Grid, GridDevice, Image
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -35,7 +35,9 @@ async def async_engine() -> AsyncIterator[AsyncEngine]:
         for table in [
             Image.__table__,  # ty: ignore[unresolved-attribute]
             DeviceProfile.__table__,  # ty: ignore[unresolved-attribute]
+            Grid.__table__,  # ty: ignore[unresolved-attribute]
             Device.__table__,  # ty: ignore[unresolved-attribute]
+            GridDevice.__table__,  # ty: ignore[unresolved-attribute]
         ]:
             await conn.run_sync(table.create, checkfirst=True)
     yield engine
@@ -120,6 +122,7 @@ def test_app(
     app.include_router(images.router)
     app.include_router(devices.router)
     app.include_router(device_profiles.router)
+    app.include_router(grids.router)
     app.include_router(sync_jobs.router)
 
     return app
@@ -141,6 +144,8 @@ async def seed_profile(async_engine: AsyncEngine) -> DeviceProfile:
         name='Inky Impression 13.3" Spectra 6',
         width=1600,
         height=1200,
+        physical_width_cm=27.1,
+        physical_height_cm=20.3,
         model="inky_impression_13_spectra6",
         is_default=True,
     )
