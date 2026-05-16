@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.2.1](https://github.com/stkr22/inky-image-display/compare/v4.2.0...v4.2.1) (2026-05-16)
+
+
+### Bug Fixes
+
+* **api:** refresh grid after release to avoid async lazy-load on delete ([aa3a91e](https://github.com/stkr22/inky-image-display/commit/aa3a91e225de39e4e9d4fef2781f64991539f805))
+
 ## [4.2.0](https://github.com/stkr22/inky-image-display/compare/v4.1.0...v4.2.0) (2026-05-16)
 
 
