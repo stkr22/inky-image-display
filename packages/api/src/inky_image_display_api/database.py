@@ -8,6 +8,8 @@ from alembic.config import Config
 from inky_image_display_shared.models import (
     Device,
     GeminiSyncJob,
+    Grid,
+    GridDevice,
     Image,
     ImmichSyncJob,
     PromptBlock,
@@ -53,7 +55,9 @@ async def create_tables(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         tables = [
             Image.__table__,  # ty: ignore[unresolved-attribute]
+            Grid.__table__,  # ty: ignore[unresolved-attribute]
             Device.__table__,  # ty: ignore[unresolved-attribute]
+            GridDevice.__table__,  # ty: ignore[unresolved-attribute]
             ImmichSyncJob.__table__,  # ty: ignore[unresolved-attribute]
             PromptBlock.__table__,  # ty: ignore[unresolved-attribute]
             PromptPreset.__table__,  # ty: ignore[unresolved-attribute]

@@ -65,6 +65,15 @@ class Image(SQLModel, table=True):
     original_height: int | None = Field(default=None, description="Image height in pixels")
     is_portrait: bool = Field(default=False, description="True if image is portrait-oriented (height > width)")
 
+    # When set, this image is a member of the grid's image pool and is
+    # excluded from solo per-device rotation.
+    target_grid_id: UUID | None = Field(
+        default=None,
+        foreign_key="grids.id",
+        ondelete="SET NULL",
+        index=True,
+    )
+
     # Timestamps
     last_displayed_at: datetime | None = Field(default=None, description="Last display time for FIFO")
     expires_at: datetime | None = Field(default=None, description="Expiration time for cleanup")
