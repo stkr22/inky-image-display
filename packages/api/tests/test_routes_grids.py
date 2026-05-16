@@ -34,6 +34,21 @@ class TestGridCrud:
         assert resp.status_code == 200
         assert resp.json() == []
 
+    def test_delete_grid_with_targeted_image(self, client: TestClient, seed_image: Image):
+        # Regression: release_grid commits and expires `grid`; subsequent attribute
+        # access on `grid.id` used to trigger an async lazy-load → MissingGreenlet.
+        grid_resp = client.post("/api/grids", json={"name": "doomed", "width_cm": 80.0, "height_cm": 40.0})
+        grid_id = grid_resp.json()["id"]
+        client.put(f"/api/images/{seed_image.id}", json={"target_grid_id": grid_id})
+
+        resp = client.delete(f"/api/grids/{grid_id}")
+        assert resp.status_code == 204
+
+        # Targeted image survives, with its grid reference cleared.
+        img_resp = client.get(f"/api/images/{seed_image.id}")
+        assert img_resp.status_code == 200
+        assert img_resp.json()["target_grid_id"] is None
+
 
 class TestGridDevicePlacement:
     """Add/move/remove devices on a grid."""
