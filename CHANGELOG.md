@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.2.0](https://github.com/stkr22/inky-image-display/compare/v4.1.0...v4.2.0) (2026-05-16)
+
+
+### Features
+
+* **grids:** anchor device placement at bottom-left with clearer labels ([d946613](https://github.com/stkr22/inky-image-display/commit/d9466137f51efd7223bfd895efc0077b89c2204a))
+* **grids:** anchor device placement at bottom-left with clearer labels ([d909c72](https://github.com/stkr22/inky-image-display/commit/d909c7238d58c2694107d8f480119c1ef0d77fd2))
+
 ## [4.1.0](https://github.com/stkr22/inky-image-display/compare/v4.0.0...v4.1.0) (2026-05-16)
 
 
