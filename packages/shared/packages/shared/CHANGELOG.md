@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.0](https://github.com/stkr22/inky-image-display/compare/shared-v3.1.0...shared-v3.2.0) (2026-05-17)
+
+
+### Features
+
+* user-editable refresh schedules and local-time rendering ([1fcfb9c](https://github.com/stkr22/inky-image-display/commit/1fcfb9c6d3bc53dc58065f6af1d522ff2cdd1a22))
+
 ## [3.1.0](https://github.com/stkr22/inky-image-display/compare/shared-v3.0.0...shared-v3.1.0) (2026-05-16)
 
 
