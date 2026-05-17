@@ -1,5 +1,17 @@
 # Changelog
 
+## [4.3.0](https://github.com/stkr22/inky-image-display/compare/v4.2.1...v4.3.0) (2026-05-17)
+
+
+### Features
+
+* user-editable refresh schedules and local-time rendering ([1fcfb9c](https://github.com/stkr22/inky-image-display/commit/1fcfb9c6d3bc53dc58065f6af1d522ff2cdd1a22))
+
+
+### Bug Fixes
+
+* **api:** skip empty grids in the rotation background tick ([a0b7885](https://github.com/stkr22/inky-image-display/commit/a0b7885e9bad6623925ff77dd00c129f322e383b))
+
 ## [4.2.1](https://github.com/stkr22/inky-image-display/compare/v4.2.0...v4.2.1) (2026-05-16)
 
 
