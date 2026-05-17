@@ -11,6 +11,8 @@ from uuid import UUID, uuid4
 
 from sqlmodel import Field, SQLModel
 
+from inky_image_display_shared.time import utcnow
+
 
 class Grid(SQLModel, table=True):
     """A virtual canvas spanning a group of devices.
@@ -27,9 +29,13 @@ class Grid(SQLModel, table=True):
     height_cm: float
     current_image_id: UUID | None = Field(default=None, foreign_key="images.id")
     displayed_since: datetime | None = Field(default=None)
-    scheduled_next_at: datetime = Field(default_factory=datetime.now)
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now, sa_column_kwargs={"onupdate": datetime.now})
+    scheduled_next_at: datetime = Field(default_factory=utcnow)
+    # Per-grid rotation cadence. ``None`` falls back to
+    # ``settings.default_display_duration`` (matches Device behaviour);
+    # previously cadence was implicitly driven by ``image.display_duration_seconds``.
+    refresh_interval_seconds: int | None = Field(default=None)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow, sa_column_kwargs={"onupdate": utcnow})
 
 
 class GridDevice(SQLModel, table=True):
@@ -48,4 +54,4 @@ class GridDevice(SQLModel, table=True):
     top_left_y_cm: float
     width_cm: float
     height_cm: float
-    created_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=utcnow)

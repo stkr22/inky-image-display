@@ -9,7 +9,12 @@ from uuid import UUID
 from nicegui import ui
 
 from inky_image_display_ui.api_client import ApiError, DeviceNotConnectedError
-from inky_image_display_ui.formatting import format_datetime
+from inky_image_display_ui.formatting import (
+    format_datetime,
+    format_interval_seconds,
+    format_relative,
+    split_hours_minutes,
+)
 from inky_image_display_ui.session import require_api_client
 from inky_image_display_ui.views._layout import frame
 from inky_image_display_ui.views._ui import badge
@@ -116,6 +121,9 @@ async def _render_device(  # noqa: PLR0915
     async def do_choose() -> None:
         await _open_image_picker(api, device, on_selected=do_display)
 
+    async def do_schedule() -> None:
+        await _open_schedule_dialog(api, device, on_changed)
+
     with ui.element("div").style(
         "width: 100%; padding: 20px; background: var(--ink-surface);"
         " border: 1px solid var(--ink-border); border-radius: 20px;"
@@ -152,7 +160,11 @@ async def _render_device(  # noqa: PLR0915
                 )
                 ui.label(f"{profile_summary} · {device['display_orientation']}").classes("ink-small")
                 ui.label(f"Displayed since {format_datetime(device.get('displayed_since'))}").classes("ink-small")
-                ui.label(f"Next scheduled {format_datetime(device.get('scheduled_next_at'))}").classes("ink-small")
+                next_at = device.get("scheduled_next_at")
+                ui.label(f"Next scheduled {format_datetime(next_at)} ({format_relative(next_at)})").classes("ink-small")
+                interval_value = device.get("refresh_interval_seconds")
+                interval_label = format_interval_seconds(interval_value, default_label="default")
+                ui.label(f"Refresh every {interval_label}").classes("ink-small")
 
         with (
             ui.row()
@@ -161,6 +173,9 @@ async def _render_device(  # noqa: PLR0915
         ):
             next_btn = ui.button("Next", icon="skip_next", on_click=do_next).props("unelevated color=primary")
             choose_btn = ui.button("Choose image", icon="image_search", on_click=do_choose).props("flat")
+            # Schedule editing is independent of online state — operators
+            # often want to dial cadence on a device that's currently offline.
+            ui.button("Schedule", icon="schedule", on_click=do_schedule).props("flat")
             clear_btn = ui.button("Clear", icon="clear", on_click=do_clear).props("flat color=negative")
             for btn in (next_btn, choose_btn, clear_btn):
                 btn.set_enabled(is_online)
@@ -278,6 +293,55 @@ async def _open_image_picker(api: Any, device: dict[str, Any], *, on_selected: A
         with ui.row().classes("w-full justify-end gap-2 mt-2"):
             ui.button("Close", on_click=dialog.close).props("flat")
 
+    dialog.open()
+
+
+async def _open_schedule_dialog(api: Any, device: dict[str, Any], on_done: Any) -> None:
+    """Edit the rotation cadence for one device.
+
+    "Use default" sends ``clear_refresh_interval=True`` so the server
+    resets the override to ``NULL`` rather than ambiguously storing 0.
+    """
+    current = device.get("refresh_interval_seconds")
+    hours, minutes = split_hours_minutes(current)
+
+    with ui.dialog() as dialog, ui.card().style("padding: 20px; min-width: 360px; gap: 12px;"):
+        ui.label(f"Schedule for {device['device_id']}").classes("ink-h3")
+        use_default = ui.switch("Use default interval", value=current is None)
+        hours_input = ui.number("Hours", value=hours, min=0, step=1).props("outlined")
+        minutes_input = ui.number("Minutes", value=minutes, min=0, max=59, step=1).props("outlined")
+
+        def sync_enabled() -> None:
+            enabled = not use_default.value
+            hours_input.set_enabled(enabled)
+            minutes_input.set_enabled(enabled)
+
+        use_default.on_value_change(lambda _e: sync_enabled())
+        sync_enabled()
+
+        ui.label("Rotation cadence applied after the next refresh tick.").classes("ink-small")
+
+        async def submit() -> None:
+            if use_default.value:
+                payload: dict[str, Any] = {"clear_refresh_interval": True}
+            else:
+                total_seconds = int(hours_input.value or 0) * 3600 + int(minutes_input.value or 0) * 60
+                if total_seconds <= 0:
+                    ui.notify("Pick at least 1 minute, or switch to default.", type="warning")
+                    return
+                payload = {"refresh_interval_seconds": total_seconds}
+            try:
+                await api.update_device(device["device_id"], payload)
+            except ApiError as exc:
+                ui.notify(f"Update failed: {exc.detail or exc}", type="negative")
+                return
+            dialog.close()
+            ui.notify("Schedule updated", type="positive")
+            await on_done()
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancel", on_click=dialog.close).props("flat")
+            ui.button("Save", on_click=submit).props("unelevated color=primary")
     dialog.open()
 
 

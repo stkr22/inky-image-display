@@ -22,6 +22,7 @@ from inky_image_display_api.routes import (
     images,
     prompt_blocks,
     prompt_presets,
+    schedule,
     sync_jobs,
 )
 from inky_image_display_api.routes.health import router as health_router
@@ -72,6 +73,7 @@ app.include_router(images.router)
 app.include_router(devices.router)
 app.include_router(device_profiles.router)
 app.include_router(grids.router)
+app.include_router(schedule.router)
 app.include_router(sync_jobs.router)
 app.include_router(prompt_blocks.router)
 app.include_router(prompt_presets.router)

@@ -9,6 +9,12 @@ from uuid import UUID
 from nicegui import ui
 
 from inky_image_display_ui.api_client import ApiError
+from inky_image_display_ui.formatting import (
+    format_datetime,
+    format_interval_seconds,
+    format_relative,
+    split_hours_minutes,
+)
 from inky_image_display_ui.session import require_api_client
 from inky_image_display_ui.views._layout import frame
 from inky_image_display_ui.views._quality import (
@@ -323,6 +329,11 @@ def _render_grid_header(api: Any, grid: dict[str, Any], on_changed: Any) -> None
             ui.label("Grid").classes("ink-eyebrow")
             ui.label(grid["name"]).classes("ink-h2")
             ui.label(f"Canvas: {grid['width_cm']:.1f} x {grid['height_cm']:.1f} cm").classes("ink-small")
+            next_at = grid.get("scheduled_next_at")
+            interval_label = format_interval_seconds(grid.get("refresh_interval_seconds"), default_label="default")
+            ui.label(
+                f"Refresh every {interval_label} · next {format_datetime(next_at)} ({format_relative(next_at)})"
+            ).classes("ink-small")
         with ui.row().classes("gap-2 items-center"):
             ui.link("← All grids", "/grids").classes("ink-small")
             ui.button(
@@ -334,6 +345,8 @@ def _render_grid_header(api: Any, grid: dict[str, Any], on_changed: Any) -> None
 
 
 async def _open_edit_dialog(api: Any, grid: dict[str, Any], on_done: Any) -> None:
+    current_interval = grid.get("refresh_interval_seconds")
+    int_hours, int_minutes = split_hours_minutes(current_interval)
     with ui.dialog() as dialog, ui.card().style("padding: 20px; min-width: 360px; gap: 12px;"):
         ui.label("Edit grid").classes("ink-h3")
         name = ui.input("Name", value=grid["name"]).props("outlined")
@@ -344,6 +357,19 @@ async def _open_edit_dialog(api: Any, grid: dict[str, Any], on_done: Any) -> Non
             " the new canvas reject the change."
         ).classes("ink-small")
 
+        ui.label("Refresh schedule").classes("ink-eyebrow")
+        use_default = ui.switch("Use default interval", value=current_interval is None)
+        hours_input = ui.number("Hours", value=int_hours, min=0, step=1).props("outlined")
+        minutes_input = ui.number("Minutes", value=int_minutes, min=0, max=59, step=1).props("outlined")
+
+        def sync_enabled() -> None:
+            enabled = not use_default.value
+            hours_input.set_enabled(enabled)
+            minutes_input.set_enabled(enabled)
+
+        use_default.on_value_change(lambda _e: sync_enabled())
+        sync_enabled()
+
         async def submit() -> None:
             payload: dict[str, Any] = {}
             if name.value and name.value != grid["name"]:
@@ -352,6 +378,17 @@ async def _open_edit_dialog(api: Any, grid: dict[str, Any], on_done: Any) -> Non
                 payload["width_cm"] = float(width.value)
             if height.value and float(height.value) != float(grid["height_cm"]):
                 payload["height_cm"] = float(height.value)
+
+            if use_default.value:
+                if current_interval is not None:
+                    payload["clear_refresh_interval"] = True
+            else:
+                total_seconds = int(hours_input.value or 0) * 3600 + int(minutes_input.value or 0) * 60
+                if total_seconds <= 0:
+                    ui.notify("Pick at least 1 minute, or switch to default.", type="warning")
+                    return
+                if total_seconds != (current_interval or -1):
+                    payload["refresh_interval_seconds"] = total_seconds
             if not payload:
                 dialog.close()
                 return
