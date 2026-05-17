@@ -111,6 +111,15 @@ async def _rotate_single_grid(app: FastAPI, grid_id: object) -> None:
         db_grid = grid.first()
         if db_grid is None:
             return
+        # Empty grids are valid state (created in the UI before the user
+        # adds devices), so the background tick treats them like grids
+        # without images: log at debug and move on. ``render_and_upload``
+        # still raises 400 when called from the explicit route, which is
+        # the correct behaviour for a user-driven request.
+        placements = await grid_service.list_grid_devices(session, db_grid.id)
+        if not placements:
+            logger.debug("No devices placed on grid %s", db_grid.id)
+            return
         image = await grid_service.get_next_grid_image(session, db_grid)
         if image is None:
             logger.debug("No images assigned to grid %s", db_grid.id)

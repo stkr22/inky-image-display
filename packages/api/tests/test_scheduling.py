@@ -13,6 +13,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from inky_image_display_api.services.image_service import next_refresh_at
+from inky_image_display_api.services.rotation import _rotate_single_grid
 from inky_image_display_shared.models import Device, Grid
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -205,6 +206,42 @@ class TestScheduleUpcoming:
         assert len(entries) == 1
         assert entries[0]["refresh_interval_seconds"] is None
         assert entries[0]["effective_interval_seconds"] == mock_settings.default_display_duration
+
+
+class TestRotationSkipsEmptyGrid:
+    """Regression: the background rotation tick must not raise when a
+    grid has no devices placed — operators routinely create a grid in
+    the UI before adding any devices, and a 400 from ``render_and_upload``
+    used to bubble up as a stack trace every 30 seconds."""
+
+    async def test_returns_without_error_when_no_placements(
+        self,
+        async_engine,
+        mock_settings: MagicMock,
+        mock_s3_service: MagicMock,
+        mock_mqtt: MagicMock,
+    ):
+        grid = Grid(
+            id=uuid4(),
+            name="empty",
+            width_cm=80.0,
+            height_cm=40.0,
+            scheduled_next_at=datetime(2026, 5, 17, 12, 0, 0),
+        )
+        grid_id = grid.id  # capture before commit expires the attribute
+        async with AsyncSession(async_engine) as session:
+            session.add(grid)
+            await session.commit()
+
+        app = MagicMock()
+        app.state.engine = async_engine
+        app.state.s3_service = mock_s3_service
+        app.state.mqtt = mock_mqtt
+        app.state.settings = mock_settings
+
+        # No raise, no S3 calls — empty-grid path is silent.
+        await _rotate_single_grid(app, grid_id)
+        mock_s3_service.upload_image.assert_not_called()
 
 
 class TestUtcSerialization:
