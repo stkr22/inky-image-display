@@ -105,6 +105,14 @@ class DisplayAPINotFoundError(DisplayAPIError):
     """Raised when the Display API returns 404."""
 
 
+class ImageTooSmallError(DisplayAPIError):
+    """Raised when /api/images/process rejects an image as too small (HTTP 422).
+
+    Sync services map this to their ``SKIPPED_UNDERSIZED`` outcome so the
+    asset is recorded as filtered rather than failed.
+    """
+
+
 class DisplayAPIClient:
     """Async HTTP client for the Inky Image Display REST API.
 
@@ -176,6 +184,29 @@ class DisplayAPIClient:
     async def delete_image(self, image_id: UUID) -> None:
         """Delete an image (DB record + S3 object) via the API."""
         await self._request("DELETE", f"/api/images/{image_id}")
+
+    async def process_image(
+        self,
+        data: bytes,
+        width: int,
+        height: int,
+        *,
+        upscale: bool = False,
+        content_type: str = "image/jpeg",
+    ) -> bytes:
+        """Send raw image bytes to the API for resize/crop; return the JPEG.
+
+        Raises :class:`ImageTooSmallError` if the source can't cover the
+        target dimensions and ``upscale`` is false — sync workers translate
+        that into ``SKIPPED_UNDERSIZED``.
+        """
+        files = {"file": ("image", data, content_type)}
+        form = {"width": str(width), "height": str(height), "upscale": "true" if upscale else "false"}
+        response = await self._client.post("/api/images/process", data=form, files=files)
+        if response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY:
+            raise ImageTooSmallError(f"image too small for {width}x{height}")
+        response.raise_for_status()
+        return response.content
 
     # --- Devices ---
 

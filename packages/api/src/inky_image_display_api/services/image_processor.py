@@ -1,4 +1,9 @@
-"""Image processing utilities for resize and crop operations."""
+"""Image resize/crop pipeline used by the /api/images/process endpoint.
+
+Lives in the API package because the API is the only callable surface that
+produces display-ready bytes — sync workers and other clients no longer
+touch this code directly, they POST through the HTTP endpoint instead.
+"""
 
 from io import BytesIO
 
@@ -6,7 +11,8 @@ import pillow_heif
 from PIL import Image, ImageOps
 from PIL.Image import Resampling
 
-# Register HEIF/HEIC format support with Pillow
+# HEIC originals from iPhones are common in the Immich corpus; registering
+# the opener once at import time lets PIL.Image.open decode them.
 pillow_heif.register_heif_opener()
 
 

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from inky_image_display_sync.api_client import DeviceItem, DeviceProfileItem, ImageItem
+from inky_image_display_sync.api_client import DeviceItem, DeviceProfileItem, ImageItem, ImageTooSmallError
 from inky_image_display_sync.immich.api_client import ImmichDisplayAPIClient, SyncJobItem
 from inky_image_display_sync.immich.config import DeviceRequirements, ImmichSyncConfig, S3WriterConfig
 from inky_image_display_sync.immich.models import ImmichAsset, ImmichExifInfo
@@ -13,7 +13,6 @@ from inky_image_display_sync.immich.sync_service import (
     CleanupResult,
     ImmichSyncService,
     ProcessResult,
-    SyncResult,
 )
 from minio.error import S3Error
 from pydantic import ValidationError
@@ -444,8 +443,6 @@ class TestFilterAssets:
             taken_after=None,
             taken_before=None,
             rating=None,
-            min_color_score=0.5,
-            min_vibrancy_score=0.2,
         )
 
     def _landscape_reqs(self) -> DeviceRequirements:
@@ -512,8 +509,10 @@ class TestFilterAssets:
         assert len(result) == 1
 
 
-class TestVibrancyFiltering:
-    """Test vibrancy score filtering in _process_asset and result counters."""
+class TestProcessAssetCallsApiForResize:
+    """``_process_asset`` should forward bytes to the API for resize/crop and
+    map an ``ImageTooSmallError`` to ``SKIPPED_UNDERSIZED``.
+    """
 
     def _make_service(self) -> ImmichSyncService:
         with patch("inky_image_display_sync.immich.sync_service.ImmichClient"):
@@ -546,7 +545,7 @@ class TestVibrancyFiltering:
             height=3000,
         )
 
-    def _make_job(self, min_vibrancy: float = 0.0, min_color: float = 0.0) -> SyncJobItem:
+    def _make_job(self) -> SyncJobItem:
         return SyncJobItem(
             id=uuid4(),
             name="test-job",
@@ -568,106 +567,52 @@ class TestVibrancyFiltering:
             taken_after=None,
             taken_before=None,
             rating=None,
-            min_color_score=min_color,
-            min_vibrancy_score=min_vibrancy,
         )
 
     def _landscape_reqs(self) -> DeviceRequirements:
         return DeviceRequirements(width=1920, height=1080, orientation="landscape")
 
     @pytest.mark.asyncio
-    async def test_vibrancy_skip_below_threshold(self) -> None:
+    async def test_processes_via_api_and_uploads(self) -> None:
         service = self._make_service()
         service.immich = MagicMock()
 
         async def fake_stream() -> AsyncIterator[bytes]:
-            yield b"fake-image-data"
+            yield b"raw-image-data"
 
         service.immich.download_original = MagicMock(return_value=fake_stream())
+        process_mock = AsyncMock(return_value=b"processed-image")
 
         with (
+            patch.object(service.api_client, "process_image", process_mock),
             patch.object(service, "_find_existing_image", new_callable=AsyncMock, return_value=None),
-            patch(
-                "inky_image_display_sync.immich.sync_service.ColorProfileAnalyzer.calculate_compatibility_score",
-                return_value=0.8,
-            ),
-            patch(
-                "inky_image_display_sync.immich.sync_service.ColorProfileAnalyzer.calculate_vibrancy_score",
-                return_value=0.1,
-            ),
-        ):
-            result = await service._process_asset(
-                self._make_asset(), self._make_job(min_vibrancy=0.3, min_color=0.5), self._landscape_reqs()
-            )
-
-        assert result == ProcessResult.SKIPPED_LOW_VIBRANCY
-
-    @pytest.mark.asyncio
-    async def test_vibrancy_pass_above_threshold(self) -> None:
-        service = self._make_service()
-        service.immich = MagicMock()
-
-        async def fake_stream() -> AsyncIterator[bytes]:
-            yield b"fake-image-data"
-
-        service.immich.download_original = MagicMock(return_value=fake_stream())
-
-        with (
-            patch.object(service, "_find_existing_image", new_callable=AsyncMock, return_value=None),
-            patch(
-                "inky_image_display_sync.immich.sync_service.ColorProfileAnalyzer.calculate_compatibility_score",
-                return_value=0.8,
-            ),
-            patch(
-                "inky_image_display_sync.immich.sync_service.ColorProfileAnalyzer.calculate_vibrancy_score",
-                return_value=0.5,
-            ),
-            patch(
-                "inky_image_display_sync.immich.sync_service.ImageProcessor.process_for_display",
-                return_value=b"processed-image",
-            ),
             patch.object(service, "_upsert_image_record", new_callable=AsyncMock),
         ):
-            result = await service._process_asset(
-                self._make_asset(), self._make_job(min_vibrancy=0.3, min_color=0.5), self._landscape_reqs()
-            )
+            result = await service._process_asset(self._make_asset(), self._make_job(), self._landscape_reqs())
 
         assert result == ProcessResult.DOWNLOADED
+        process_mock.assert_awaited_once()
+        # Payload uploaded to S3 must be the API's processed bytes, not the raw download.
+        upload_kwargs = service.storage.upload_from_bytes.call_args.kwargs  # ty: ignore[unresolved-attribute]
+        assert upload_kwargs["data"] == b"processed-image"
 
     @pytest.mark.asyncio
-    async def test_vibrancy_disabled_when_zero(self) -> None:
+    async def test_too_small_maps_to_skipped_undersized(self) -> None:
         service = self._make_service()
         service.immich = MagicMock()
 
         async def fake_stream() -> AsyncIterator[bytes]:
-            yield b"fake-image-data"
+            yield b"raw-image-data"
 
         service.immich.download_original = MagicMock(return_value=fake_stream())
+        process_mock = AsyncMock(side_effect=ImageTooSmallError("too small"))
 
         with (
+            patch.object(service.api_client, "process_image", process_mock),
             patch.object(service, "_find_existing_image", new_callable=AsyncMock, return_value=None),
-            patch(
-                "inky_image_display_sync.immich.sync_service.ColorProfileAnalyzer.calculate_vibrancy_score",
-            ) as mock_vibrancy,
-            patch(
-                "inky_image_display_sync.immich.sync_service.ImageProcessor.process_for_display",
-                return_value=b"processed-image",
-            ),
             patch.object(service, "_upsert_image_record", new_callable=AsyncMock),
         ):
-            result = await service._process_asset(
-                self._make_asset(), self._make_job(min_vibrancy=0.0, min_color=0.0), self._landscape_reqs()
-            )
+            result = await service._process_asset(self._make_asset(), self._make_job(), self._landscape_reqs())
 
-        assert result == ProcessResult.DOWNLOADED
-        mock_vibrancy.assert_not_called()
-
-    def test_update_result_counters_vibrancy(self) -> None:
-        result = SyncResult()
-        ImmichSyncService._update_result_counters(result, ProcessResult.SKIPPED_LOW_VIBRANCY)
-        assert result.skipped_low_vibrancy == 1
-
-    def test_sync_result_str_includes_vibrancy(self) -> None:
-        result = SyncResult(skipped_low_vibrancy=3)
-        text = str(result)
-        assert "skipped_vibrancy=3" in text
+        assert result == ProcessResult.SKIPPED_UNDERSIZED
+        service.storage.upload_from_bytes.assert_not_called()  # ty: ignore[unresolved-attribute]

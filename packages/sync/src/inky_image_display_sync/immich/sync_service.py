@@ -8,8 +8,7 @@ from datetime import datetime, timedelta
 from enum import Enum, auto
 from uuid import UUID
 
-from inky_image_display_shared.utils import ColorProfileAnalyzer, ImageProcessor
-
+from inky_image_display_sync.api_client import ImageTooSmallError
 from inky_image_display_sync.immich.api_client import (
     ImageItem,
     ImageRegisterPayload,
@@ -38,8 +37,6 @@ class ProcessResult(Enum):
     DOWNLOADED = auto()
     SKIPPED_EXISTING = auto()
     SKIPPED_UNDERSIZED = auto()
-    SKIPPED_COLOR_MISMATCH = auto()
-    SKIPPED_LOW_VIBRANCY = auto()
 
 
 @dataclass
@@ -51,8 +48,6 @@ class SyncResult:
     downloaded: int = 0
     skipped_existing: int = 0
     skipped_undersized: int = 0  # Too small for target dimensions
-    skipped_color_mismatch: int = 0  # Color profile incompatible
-    skipped_low_vibrancy: int = 0  # Low saturation and contrast
     stopped_at_limit: bool = False  # True if total image limit was reached
     errors: list[str] = field(default_factory=list)
 
@@ -62,9 +57,7 @@ class SyncResult:
         return (
             f"SyncResult(fetched={self.fetched}, filtered={self.filtered}, "
             f"downloaded={self.downloaded}, skipped_existing={self.skipped_existing}, "
-            f"skipped_undersized={self.skipped_undersized}, "
-            f"skipped_color={self.skipped_color_mismatch}, "
-            f"skipped_vibrancy={self.skipped_low_vibrancy}, errors={len(self.errors)}{limit_info})"
+            f"skipped_undersized={self.skipped_undersized}, errors={len(self.errors)}{limit_info})"
         )
 
 
@@ -326,10 +319,6 @@ class ImmichSyncService:
             result.skipped_existing += 1
         elif process_result == ProcessResult.SKIPPED_UNDERSIZED:
             result.skipped_undersized += 1
-        elif process_result == ProcessResult.SKIPPED_COLOR_MISMATCH:
-            result.skipped_color_mismatch += 1
-        elif process_result == ProcessResult.SKIPPED_LOW_VIBRANCY:
-            result.skipped_low_vibrancy += 1
 
     async def _get_device_requirements(self, profile_id: UUID, orientation: str | None) -> DeviceRequirements:
         """Resolve target panel dims from a profile + optional orientation.
@@ -404,32 +393,12 @@ class ImmichSyncService:
             self.logger.info("Downloading asset: %s", asset.id)
             image_bytes = await self._collect_stream(self.immich.download_original(asset.id))
 
-            min_score = job.min_color_score
-            if min_score > 0:
-                score = ColorProfileAnalyzer.calculate_compatibility_score(image_bytes)
-                if score < min_score:
-                    self.logger.info("Skipping asset %s: color score %.2f < %.2f", asset.id, score, min_score)
-                    return ProcessResult.SKIPPED_COLOR_MISMATCH
-                self.logger.debug("Asset %s color score: %.2f", asset.id, score)
-
-            min_vibrancy = job.min_vibrancy_score
-            if min_vibrancy > 0:
-                vibrancy = ColorProfileAnalyzer.calculate_vibrancy_score(image_bytes)
-                if vibrancy < min_vibrancy:
-                    self.logger.info("Skipping asset %s: vibrancy score %.2f < %.2f", asset.id, vibrancy, min_vibrancy)
-                    return ProcessResult.SKIPPED_LOW_VIBRANCY
-                self.logger.debug("Asset %s vibrancy score: %.2f", asset.id, vibrancy)
-
-            self.logger.debug("Processing image to %dx%d", target_width, target_height)
-            processed = ImageProcessor.process_for_display(
-                image_bytes,
-                target_width,
-                target_height,
-            )
-            if processed is None:
+            self.logger.debug("Processing image via API to %dx%d", target_width, target_height)
+            try:
+                image_bytes = await self.api_client.process_image(image_bytes, target_width, target_height)
+            except ImageTooSmallError:
                 self.logger.info("Skipping asset %s: too small for target dimensions", asset.id)
                 return ProcessResult.SKIPPED_UNDERSIZED
-            image_bytes = processed
 
             self.storage.upload_from_bytes(
                 object_path=storage_path,

@@ -13,8 +13,6 @@ from dataclasses import dataclass
 from google import genai
 from google.genai import types
 
-from inky_image_display_shared.utils import ColorProfileAnalyzer, ImageProcessor
-
 # Fallback model used when a preset/request leaves ``model_name`` unset.
 # The active model is stored on each ``PromptPreset`` row so it can be tuned
 # without redeploying — this constant only kicks in for legacy callers.
@@ -87,26 +85,20 @@ def _call_gemini_sync(api_key: str, model: str, prompt_text: str, aspect_ratio: 
     raise GeminiGenerationError("Response contained no inline image data")
 
 
-async def generate_image_bytes(  # noqa: PLR0913
+async def generate_image_bytes(
     api_key: str,
     prompt: RenderedPrompt,
     subject: str,
-    target_width: int,
-    target_height: int,
     *,
     model: str = DEFAULT_MODEL,
-) -> tuple[bytes, float]:
-    """Generate a Gemini image and process it to exact display dimensions.
+) -> bytes:
+    """Call Gemini and return the raw generated image bytes.
 
-    Returns ``(jpeg_bytes, spectra6_score)``. The Gemini SDK is synchronous,
-    so the network call is offloaded to a worker thread. ``model`` defaults
-    to :data:`DEFAULT_MODEL` so call sites that haven't loaded a preset yet
-    keep working.
+    Resize/crop to the panel's exact dimensions is the API's responsibility
+    (``POST /api/images/process``) — this helper just talks to Gemini. The
+    SDK is synchronous, so the network call is offloaded to a worker thread.
+    ``model`` defaults to :data:`DEFAULT_MODEL` for callers that haven't
+    loaded a preset yet.
     """
     prompt_text = prompt.render(subject)
-    raw = await asyncio.to_thread(_call_gemini_sync, api_key, model, prompt_text, prompt.aspect_ratio)
-    processed = ImageProcessor.process_for_display(raw, target_width, target_height, upscale=True)
-    if processed is None:
-        raise GeminiGenerationError("ImageProcessor returned None for generated image")
-    score = ColorProfileAnalyzer.calculate_compatibility_score(processed)
-    return processed, score
+    return await asyncio.to_thread(_call_gemini_sync, api_key, model, prompt_text, prompt.aspect_ratio)

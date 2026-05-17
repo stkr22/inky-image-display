@@ -49,8 +49,6 @@ class ImmichSyncJob(SQLModel, table=True):
         make: Camera make filter
         camera_model: Camera model filter
         rating: Minimum rating filter (0-5)
-        min_color_score: Minimum color compatibility for Spectra 6 (0.0-1.0)
-        min_vibrancy_score: Minimum vibrancy (saturation/contrast) for e-ink (0.0-1.0)
 
     """
 
@@ -102,20 +100,6 @@ class ImmichSyncJob(SQLModel, table=True):
     taken_after: datetime | None = Field(default=None, description="Photos taken after")
     taken_before: datetime | None = Field(default=None, description="Photos taken before")
     rating: int | None = Field(default=None, ge=0, le=5, description="Minimum rating")
-
-    # Client-side filters
-    min_color_score: float = Field(
-        default=0.5,
-        ge=0.0,
-        le=1.0,
-        description="Minimum color compatibility score for Spectra 6 palette",
-    )
-    min_vibrancy_score: float = Field(
-        default=0.2,
-        ge=0.0,
-        le=1.0,
-        description="Minimum vibrancy score (saturation or contrast) for e-ink suitability",
-    )
 
     # Timestamps
     created_at: datetime = Field(default_factory=datetime.now, description="When created")
