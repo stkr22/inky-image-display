@@ -267,22 +267,6 @@ async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
                 .classes("flex-1")
                 .props("outlined")
             )
-        with ui.row().classes("w-full ink-form-row"):
-            with ui.column().classes("flex-1 gap-1 min-w-[200px]"):
-                with ui.row().classes("w-full items-baseline justify-between"):
-                    ui.label("Minimum color score").classes("ink-small")
-                    color_value = ui.label().classes("ink-slider-value")
-                color_slider = ui.slider(min=0.0, max=1.0, step=0.05, value=float(job.get("min_color_score") or 0.5))
-                color_value.bind_text_from(color_slider, "value", backward=lambda v: f"{v:.2f}")
-            with ui.column().classes("flex-1 gap-1 min-w-[200px]"):
-                with ui.row().classes("w-full items-baseline justify-between"):
-                    ui.label("Minimum vibrancy score").classes("ink-small")
-                    vibrancy_value = ui.label().classes("ink-slider-value")
-                vibrancy_slider = ui.slider(
-                    min=0.0, max=1.0, step=0.05, value=float(job.get("min_vibrancy_score") or 0.2)
-                )
-                vibrancy_value.bind_text_from(vibrancy_slider, "value", backward=lambda v: f"{v:.2f}")
-
     error_label = ui.label("").style("color: var(--ink-danger); font-size: 13px;")
 
     async def save() -> None:
@@ -305,8 +289,6 @@ async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
             taken_after=taken_after_field.value,
             taken_before=taken_before_field.value,
             rating=rating_field.value,
-            color=color_slider.value,
-            vibrancy=vibrancy_slider.value,
             is_active=bool(active_switch.value),
         )
         if isinstance(body, str):
@@ -348,8 +330,6 @@ def _collect_form(  # noqa: PLR0913, PLR0911
     taken_after: str | None,
     taken_before: str | None,
     rating: str | None,
-    color: Any,
-    vibrancy: Any,
     is_active: bool,
 ) -> dict[str, Any] | str:
     if not name:
@@ -398,8 +378,6 @@ def _collect_form(  # noqa: PLR0913, PLR0911
         "taken_after": parsed_after.isoformat() if parsed_after else None,
         "taken_before": parsed_before.isoformat() if parsed_before else None,
         "rating": rating_value,
-        "min_color_score": float(color or 0.0),
-        "min_vibrancy_score": float(vibrancy or 0.0),
         "is_active": is_active,
     }
 

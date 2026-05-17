@@ -65,9 +65,15 @@ async def test_generate_and_publish_success_path_does_not_touch_expired_attrs(  
 
     task_id = uuid4()
     caplog.set_level("ERROR", logger="inky_image_display_api.services.generation_service")
-    with patch(
-        "inky_image_display_api.services.generation_service.generate_image_bytes",
-        new=AsyncMock(return_value=(b"jpeg-bytes", 0.9)),
+    with (
+        patch(
+            "inky_image_display_api.services.generation_service.generate_image_bytes",
+            new=AsyncMock(return_value=b"raw-jpeg-bytes"),
+        ),
+        patch(
+            "inky_image_display_api.services.generation_service.ImageProcessor.process_for_display",
+            return_value=b"processed-jpeg-bytes",
+        ),
     ):
         await generate_and_publish(
             async_engine,

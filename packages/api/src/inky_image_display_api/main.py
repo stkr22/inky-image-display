@@ -20,6 +20,7 @@ from inky_image_display_api.routes import (
     genai_generate,
     grids,
     images,
+    images_process,
     prompt_blocks,
     prompt_presets,
     schedule,
@@ -70,6 +71,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="Inky Image Display API", lifespan=lifespan)
 app.include_router(health_router)
 app.include_router(images.router)
+app.include_router(images_process.router)
 app.include_router(devices.router)
 app.include_router(device_profiles.router)
 app.include_router(grids.router)

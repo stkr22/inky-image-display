@@ -1,20 +1,15 @@
 """Sync-specific utility modules.
 
-Image processing and color analysis live in ``inky_image_display_shared.utils``
-since the API service also needs them for on-demand AI generation.
+Color analysis lives in ``inky_image_display_shared.utils`` so utility
+scripts can call it directly; image resize/crop runs inside the API and
+sync workers reach it via ``DisplayAPIClient.process_image``.
 """
 
-from inky_image_display_shared.utils import (
-    ColorProfileAnalyzer,
-    ImageProcessingError,
-    ImageProcessor,
-)
+from inky_image_display_shared.utils import ColorProfileAnalyzer
 
 from inky_image_display_sync.utils.metadata_builder import MetadataBuilder
 
 __all__ = [
     "ColorProfileAnalyzer",
-    "ImageProcessingError",
-    "ImageProcessor",
     "MetadataBuilder",
 ]

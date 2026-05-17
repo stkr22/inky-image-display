@@ -12,7 +12,15 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from inky_image_display_api.routes import device_profiles, devices, grids, images, schedule, sync_jobs
+from inky_image_display_api.routes import (
+    device_profiles,
+    devices,
+    grids,
+    images,
+    images_process,
+    schedule,
+    sync_jobs,
+)
 from inky_image_display_api.routes.health import router as health_router
 from inky_image_display_shared.models import Device, DeviceProfile, Grid, GridDevice, Image
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -120,6 +128,7 @@ def test_app(
 
     app.include_router(health_router)
     app.include_router(images.router)
+    app.include_router(images_process.router)
     app.include_router(devices.router)
     app.include_router(device_profiles.router)
     app.include_router(grids.router)

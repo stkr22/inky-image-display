@@ -19,6 +19,7 @@ from inky_image_display_shared.models import Device, DeviceProfile, Image, Promp
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from inky_image_display_api.services.image_processor import ImageProcessor
 from inky_image_display_api.services.image_service import (
     build_display_command,
     update_display_state,
@@ -135,15 +136,19 @@ async def generate_and_publish(  # noqa: PLR0913
                 target_width, target_height = profile.width, profile.height
 
         logger.info("Generation task %s: calling Gemini model=%s for subject=%r", task_id, model_name, subject)
-        jpeg_bytes, score = await generate_image_bytes(
+        raw_bytes = await generate_image_bytes(
             settings.gemini_api_key.get_secret_value(),
             rendered,
             subject,
-            target_width,
-            target_height,
             model=model_name,
         )
-        logger.info("Generation task %s: Spectra-6 score %.3f", task_id, score)
+        # Resize to the panel's exact dimensions using the same pipeline that
+        # backs POST /api/images/process. Direct call here is fine — we're
+        # already inside the API process.
+        jpeg_bytes = ImageProcessor.process_for_display(raw_bytes, target_width, target_height, upscale=True)
+        if jpeg_bytes is None:
+            logger.error("Generation task %s: ImageProcessor returned None for generated image", task_id)
+            return
 
         image_uuid = uuid4()
         storage_path = f"gemini/{image_uuid}.jpg"

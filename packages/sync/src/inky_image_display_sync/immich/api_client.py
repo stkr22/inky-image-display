@@ -46,8 +46,6 @@ class SyncJobItem(BaseModel):
     taken_after: datetime | None
     taken_before: datetime | None
     rating: int | None
-    min_color_score: float
-    min_vibrancy_score: float
 
 
 class ImmichDisplayAPIClient(DisplayAPIClient):

@@ -206,8 +206,6 @@ class SyncJobCreate(BaseModel):
     taken_after: datetime | None = None
     taken_before: datetime | None = None
     rating: int | None = None
-    min_color_score: float = 0.5
-    min_vibrancy_score: float = 0.2
 
 
 class SyncJobUpdate(BaseModel):
@@ -232,8 +230,6 @@ class SyncJobUpdate(BaseModel):
     taken_after: datetime | None = None
     taken_before: datetime | None = None
     rating: int | None = None
-    min_color_score: float | None = None
-    min_vibrancy_score: float | None = None
 
 
 class SyncJobResponse(BaseModel):
@@ -261,8 +257,6 @@ class SyncJobResponse(BaseModel):
     taken_after: datetime | None
     taken_before: datetime | None
     rating: int | None
-    min_color_score: float
-    min_vibrancy_score: float
     created_at: datetime
     updated_at: datetime
 

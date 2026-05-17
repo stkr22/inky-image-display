@@ -1,10 +1,10 @@
 """Gemini batch sync service.
 
 For each active ``GeminiSyncJob``, iterates subjects x images_per_subject,
-calls the Gemini image model with the job's prompt preset, uploads the result
-to S3, and registers it via the Display API. Mirrors the role of
-``ImmichSyncService`` for an AI image source — share only the cross-cutting
-utilities (``ColorProfileAnalyzer``, ``ImageProcessor``, ``GeminiDisplayAPIClient``,
+calls the Gemini image model with the job's prompt preset, asks the API to
+resize the result, uploads to S3, and registers it via the Display API.
+Mirrors the role of ``ImmichSyncService`` for an AI image source — share
+only the cross-cutting helpers (``GeminiDisplayAPIClient``,
 ``S3StorageClient``) rather than a generic pipeline, because the per-source
 logic differs enough that a forced abstraction would obscure more than help.
 """
@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from inky_image_display_shared.ai import RenderedPrompt, generate_image_bytes
-from inky_image_display_shared.utils import ColorProfileAnalyzer
 
 from inky_image_display_sync.api_client import ImageRegisterPayload
 from inky_image_display_sync.gemini.config import GeminiConnectionConfig, GeminiSyncConfig
@@ -168,15 +167,21 @@ class GeminiSyncService:
         target_height: int,
         expires_at: datetime | None,
     ) -> None:
-        jpeg_bytes, score = await generate_image_bytes(
+        raw_bytes = await generate_image_bytes(
             self.gemini_config.api_key,
             prompt,
             subject,
-            target_width,
-            target_height,
             model=model,
         )
-        self.logger.info("Generated %r with %s (Spectra-6 score %.3f)", subject, model, score)
+        # Generated images are larger than the panel; ask the API to resize +
+        # center-crop so all sync paths share the same processing endpoint.
+        jpeg_bytes = await self.api_client.process_image(
+            raw_bytes,
+            target_width,
+            target_height,
+            upscale=True,
+        )
+        self.logger.info("Generated %r with %s", subject, model)
 
         image_uuid = uuid4()
         storage_path = f"{self.sync_config.storage_prefix}/{image_uuid}.jpg"
@@ -201,8 +206,3 @@ class GeminiSyncService:
                 expires_at=expires_at,
             )
         )
-
-    @staticmethod
-    def _color_score(image_bytes: bytes) -> float:
-        # Exposed for tests; mirrors the score returned by generate_image_bytes.
-        return ColorProfileAnalyzer.calculate_compatibility_score(image_bytes)
