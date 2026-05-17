@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.1](https://github.com/stkr22/inky-image-display/compare/shared-v3.2.0...shared-v3.2.1) (2026-05-17)
+
+
+### Bug Fixes
+
+* move resize to API endpoint; drop sync quality filters ([c3137f1](https://github.com/stkr22/inky-image-display/commit/c3137f19e0d8b70096379c17a4086c0ae0dc1ac0))
+
 ## [3.2.0](https://github.com/stkr22/inky-image-display/compare/shared-v3.1.0...shared-v3.2.0) (2026-05-17)
 
 

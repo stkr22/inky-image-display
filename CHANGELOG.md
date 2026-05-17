@@ -1,5 +1,17 @@
 # Changelog
 
+## [4.4.0](https://github.com/stkr22/inky-image-display/compare/v4.3.0...v4.4.0) (2026-05-17)
+
+
+### Features
+
+* **scripts:** add Immich album/person suitability analyser ([feda0ad](https://github.com/stkr22/inky-image-display/commit/feda0ad36b85f43ce95961e604ffc822a2e39f50))
+
+
+### Bug Fixes
+
+* move resize to API endpoint; drop sync quality filters ([c3137f1](https://github.com/stkr22/inky-image-display/commit/c3137f19e0d8b70096379c17a4086c0ae0dc1ac0))
+
 ## [4.3.0](https://github.com/stkr22/inky-image-display/compare/v4.2.1...v4.3.0) (2026-05-17)
 
 
