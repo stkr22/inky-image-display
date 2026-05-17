@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 from io import BytesIO
 from typing import TYPE_CHECKING
 
@@ -20,16 +19,20 @@ import pillow_heif
 from fastapi import HTTPException
 from inky_image_display_shared.models import Device, DeviceProfile, Grid, GridDevice, Image
 from inky_image_display_shared.schemas import DisplayCommand
+from inky_image_display_shared.time import utcnow
 from PIL import Image as PILImage
 from PIL import ImageOps
 from PIL.Image import Resampling
 from sqlmodel import col, select
+
+from inky_image_display_api.services.image_service import next_refresh_at
 
 if TYPE_CHECKING:
     from uuid import UUID
 
     from sqlmodel.ext.asyncio.session import AsyncSession
 
+    from inky_image_display_api.config import Settings
     from inky_image_display_api.mqtt import MQTTService
     from inky_image_display_api.services.s3_service import S3Service
 
@@ -273,19 +276,20 @@ def _fetch_image_bytes(s3: S3Service, storage_path: str) -> bytes:
         response.release_conn()
 
 
-async def claim_devices_and_push(
+async def claim_devices_and_push(  # noqa: PLR0913 — explicit deps mirror the route call site
     session: AsyncSession,
     grid: Grid,
     image: Image,
     crop_paths: dict[UUID, str],
     mqtt: MQTTService,
+    settings: Settings,
 ) -> None:
     """Claim every grid member device and push its slice via MQTT.
 
     Aborts (raises 409) without partial state changes if any member is
     already claimed by a different grid.
     """
-    now = datetime.now()
+    now = utcnow()
     placements = await list_grid_devices(session, grid.id)
 
     # Pre-flight: refuse if any member is held by another grid.
@@ -299,13 +303,16 @@ async def claim_devices_and_push(
             )
         devices.append(device)
 
-    # Apply claims and push commands.
+    # Apply claims and push commands. Cadence is grid-owned now — every
+    # member tracks the same ``scheduled_next_at`` as the grid itself so
+    # the rotation loop drives them in lockstep.
+    grid_next = next_refresh_at(grid, settings, now)
     for device in devices:
         path = crop_paths[device.id]
         device.claimed_by_grid_id = grid.id
         device.current_image_id = image.id
         device.displayed_since = now
-        device.scheduled_next_at = now + timedelta(seconds=image.display_duration_seconds)
+        device.scheduled_next_at = grid_next
         device.updated_at = now
         session.add(device)
 
@@ -325,7 +332,7 @@ async def claim_devices_and_push(
 
     grid.current_image_id = image.id
     grid.displayed_since = now
-    grid.scheduled_next_at = now + timedelta(seconds=image.display_duration_seconds)
+    grid.scheduled_next_at = grid_next
     grid.updated_at = now
     image.last_displayed_at = now
     session.add(grid)

@@ -130,6 +130,11 @@ class ApiClient:
         response = await self._client.get(f"/api/devices/{device_id}")
         return _parse_json_dict(response)
 
+    async def update_device(self, device_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """Patch a device's editable fields (currently just refresh interval)."""
+        response = await self._client.patch(f"/api/devices/{device_id}", json=_json_safe(body))
+        return _parse_json_dict(response)
+
     async def display_image(self, device_id: str, image_id: UUID) -> None:
         """Command a device to display a specific image."""
         response = await self._client.post(
@@ -349,6 +354,13 @@ class ApiClient:
         """Release every claim this grid holds; members return to solo."""
         response = await self._client.post(f"/api/grids/{grid_id}/release")
         return _parse_json_dict(response)
+
+    # --- Schedule ---
+
+    async def get_schedule_upcoming(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        """Fetch the chronologically-merged upcoming refresh queue."""
+        response = await self._client.get("/api/schedule/upcoming", params={"limit": limit})
+        return _parse_json_list(response)
 
     # --- On-demand image generation ---
 

@@ -89,6 +89,10 @@ async def update_grid(request: Request, grid_id: UUID, body: GridUpdate) -> Grid
             grid.width_cm = body.width_cm
         if body.height_cm is not None:
             grid.height_cm = body.height_cm
+        if body.clear_refresh_interval:
+            grid.refresh_interval_seconds = None
+        elif body.refresh_interval_seconds is not None:
+            grid.refresh_interval_seconds = body.refresh_interval_seconds
 
         if body.width_cm is not None or body.height_cm is not None:
             placements = await grid_service.list_grid_devices(session, grid.id)
@@ -253,6 +257,7 @@ async def display_image_on_grid(
             image,
             crop_paths,
             request.app.state.mqtt,
+            request.app.state.settings,
         )
         return {"status": "ok"}
 
@@ -272,6 +277,7 @@ async def advance_grid_rotation(request: Request, grid_id: UUID) -> dict[str, st
             image,
             crop_paths,
             request.app.state.mqtt,
+            request.app.state.settings,
         )
         return {"status": "ok", "image_id": str(image.id)}
 

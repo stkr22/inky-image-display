@@ -85,7 +85,11 @@ def upgrade() -> None:
         op.create_table(
             "prompt_blocks",
             sa.Column("id", sa.Uuid(), primary_key=True),
-            sa.Column("kind", sa.String(), nullable=False, index=True),
+            # The explicit ``create_index`` below owns this index. Setting
+            # ``index=True`` here would make ``create_table`` auto-create
+            # the same name, so the explicit call would then trip
+            # "index already exists" on a fresh DB.
+            sa.Column("kind", sa.String(), nullable=False),
             sa.Column("name", sa.String(), nullable=False),
             sa.Column("text", sa.Text(), nullable=False),
             sa.Column("is_default", sa.Boolean(), nullable=False, server_default=sa.false()),

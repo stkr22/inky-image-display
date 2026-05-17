@@ -11,7 +11,7 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.mqtt import upsert_device
-from inky_image_display_api.schemas import DeviceResponse, DisplayCommandRequest, NextImageResponse
+from inky_image_display_api.schemas import DeviceResponse, DeviceUpdate, DisplayCommandRequest, NextImageResponse
 from inky_image_display_api.services.image_service import (
     build_display_command,
     get_next_image_for_device,
@@ -86,6 +86,30 @@ async def get_device(request: Request, device_id: str) -> Device:
         device = result.first()
         if device is None:
             raise HTTPException(status_code=404, detail="Device not found")
+        return device
+
+
+@router.patch("/{device_id}", response_model=DeviceResponse)
+async def update_device(request: Request, device_id: str, body: DeviceUpdate) -> Device:
+    """Update editable device fields.
+
+    Today only the rotation cadence is editable here; pass
+    ``clear_refresh_interval=True`` to reset the override and fall back to
+    the global default. Validation of the seconds range happens in the
+    schema layer.
+    """
+    async with AsyncSession(request.app.state.engine) as session:
+        result = await session.exec(select(Device).where(Device.device_id == device_id))
+        device = result.first()
+        if device is None:
+            raise HTTPException(status_code=404, detail="Device not found")
+        if body.clear_refresh_interval:
+            device.refresh_interval_seconds = None
+        elif body.refresh_interval_seconds is not None:
+            device.refresh_interval_seconds = body.refresh_interval_seconds
+        session.add(device)
+        await session.commit()
+        await session.refresh(device)
         return device
 
 

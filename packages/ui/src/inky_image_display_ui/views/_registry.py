@@ -54,6 +54,7 @@ def get_pages() -> list[PageSpec]:
         images,
         jobs,
         prompts,
+        schedule,
         sync_jobs,
     )
 
@@ -81,6 +82,14 @@ def get_pages() -> list[PageSpec]:
             register=grids.register,
             tile=None,
             nav_order=25,
+        ),
+        PageSpec(
+            path="/schedule",
+            label="Schedule",
+            icon="schedule",
+            register=schedule.register,
+            tile=None,
+            nav_order=27,
         ),
         PageSpec(
             path="/jobs",

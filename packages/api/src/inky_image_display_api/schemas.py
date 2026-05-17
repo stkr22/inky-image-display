@@ -1,9 +1,21 @@
 """Pydantic request / response schemas for the REST API."""
 
 from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from inky_image_display_shared.time import as_utc_aware
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
+
+# Stored datetimes are naive UTC by convention (see
+# ``inky_image_display_shared.time``). At the API boundary we attach
+# ``tzinfo=UTC`` so clients get unambiguous offset-aware ISO strings
+# (e.g. ``2026-05-17T14:00:00+00:00``).
+UtcDatetime = Annotated[datetime, PlainSerializer(lambda v: as_utc_aware(v).isoformat(), return_type=str)]
+
+# Range guard for refresh interval inputs: 1 second through 1 week.
+_MAX_REFRESH_SECONDS = 7 * 24 * 3600
+RefreshIntervalSeconds = Annotated[int, Field(ge=1, le=_MAX_REFRESH_SECONDS)]
 
 # --- Images ---
 
@@ -83,9 +95,9 @@ class ImageResponse(BaseModel):
     is_portrait: bool
     display_duration_seconds: int
     priority: int
-    last_displayed_at: datetime | None
-    expires_at: datetime | None
-    created_at: datetime
+    last_displayed_at: UtcDatetime | None
+    expires_at: UtcDatetime | None
+    created_at: UtcDatetime
     tags: str | None
     target_grid_id: UUID | None = None
 
@@ -107,8 +119,8 @@ class DeviceProfileResponse(BaseModel):
     physical_height_cm: float
     model: str
     is_default: bool
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
 
 
 class DeviceProfileUpdate(BaseModel):
@@ -130,9 +142,26 @@ class DeviceResponse(BaseModel):
     is_online: bool
     current_image_id: UUID | None
     claimed_by_grid_id: UUID | None
-    displayed_since: datetime | None
-    scheduled_next_at: datetime
-    last_seen: datetime
+    displayed_since: UtcDatetime | None
+    scheduled_next_at: UtcDatetime
+    last_seen: UtcDatetime
+    refresh_interval_seconds: int | None = None
+
+
+class DeviceUpdate(BaseModel):
+    """Patch fields on a device (all optional).
+
+    Currently exposes ``refresh_interval_seconds`` so the user can dial
+    rotation cadence per device from the UI; ``None`` resets to the
+    global default. Other device fields (room, orientation, profile)
+    are managed via registration today.
+    """
+
+    refresh_interval_seconds: RefreshIntervalSeconds | None = None
+    # Explicit flag because pydantic can't distinguish "omitted" from
+    # "explicitly null" on a regular ``int | None`` field — the UI uses
+    # this to clear the override back to the default.
+    clear_refresh_interval: bool = False
 
 
 class DisplayCommandRequest(BaseModel):
@@ -405,6 +434,8 @@ class GridUpdate(BaseModel):
     name: str | None = None
     width_cm: float | None = None
     height_cm: float | None = None
+    refresh_interval_seconds: RefreshIntervalSeconds | None = None
+    clear_refresh_interval: bool = False
 
 
 class GridDeviceAdd(BaseModel):
@@ -450,10 +481,11 @@ class GridResponse(BaseModel):
     width_cm: float
     height_cm: float
     current_image_id: UUID | None
-    displayed_since: datetime | None
-    scheduled_next_at: datetime
-    created_at: datetime
-    updated_at: datetime
+    displayed_since: UtcDatetime | None
+    scheduled_next_at: UtcDatetime
+    refresh_interval_seconds: int | None = None
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
     devices: list[GridDeviceResponse] | None = None
 
 
@@ -461,3 +493,25 @@ class GridDisplayRequest(BaseModel):
     """Body for ``POST /api/grids/{id}/display``."""
 
     image_id: UUID
+
+
+# --- Schedule overview ---
+
+
+class ScheduleUpcomingEntry(BaseModel):
+    """One entry in the global upcoming-refresh queue.
+
+    ``kind`` is ``"device"`` or ``"grid"``; ``id`` is the UUID of the
+    underlying entity and ``name`` the user-facing label (``device_id``
+    string for devices, ``name`` for grids). ``effective_interval_seconds``
+    is the resolved cadence — i.e. the per-entity override if set,
+    otherwise the global default — so the UI doesn't need to know about
+    the fallback.
+    """
+
+    kind: str
+    id: UUID
+    name: str
+    scheduled_next_at: UtcDatetime
+    refresh_interval_seconds: int | None
+    effective_interval_seconds: int

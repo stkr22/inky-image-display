@@ -2,10 +2,10 @@
 
 import asyncio
 import logging
-from datetime import datetime
 
 from fastapi import FastAPI
 from inky_image_display_shared.models import Device, Grid
+from inky_image_display_shared.time import utcnow
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -49,7 +49,7 @@ async def _rotate_due_devices(app: FastAPI) -> None:
     Devices currently claimed by a grid are skipped — the grid scheduler
     drives them instead.
     """
-    now = datetime.now()
+    now = utcnow()
     async with AsyncSession(app.state.engine) as session:
         result = await session.exec(
             select(Device).where(
@@ -92,7 +92,7 @@ async def _rotate_single_device(app: FastAPI, device: Device) -> None:
 
 async def _rotate_due_grids(app: FastAPI) -> None:
     """Advance any grid whose schedule has elapsed."""
-    now = datetime.now()
+    now = utcnow()
     async with AsyncSession(app.state.engine) as session:
         result = await session.exec(select(Grid).where(Grid.scheduled_next_at <= now))
         due_grids = list(result.all())
@@ -111,6 +111,15 @@ async def _rotate_single_grid(app: FastAPI, grid_id: object) -> None:
         db_grid = grid.first()
         if db_grid is None:
             return
+        # Empty grids are valid state (created in the UI before the user
+        # adds devices), so the background tick treats them like grids
+        # without images: log at debug and move on. ``render_and_upload``
+        # still raises 400 when called from the explicit route, which is
+        # the correct behaviour for a user-driven request.
+        placements = await grid_service.list_grid_devices(session, db_grid.id)
+        if not placements:
+            logger.debug("No devices placed on grid %s", db_grid.id)
+            return
         image = await grid_service.get_next_grid_image(session, db_grid)
         if image is None:
             logger.debug("No images assigned to grid %s", db_grid.id)
@@ -122,5 +131,6 @@ async def _rotate_single_grid(app: FastAPI, grid_id: object) -> None:
             image,
             crop_paths,
             app.state.mqtt,
+            app.state.settings,
         )
         logger.info("Rotated grid %s to image %s", db_grid.id, image.id)

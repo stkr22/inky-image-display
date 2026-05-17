@@ -2,12 +2,24 @@
 
 from datetime import datetime, timedelta
 
-from inky_image_display_shared.models import Device, DeviceProfile, Image
+from inky_image_display_shared.models import Device, DeviceProfile, Grid, Image
 from inky_image_display_shared.schemas import DisplayCommand
+from inky_image_display_shared.time import utcnow
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.config import Settings
+
+
+def next_refresh_at(entity: Device | Grid, settings: Settings, now: datetime) -> datetime:
+    """Compute the next scheduled refresh time for a device or grid.
+
+    ``refresh_interval_seconds`` on the entity wins; ``None`` falls back to
+    ``settings.default_display_duration`` so untouched devices keep their
+    historic behaviour.
+    """
+    seconds = entity.refresh_interval_seconds or settings.default_display_duration
+    return now + timedelta(seconds=seconds)
 
 
 async def get_next_image_for_device(session: AsyncSession, device: Device) -> Image | None:
@@ -88,7 +100,7 @@ async def update_display_state(
         settings: Application settings (for display duration).
 
     """
-    now = datetime.now()
+    now = utcnow()
 
     # Mark image as displayed
     image.last_displayed_at = now
@@ -96,7 +108,7 @@ async def update_display_state(
     # Update device state
     device.current_image_id = image.id
     device.displayed_since = now
-    device.scheduled_next_at = now + timedelta(seconds=settings.default_display_duration)
+    device.scheduled_next_at = next_refresh_at(device, settings, now)
     device.updated_at = now
 
     session.add(image)
