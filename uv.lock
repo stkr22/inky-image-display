@@ -955,7 +955,7 @@ provides-extras = ["rpi"]
 
 [[package]]
 name = "inky-image-display-shared"
-version = "3.1.0"
+version = "3.2.0"
 source = { editable = "packages/shared" }
 dependencies = [
     { name = "coloraide" },
@@ -1032,7 +1032,7 @@ requires-dist = [
 
 [[package]]
 name = "inky-image-display-workspace"
-version = "4.2.1"
+version = "4.3.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]

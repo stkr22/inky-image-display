@@ -85,6 +85,6 @@ ignore = [
 "__init__.py" = ["F401"]
 "tests/**/*.py" = ["S101", "PLR2004", "D", "ARG002", "ASYNC240"]
 "packages/*/tests/**/*.py" = ["S101", "PLR2004", "D", "ARG002", "ASYNC240"]
-"scripts/**/*.py" = ["T201"]
+"scripts/**/*.py" = ["T201", "D", "PLR2004", "PLR0913", "PLW2901", "PTH123", "BLE001"]
 "**/migrations/*.py" = ["E501"]
 "**/routes/*.py" = ["PLR0913"]
