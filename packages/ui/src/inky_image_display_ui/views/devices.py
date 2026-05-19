@@ -304,10 +304,11 @@ async def _open_schedule_dialog(api: Any, device: dict[str, Any], on_done: Any) 
     """
     current = device.get("refresh_interval_seconds")
     hours, minutes = split_hours_minutes(current)
+    default_label = await _fetch_default_label(api)
 
     with ui.dialog() as dialog, ui.card().style("padding: 20px; min-width: 360px; gap: 12px;"):
         ui.label(f"Schedule for {device['device_id']}").classes("ink-h3")
-        use_default = ui.switch("Use default interval", value=current is None)
+        use_default = ui.switch(f"Use default interval ({default_label})", value=current is None)
         hours_input = ui.number("Hours", value=hours, min=0, step=1).props("outlined")
         minutes_input = ui.number("Minutes", value=minutes, min=0, max=59, step=1).props("outlined")
 
@@ -343,6 +344,19 @@ async def _open_schedule_dialog(api: Any, device: dict[str, Any], on_done: Any) 
             ui.button("Cancel", on_click=dialog.close).props("flat")
             ui.button("Save", on_click=submit).props("unelevated color=primary")
     dialog.open()
+
+
+async def _fetch_default_label(api: Any) -> str:
+    """Return the global default refresh interval as a short human string.
+
+    Falls back to "default" when the lookup fails so a transient API
+    error doesn't prevent users from editing the per-device override.
+    """
+    try:
+        settings = await api.get_app_settings()
+    except ApiError:
+        return "default"
+    return format_interval_seconds(int(settings.get("default_refresh_seconds") or 0))
 
 
 async def _confirm(message: str) -> bool:

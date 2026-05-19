@@ -13,6 +13,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from inky_image_display_api.routes import (
+    app_settings,
     device_profiles,
     devices,
     grids,
@@ -22,7 +23,7 @@ from inky_image_display_api.routes import (
     sync_jobs,
 )
 from inky_image_display_api.routes.health import router as health_router
-from inky_image_display_shared.models import Device, DeviceProfile, Grid, GridDevice, Image
+from inky_image_display_shared.models import AppSetting, Device, DeviceProfile, Grid, GridDevice, Image
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -46,6 +47,7 @@ async def async_engine() -> AsyncIterator[AsyncEngine]:
             Grid.__table__,  # ty: ignore[unresolved-attribute]
             Device.__table__,  # ty: ignore[unresolved-attribute]
             GridDevice.__table__,  # ty: ignore[unresolved-attribute]
+            AppSetting.__table__,  # ty: ignore[unresolved-attribute]
         ]:
             await conn.run_sync(table.create, checkfirst=True)
     yield engine
@@ -134,6 +136,7 @@ def test_app(
     app.include_router(grids.router)
     app.include_router(schedule.router)
     app.include_router(sync_jobs.router)
+    app.include_router(app_settings.router)
 
     return app
 

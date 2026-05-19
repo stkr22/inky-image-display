@@ -23,7 +23,6 @@ class TestNextRefreshAt:
     """The cadence helper should prefer the per-entity override."""
 
     def test_override_wins(self):
-        settings = MagicMock(default_display_duration=3600)
         device = Device(
             id=uuid4(),
             device_id="kitchen",
@@ -31,10 +30,9 @@ class TestNextRefreshAt:
             refresh_interval_seconds=120,
         )
         now = datetime(2026, 5, 17, 12, 0, 0)
-        assert next_refresh_at(device, settings, now) == now + timedelta(seconds=120)
+        assert next_refresh_at(device, 3600, now) == now + timedelta(seconds=120)
 
     def test_falls_back_to_default(self):
-        settings = MagicMock(default_display_duration=900)
         device = Device(
             id=uuid4(),
             device_id="kitchen",
@@ -42,13 +40,12 @@ class TestNextRefreshAt:
             refresh_interval_seconds=None,
         )
         now = datetime(2026, 5, 17, 12, 0, 0)
-        assert next_refresh_at(device, settings, now) == now + timedelta(seconds=900)
+        assert next_refresh_at(device, 900, now) == now + timedelta(seconds=900)
 
     def test_works_for_grids(self):
-        settings = MagicMock(default_display_duration=1800)
         grid = Grid(id=uuid4(), name="hallway", width_cm=80.0, height_cm=40.0)
         now = datetime(2026, 5, 17, 12, 0, 0)
-        assert next_refresh_at(grid, settings, now) == now + timedelta(seconds=1800)
+        assert next_refresh_at(grid, 1800, now) == now + timedelta(seconds=1800)
 
 
 class TestPatchDevice:

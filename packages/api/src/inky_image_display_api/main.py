@@ -14,6 +14,7 @@ from inky_image_display_api.config import Settings
 from inky_image_display_api.database import create_engine, create_tables
 from inky_image_display_api.mqtt import MQTTService
 from inky_image_display_api.routes import (
+    app_settings,
     device_profiles,
     devices,
     gemini_sync_jobs,
@@ -81,6 +82,7 @@ app.include_router(prompt_blocks.router)
 app.include_router(prompt_presets.router)
 app.include_router(gemini_sync_jobs.router)
 app.include_router(genai_generate.router)
+app.include_router(app_settings.router)
 
 
 def main() -> None:

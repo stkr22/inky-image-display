@@ -362,6 +362,18 @@ class ApiClient:
         response = await self._client.get("/api/schedule/upcoming", params={"limit": limit})
         return _parse_json_list(response)
 
+    # --- App settings ---
+
+    async def get_app_settings(self) -> dict[str, Any]:
+        """Fetch operator-tunable app settings (e.g. default refresh interval)."""
+        response = await self._client.get("/api/app-settings")
+        return _parse_json_dict(response)
+
+    async def update_app_settings(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """Persist operator-tunable app settings."""
+        response = await self._client.put("/api/app-settings", json=_json_safe(body))
+        return _parse_json_dict(response)
+
     # --- On-demand image generation ---
 
     async def generate_image(self, body: Mapping[str, Any]) -> dict[str, Any]:

@@ -55,6 +55,7 @@ def get_pages() -> list[PageSpec]:
         jobs,
         prompts,
         schedule,
+        settings,
         sync_jobs,
     )
 
@@ -106,6 +107,14 @@ def get_pages() -> list[PageSpec]:
             register=genai.register,
             tile=None,
             nav_order=40,
+        ),
+        PageSpec(
+            path="/settings",
+            label="Settings",
+            icon="settings",
+            register=settings.register,
+            tile=None,
+            nav_order=50,
         ),
         # Hidden from nav: per-source job forms and legacy standalone pages.
         # Routes are still registered so deep links and edit URLs work.
