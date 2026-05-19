@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.5.0](https://github.com/stkr22/inky-image-display/compare/v4.4.0...v4.5.0) (2026-05-19)
+
+
+### Features
+
+* **ui:** chip inputs for ID lists and editable global default refresh ([06738ba](https://github.com/stkr22/inky-image-display/commit/06738ba802dbd87c34aa16de109a1b6cb393b220))
+* **ui:** chip inputs for ID lists and editable global default refresh ([c8da96b](https://github.com/stkr22/inky-image-display/commit/c8da96b07740ba82efa44c709c5680243e28243c))
+
 ## [4.4.0](https://github.com/stkr22/inky-image-display/compare/v4.3.0...v4.4.0) (2026-05-17)
 
 
