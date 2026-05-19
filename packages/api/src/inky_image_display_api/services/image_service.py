@@ -9,16 +9,18 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.config import Settings
+from inky_image_display_api.services.app_settings_service import get_default_refresh_seconds
 
 
-def next_refresh_at(entity: Device | Grid, settings: Settings, now: datetime) -> datetime:
+def next_refresh_at(entity: Device | Grid, default_seconds: int, now: datetime) -> datetime:
     """Compute the next scheduled refresh time for a device or grid.
 
     ``refresh_interval_seconds`` on the entity wins; ``None`` falls back to
-    ``settings.default_display_duration`` so untouched devices keep their
-    historic behaviour.
+    the operator-configured default (resolved by the caller via
+    :func:`app_settings_service.get_default_refresh_seconds`) so untouched
+    devices keep their historic behaviour.
     """
-    seconds = entity.refresh_interval_seconds or settings.default_display_duration
+    seconds = entity.refresh_interval_seconds or default_seconds
     return now + timedelta(seconds=seconds)
 
 
@@ -101,6 +103,7 @@ async def update_display_state(
 
     """
     now = utcnow()
+    default_seconds = await get_default_refresh_seconds(session, settings)
 
     # Mark image as displayed
     image.last_displayed_at = now
@@ -108,7 +111,7 @@ async def update_display_state(
     # Update device state
     device.current_image_id = image.id
     device.displayed_since = now
-    device.scheduled_next_at = next_refresh_at(device, settings, now)
+    device.scheduled_next_at = next_refresh_at(device, default_seconds, now)
     device.updated_at = now
 
     session.add(image)

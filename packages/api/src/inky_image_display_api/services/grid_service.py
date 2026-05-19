@@ -25,6 +25,7 @@ from PIL import ImageOps
 from PIL.Image import Resampling
 from sqlmodel import col, select
 
+from inky_image_display_api.services.app_settings_service import get_default_refresh_seconds
 from inky_image_display_api.services.image_service import next_refresh_at
 
 if TYPE_CHECKING:
@@ -306,7 +307,8 @@ async def claim_devices_and_push(  # noqa: PLR0913 — explicit deps mirror the 
     # Apply claims and push commands. Cadence is grid-owned now — every
     # member tracks the same ``scheduled_next_at`` as the grid itself so
     # the rotation loop drives them in lockstep.
-    grid_next = next_refresh_at(grid, settings, now)
+    default_seconds = await get_default_refresh_seconds(session, settings)
+    grid_next = next_refresh_at(grid, default_seconds, now)
     for device in devices:
         path = crop_paths[device.id]
         device.claimed_by_grid_id = grid.id

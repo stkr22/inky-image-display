@@ -509,3 +509,18 @@ class ScheduleUpcomingEntry(BaseModel):
     scheduled_next_at: UtcDatetime
     refresh_interval_seconds: int | None
     effective_interval_seconds: int
+
+
+# --- App settings ---
+
+
+class AppSettingsResponse(BaseModel):
+    """Operator-tunable app settings returned by ``GET /api/app-settings``."""
+
+    default_refresh_seconds: int
+
+
+class AppSettingsUpdate(BaseModel):
+    """Body for ``PUT /api/app-settings``."""
+
+    default_refresh_seconds: RefreshIntervalSeconds

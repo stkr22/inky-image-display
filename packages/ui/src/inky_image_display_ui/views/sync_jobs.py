@@ -223,19 +223,37 @@ async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
 
         with ui.row().classes("w-full ink-form-row"):
             albums_field = (
-                ui.textarea("Album IDs (one per line)", value="\n".join(job.get("album_ids") or []))
+                ui.select(
+                    options=list(job.get("album_ids") or []),
+                    value=list(job.get("album_ids") or []),
+                    label="Album IDs",
+                    multiple=True,
+                    new_value_mode="add-unique",
+                )
                 .classes("flex-1")
-                .props("outlined autogrow")
+                .props("outlined use-chips use-input hide-dropdown-icon")
             )
             persons_field = (
-                ui.textarea("Person IDs (one per line)", value="\n".join(job.get("person_ids") or []))
+                ui.select(
+                    options=list(job.get("person_ids") or []),
+                    value=list(job.get("person_ids") or []),
+                    label="Person IDs",
+                    multiple=True,
+                    new_value_mode="add-unique",
+                )
                 .classes("flex-1")
-                .props("outlined autogrow")
+                .props("outlined use-chips use-input hide-dropdown-icon")
             )
             tags_field = (
-                ui.textarea("Tag IDs (one per line)", value="\n".join(job.get("tag_ids") or []))
+                ui.select(
+                    options=list(job.get("tag_ids") or []),
+                    value=list(job.get("tag_ids") or []),
+                    label="Tag IDs",
+                    multiple=True,
+                    new_value_mode="add-unique",
+                )
                 .classes("flex-1")
-                .props("outlined autogrow")
+                .props("outlined use-chips use-input hide-dropdown-icon")
             )
         with ui.row().classes("w-full ink-form-row"):
             favorite_field = (
@@ -320,9 +338,9 @@ def _collect_form(  # noqa: PLR0913, PLR0911
     count_raw: Any,
     random_pick: bool,
     overfetch: Any,
-    albums: str | None,
-    persons: str | None,
-    tags: str | None,
+    albums: list[str] | None,
+    persons: list[str] | None,
+    tags: list[str] | None,
     favorite: str | None,
     city: str | None,
     state: str | None,
@@ -368,9 +386,9 @@ def _collect_form(  # noqa: PLR0913, PLR0911
         "count": count,
         "random_pick": random_pick,
         "overfetch_multiplier": int(overfetch or 3),
-        "album_ids": _split_lines(albums),
-        "person_ids": _split_lines(persons),
-        "tag_ids": _split_lines(tags),
+        "album_ids": _clean_list(albums),
+        "person_ids": _clean_list(persons),
+        "tag_ids": _clean_list(tags),
         "is_favorite": _option_to_bool(favorite),
         "city": city or None,
         "state": state or None,
@@ -382,10 +400,10 @@ def _collect_form(  # noqa: PLR0913, PLR0911
     }
 
 
-def _split_lines(value: str | None) -> list[str] | None:
+def _clean_list(value: list[str] | None) -> list[str] | None:
     if not value:
         return None
-    items = [line.strip() for line in value.splitlines() if line.strip()]
+    items = [item.strip() for item in value if isinstance(item, str) and item.strip()]
     return items or None
 
 

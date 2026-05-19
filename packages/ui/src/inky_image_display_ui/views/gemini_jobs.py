@@ -208,12 +208,15 @@ async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
                 .props("outlined clearable")
             )
         subjects_field = (
-            ui.textarea(
-                "Subjects (one per line)",
-                value="\n".join(job.get("subjects") or []),
+            ui.select(
+                options=list(job.get("subjects") or []),
+                value=list(job.get("subjects") or []),
+                label="Subjects",
+                multiple=True,
+                new_value_mode="add-unique",
             )
             .classes("w-full")
-            .props("outlined autogrow")
+            .props("outlined use-chips use-input hide-dropdown-icon")
         )
         active_switch = ui.switch("Active", value=bool(job.get("is_active", True)))
 
@@ -229,7 +232,7 @@ async def _render_form(*, job_id: str | None) -> None:  # noqa: PLR0915
         if not preset_field.value:
             error_label.text = "Preset is required"
             return
-        subjects = [s.strip() for s in (subjects_field.value or "").splitlines() if s.strip()]
+        subjects = [s.strip() for s in (subjects_field.value or []) if isinstance(s, str) and s.strip()]
         if not subjects:
             error_label.text = "At least one subject is required"
             return

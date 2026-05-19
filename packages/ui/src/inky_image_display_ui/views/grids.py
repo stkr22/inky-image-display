@@ -347,6 +347,7 @@ def _render_grid_header(api: Any, grid: dict[str, Any], on_changed: Any) -> None
 async def _open_edit_dialog(api: Any, grid: dict[str, Any], on_done: Any) -> None:
     current_interval = grid.get("refresh_interval_seconds")
     int_hours, int_minutes = split_hours_minutes(current_interval)
+    default_label = await _fetch_default_label(api)
     with ui.dialog() as dialog, ui.card().style("padding: 20px; min-width: 360px; gap: 12px;"):
         ui.label("Edit grid").classes("ink-h3")
         name = ui.input("Name", value=grid["name"]).props("outlined")
@@ -358,7 +359,7 @@ async def _open_edit_dialog(api: Any, grid: dict[str, Any], on_done: Any) -> Non
         ).classes("ink-small")
 
         ui.label("Refresh schedule").classes("ink-eyebrow")
-        use_default = ui.switch("Use default interval", value=current_interval is None)
+        use_default = ui.switch(f"Use default interval ({default_label})", value=current_interval is None)
         hours_input = ui.number("Hours", value=int_hours, min=0, step=1).props("outlined")
         minutes_input = ui.number("Minutes", value=int_minutes, min=0, max=59, step=1).props("outlined")
 
@@ -405,6 +406,15 @@ async def _open_edit_dialog(api: Any, grid: dict[str, Any], on_done: Any) -> Non
             ui.button("Cancel", on_click=dialog.close).props("flat")
             ui.button("Save", on_click=submit).props("unelevated color=primary")
     dialog.open()
+
+
+async def _fetch_default_label(api: Any) -> str:
+    """Return the global default refresh interval as a short human string."""
+    try:
+        settings = await api.get_app_settings()
+    except ApiError:
+        return "default"
+    return format_interval_seconds(int(settings.get("default_refresh_seconds") or 0))
 
 
 async def _confirm(message: str) -> bool:

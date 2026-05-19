@@ -10,6 +10,7 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.schemas import ScheduleUpcomingEntry
+from inky_image_display_api.services.app_settings_service import get_default_refresh_seconds
 
 router = APIRouter(prefix="/api/schedule", tags=["schedule"])
 
@@ -27,9 +28,9 @@ async def upcoming(
     physical panel can't be reached.
     """
     settings = request.app.state.settings
-    default_seconds = settings.default_display_duration
 
     async with AsyncSession(request.app.state.engine) as session:
+        default_seconds = await get_default_refresh_seconds(session, settings)
         device_rows = await session.exec(
             select(Device)
             .where(col(Device.claimed_by_grid_id).is_(None))
