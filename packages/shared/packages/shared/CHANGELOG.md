@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.3.0](https://github.com/stkr22/inky-image-display/compare/shared-v3.2.1...shared-v3.3.0) (2026-05-19)
+
+
+### Features
+
+* **ui:** chip inputs for ID lists and editable global default refresh ([06738ba](https://github.com/stkr22/inky-image-display/commit/06738ba802dbd87c34aa16de109a1b6cb393b220))
+* **ui:** chip inputs for ID lists and editable global default refresh ([c8da96b](https://github.com/stkr22/inky-image-display/commit/c8da96b07740ba82efa44c709c5680243e28243c))
+
 ## [3.2.1](https://github.com/stkr22/inky-image-display/compare/shared-v3.2.0...shared-v3.2.1) (2026-05-17)
 
 
