@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.6.0](https://github.com/stkr22/inky-image-display/compare/v4.5.0...v4.6.0) (2026-05-20)
+
+
+### Features
+
+* **ui:** collapse Devices/Grids/Schedule into Displays and add image-driven send ([012fd7d](https://github.com/stkr22/inky-image-display/commit/012fd7dba042b26e7cf4edd2e422d1cb0f8faf1f))
+* **ui:** collapse Devices/Grids/Schedule into Displays and add image… ([2f722f7](https://github.com/stkr22/inky-image-display/commit/2f722f77c8db96aefe3254a946819f6cd427d0e6))
+
 ## [4.5.0](https://github.com/stkr22/inky-image-display/compare/v4.4.0...v4.5.0) (2026-05-19)
 
 
