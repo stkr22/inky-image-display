@@ -30,18 +30,14 @@ logger = logging.getLogger(__name__)
 def register() -> None:
     """Register the grids routes."""
 
-    @ui.page("/grids")
-    async def grids_page() -> None:
-        with frame("/grids"):
-            await _render_list()
-
     @ui.page("/grids/{grid_id}")
     async def grid_detail_page(grid_id: str) -> None:
-        with frame("/grids"):
+        with frame("/displays"):
             await _render_detail(UUID(grid_id))
 
 
-async def _render_list() -> None:
+async def render_section() -> None:
+    """Render the Grids list section inside the unified Display page."""
     api = require_api_client()
 
     with ui.row().classes("w-full items-end justify-between"):
@@ -322,7 +318,7 @@ def _render_grid_header(api: Any, grid: dict[str, Any], on_changed: Any) -> None
             ui.notify(f"Delete failed: {exc.detail or exc}", type="negative")
             return
         ui.notify("Grid deleted", type="positive")
-        ui.navigate.to("/grids")
+        ui.navigate.to("/displays")
 
     with ui.row().classes("w-full items-end justify-between flex-wrap gap-3"):
         with ui.column().classes("gap-0"):
@@ -335,7 +331,7 @@ def _render_grid_header(api: Any, grid: dict[str, Any], on_changed: Any) -> None
                 f"Refresh every {interval_label} · next {format_datetime(next_at)} ({format_relative(next_at)})"
             ).classes("ink-small")
         with ui.row().classes("gap-2 items-center"):
-            ui.link("← All grids", "/grids").classes("ink-small")
+            ui.link("← Displays", "/displays").classes("ink-small")
             ui.button(
                 "Edit",
                 icon="edit",

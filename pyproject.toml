@@ -11,6 +11,11 @@ requires-python = ">=3.13,<3.15"
 [tool.uv.workspace]
 members = ["packages/*"]
 
+# CVE-2026-45409 affects idna < 3.15. Pin via override because idna only
+# enters the dependency tree transitively (httpx/requests/anyio).
+[tool.uv]
+override-dependencies = ["idna>=3.15"]
+
 [dependency-groups]
 dev = [
     "ruff~=0.15.10",

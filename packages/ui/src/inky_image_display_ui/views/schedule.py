@@ -14,7 +14,6 @@ from nicegui import ui
 from inky_image_display_ui.api_client import ApiError
 from inky_image_display_ui.formatting import format_datetime, format_interval_seconds, format_relative
 from inky_image_display_ui.session import require_api_client
-from inky_image_display_ui.views._layout import frame
 
 # Polling cadence for the dashboard. Tuned to match the rotation loop's
 # 30-second tick so the queue can shift at most one position between
@@ -23,16 +22,8 @@ _POLL_INTERVAL_SECONDS = 15
 _DEFAULT_LIMIT = 20
 
 
-def register() -> None:
-    """Register the schedule route."""
-
-    @ui.page("/schedule")
-    async def schedule_page() -> None:
-        with frame("/schedule"):
-            await _render()
-
-
-async def _render() -> None:
+async def render_section() -> None:
+    """Render the Schedule queue section inside the unified Display page."""
     api = require_api_client()
 
     with ui.row().classes("w-full items-end justify-between"):
