@@ -46,15 +46,13 @@ def get_pages() -> list[PageSpec]:
     Jobs and GenAI sections.
     """
     from inky_image_display_ui.views import (  # noqa: PLC0415
-        devices,
+        display,
         gemini_jobs,
         genai,
         generate,
-        grids,
         images,
         jobs,
         prompts,
-        schedule,
         settings,
         sync_jobs,
     )
@@ -69,28 +67,12 @@ def get_pages() -> list[PageSpec]:
             nav_order=10,
         ),
         PageSpec(
-            path="/devices",
-            label="Devices",
-            icon="devices",
-            register=devices.register,
-            tile=devices.tile,
+            path="/displays",
+            label="Displays",
+            icon="cast",
+            register=display.register,
+            tile=display.tile,
             nav_order=20,
-        ),
-        PageSpec(
-            path="/grids",
-            label="Grids",
-            icon="grid_view",
-            register=grids.register,
-            tile=None,
-            nav_order=25,
-        ),
-        PageSpec(
-            path="/schedule",
-            label="Schedule",
-            icon="schedule",
-            register=schedule.register,
-            tile=None,
-            nav_order=27,
         ),
         PageSpec(
             path="/jobs",

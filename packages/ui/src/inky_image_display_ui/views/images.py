@@ -10,7 +10,7 @@ from uuid import UUID
 from nicegui import events, ui
 from PIL import Image as PILImage
 
-from inky_image_display_ui.api_client import ApiError
+from inky_image_display_ui.api_client import ApiError, DeviceNotConnectedError
 from inky_image_display_ui.formatting import format_datetime
 from inky_image_display_ui.session import require_api_client
 from inky_image_display_ui.views._layout import frame
@@ -20,7 +20,7 @@ from inky_image_display_ui.views._quality import (
     max_device_pxcm,
     resolution_band,
 )
-from inky_image_display_ui.views._ui import stat
+from inky_image_display_ui.views._ui import badge, stat
 from inky_image_display_ui.views._ui import tile as bento_tile
 
 logger = logging.getLogger(__name__)
@@ -276,10 +276,153 @@ async def _render_detail(image_id: str) -> None:  # noqa: PLR0915
         ui.notify("Deleted", type="positive")
         ui.navigate.to("/images")
 
+    async def do_send() -> None:
+        await _open_send_dialog(api, image)
+
     with ui.element("div").classes("ink-action-bar w-full"):
         ui.button("Cancel", on_click=lambda: ui.navigate.to("/images")).props("flat")
         ui.button("Delete", icon="delete", on_click=delete).props("flat color=negative")
+        ui.button("Send to…", icon="send", on_click=do_send).props("unelevated color=accent")
         ui.button("Save", icon="save", on_click=save).props("unelevated color=primary")
+
+
+async def _open_send_dialog(api: Any, image: dict[str, Any]) -> None:  # noqa: PLR0912, PLR0915
+    """Pick a compatible device or grid and dispatch this image to it.
+
+    Devices require exact dimension match because e-ink panels can't rescale;
+    grids can cover-crop any image whose pixel dims meet/exceed the densest
+    member device's recommendation, so the bar there is "image ≥ recommended".
+    """
+    image_uuid = UUID(image["id"])
+    img_w = image.get("original_width")
+    img_h = image.get("original_height")
+    is_portrait = bool(image.get("is_portrait"))
+
+    try:
+        devices_list = await api.list_devices()
+        profiles_list = await api.list_device_profiles()
+        grids_list = await api.list_grids(include_devices=True)
+    except ApiError as exc:
+        ui.notify(f"Failed to load targets: {exc.detail or exc}", type="negative")
+        return
+
+    profile_by_id = {p["id"]: p for p in profiles_list}
+
+    compatible_devices: list[dict[str, Any]] = []
+    if img_w and img_h:
+        for device in devices_list:
+            profile = profile_by_id.get(device.get("device_profile_id"))
+            if profile is None:
+                continue
+            dev_portrait = device.get("display_orientation") == "portrait"
+            if dev_portrait:
+                target_w, target_h = profile["height"], profile["width"]
+            else:
+                target_w, target_h = profile["width"], profile["height"]
+            if target_w == img_w and target_h == img_h:
+                compatible_devices.append(device)
+
+    compatible_grids: list[dict[str, Any]] = []
+    if img_w and img_h:
+        for grid in grids_list:
+            max_pxcm = max_device_pxcm(grid, devices_list, profiles_list)
+            if max_pxcm is None:
+                continue
+            rec_w = int(grid["width_cm"] * max_pxcm + 0.999)
+            rec_h = int(grid["height_cm"] * max_pxcm + 0.999)
+            if img_w >= rec_w and img_h >= rec_h:
+                compatible_grids.append(grid)
+
+    with ui.dialog() as dialog, ui.card().classes("w-full max-w-3xl").style("padding: 24px;"):
+        with ui.column().classes("gap-0 mb-2"):
+            ui.label("Send").classes("ink-eyebrow")
+            ui.label(image.get("title") or image["storage_path"].split("/")[-1]).classes("ink-h3")
+            dims_label = f"{img_w or '?'}x{img_h or '?'} · {'portrait' if is_portrait else 'landscape'}"
+            ui.label(dims_label).classes("ink-small")
+
+        if not compatible_devices and not compatible_grids:
+            ui.label("No compatible devices or grids for this image.").classes("ink-small").style("margin-top: 12px;")
+        else:
+            if compatible_devices:
+                ui.label("Devices").classes("ink-eyebrow").style("margin-top: 14px;")
+                dev_grid = (
+                    ui.element("div")
+                    .classes("grid w-full gap-2")
+                    .style("grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));")
+                )
+                with dev_grid:
+                    for device in compatible_devices:
+                        _render_device_target(api, dialog, image_uuid, device)
+
+            if compatible_grids:
+                ui.label("Grids").classes("ink-eyebrow").style("margin-top: 14px;")
+                grid_grid = (
+                    ui.element("div")
+                    .classes("grid w-full gap-2")
+                    .style("grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));")
+                )
+                with grid_grid:
+                    for grid in compatible_grids:
+                        _render_grid_target(api, dialog, image_uuid, grid)
+
+        with ui.row().classes("w-full justify-end gap-2 mt-3"):
+            ui.button("Close", on_click=dialog.close).props("flat")
+
+    dialog.open()
+
+
+def _render_device_target(api: Any, dialog: ui.dialog, image_uuid: UUID, device: dict[str, Any]) -> None:
+    device_id = device["device_id"]
+    is_online = bool(device.get("is_online"))
+
+    async def send() -> None:
+        try:
+            await api.display_image(device_id, image_uuid)
+        except DeviceNotConnectedError:
+            ui.notify(f"{device_id} is offline — command dropped", type="warning")
+            return
+        except ApiError as exc:
+            ui.notify(f"Send failed: {exc.detail or exc}", type="negative")
+            return
+        ui.notify(f"Sent to {device_id}", type="positive")
+        dialog.close()
+
+    card = (
+        ui.element("div")
+        .classes("ink-device-card")
+        .style("padding: 12px; cursor: pointer;" if is_online else "padding: 12px; opacity: 0.55;")
+    )
+    if is_online:
+        card.on("click", lambda _e: send())
+    with card, ui.column().classes("gap-1"):
+        with ui.row().classes("items-center justify-between gap-2"):
+            ui.label(device_id).classes("text-sm").style("font-weight: 500;")
+            badge("Online" if is_online else "Offline", tone="ok" if is_online else "muted")
+        ui.label(device.get("room") or "—").classes("ink-small")
+
+
+def _render_grid_target(api: Any, dialog: ui.dialog, image_uuid: UUID, grid: dict[str, Any]) -> None:
+    grid_uuid = UUID(grid["id"])
+    member_count = len(grid.get("devices") or [])
+
+    async def send() -> None:
+        try:
+            await api.display_grid_image(grid_uuid, image_uuid)
+        except ApiError as exc:
+            ui.notify(f"Send failed: {exc.detail or exc}", type="negative")
+            return
+        ui.notify(f"Sent to grid {grid['name']}", type="positive")
+        dialog.close()
+
+    with (
+        ui.element("div")
+        .classes("ink-device-card")
+        .style("padding: 12px; cursor: pointer;")
+        .on("click", lambda _e: send()),
+        ui.column().classes("gap-1"),
+    ):
+        ui.label(grid["name"]).classes("text-sm").style("font-weight: 500;")
+        ui.label(f"{grid['width_cm']:.0f}x{grid['height_cm']:.0f} cm · {member_count} device(s)").classes("ink-small")
 
 
 def _render_metadata(image: dict[str, Any]) -> None:

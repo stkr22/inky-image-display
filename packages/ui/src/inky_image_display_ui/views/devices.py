@@ -16,23 +16,14 @@ from inky_image_display_ui.formatting import (
     split_hours_minutes,
 )
 from inky_image_display_ui.session import require_api_client
-from inky_image_display_ui.views._layout import frame
 from inky_image_display_ui.views._ui import badge
 from inky_image_display_ui.views._ui import tile as bento_tile
 
 logger = logging.getLogger(__name__)
 
 
-def register() -> None:
-    """Register the devices route."""
-
-    @ui.page("/devices")
-    async def devices_page() -> None:
-        with frame("/devices"):
-            await _render()
-
-
-async def _render() -> None:
+async def render_section() -> None:
+    """Render the Devices section inside the unified Display page."""
     api = require_api_client()
 
     with ui.row().classes("w-full items-end justify-between"):
@@ -106,21 +97,6 @@ async def _render_device(  # noqa: PLR0915
         ui.notify(f"{device_id} cleared", type="positive")
         await on_changed()
 
-    async def do_display(image_id: UUID) -> None:
-        try:
-            await api.display_image(device_id, image_id)
-        except DeviceNotConnectedError:
-            ui.notify(f"{device_id} is offline — command dropped", type="warning")
-            return
-        except ApiError as exc:
-            ui.notify(f"Display failed: {exc.detail or exc}", type="negative")
-            return
-        ui.notify(f"Sent image to {device_id}", type="positive")
-        await on_changed()
-
-    async def do_choose() -> None:
-        await _open_image_picker(api, device, on_selected=do_display)
-
     async def do_schedule() -> None:
         await _open_schedule_dialog(api, device, on_changed)
 
@@ -172,12 +148,11 @@ async def _render_device(  # noqa: PLR0915
             .style("border-top: 1px solid var(--ink-border); padding-top: 14px;")
         ):
             next_btn = ui.button("Next", icon="skip_next", on_click=do_next).props("unelevated color=primary")
-            choose_btn = ui.button("Choose image", icon="image_search", on_click=do_choose).props("flat")
             # Schedule editing is independent of online state — operators
             # often want to dial cadence on a device that's currently offline.
             ui.button("Schedule", icon="schedule", on_click=do_schedule).props("flat")
             clear_btn = ui.button("Clear", icon="clear", on_click=do_clear).props("flat color=negative")
-            for btn in (next_btn, choose_btn, clear_btn):
+            for btn in (next_btn, clear_btn):
                 btn.set_enabled(is_online)
 
 
@@ -223,7 +198,7 @@ async def _render_mini_device(api: Any, device: dict[str, Any]) -> None:
         except ApiError:
             current_image = None
 
-    with ui.link(target="/devices").classes("ink-device-card"):
+    with ui.link(target="/displays").classes("ink-device-card"):
         if current_image:
             ui.image(f"/media/{current_image['storage_path']}").classes("ink-device-image").props("loading=lazy")
         else:
@@ -240,60 +215,6 @@ async def _render_mini_device(api: Any, device: dict[str, Any]) -> None:
             ui.label(device.get("room") or "—").classes("ink-small").style(
                 "white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"
             )
-
-
-async def _open_image_picker(api: Any, device: dict[str, Any], *, on_selected: Any) -> None:
-    is_portrait = device["display_orientation"] == "portrait"
-    try:
-        profiles = await api.list_device_profiles()
-    except ApiError as exc:
-        ui.notify(f"Failed to load device profiles: {exc.detail or exc}", type="negative")
-        return
-    profile = next((p for p in profiles if p["id"] == device.get("device_profile_id")), None)
-    if profile is None:
-        ui.notify("Device profile not found", type="negative")
-        return
-    if is_portrait:
-        target_w, target_h = profile["height"], profile["width"]
-    else:
-        target_w, target_h = profile["width"], profile["height"]
-    try:
-        images = await api.list_images(is_portrait=is_portrait, limit=100)
-    except ApiError as exc:
-        ui.notify(f"Failed to list images: {exc.detail or exc}", type="negative")
-        return
-    matches = [
-        img for img in images if img.get("original_width") == target_w and img.get("original_height") == target_h
-    ]
-
-    with ui.dialog() as dialog, ui.card().classes("w-full max-w-3xl").style("padding: 24px;"):
-        with ui.column().classes("gap-0 mb-2"):
-            ui.label("Choose").classes("ink-eyebrow")
-            ui.label(f"Image for {device['device_id']}").classes("ink-h3")
-        if not matches:
-            ui.label("No images match this device's exact dimensions.").classes("ink-small")
-        else:
-            grid = (
-                ui.element("div")
-                .classes("grid w-full gap-2")
-                .style("grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));")
-            )
-            with grid:
-                for image in matches:
-                    image_uuid = UUID(image["id"])
-
-                    async def pick(uuid: UUID = image_uuid) -> None:
-                        dialog.close()
-                        await on_selected(uuid)
-
-                    with ui.element("div").classes("ink-thumb").on("click", lambda _e, p=pick: p()):
-                        ui.image(f"/media/{image['storage_path']}").classes("w-full aspect-square object-cover").props(
-                            "loading=lazy"
-                        )
-        with ui.row().classes("w-full justify-end gap-2 mt-2"):
-            ui.button("Close", on_click=dialog.close).props("flat")
-
-    dialog.open()
 
 
 async def _open_schedule_dialog(api: Any, device: dict[str, Any], on_done: Any) -> None:
