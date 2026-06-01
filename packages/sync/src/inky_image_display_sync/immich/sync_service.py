@@ -269,7 +269,7 @@ class ImmichSyncService:
                     assets = random.sample(assets, job.count)
                     self.logger.info("Randomly picked %d assets from smart search results", len(assets))
             else:
-                assets = await self.immich.search_random(job, count_override=fetch_count)
+                assets = await self._fetch_random_pool(job, fetch_count)
 
             result.fetched = len(assets)
             self.logger.info("Fetched %d assets from Immich", result.fetched)
@@ -535,6 +535,36 @@ class ImmichSyncService:
         if people:
             tags.extend(person.name for person in people if person.name)
         return ",".join(tags) if tags else None
+
+    async def _fetch_random_pool(self, job: SyncJobItem, fetch_count: int) -> list[ImmichAsset]:
+        """Build a candidate pool for a RANDOM job via Immich's /search/random.
+
+        ANY-tag (union) semantics: Immich has no OR-on-tags (multiple tagIds are
+        intersected), so when more than one tag is configured we issue one random
+        query per tag (each carrying album_ids + person_ids + scalar filters +
+        that single tag) and union the results, deduped by asset id. With zero or
+        one tag a single query already samples uniformly across the whole album.
+
+        Note: ``album_ids`` and ``person_ids`` keep Immich's native AND
+        (intersection) semantics — only tags are unioned.
+        """
+        tag_ids = job.tag_ids or []
+
+        if len(tag_ids) <= 1:
+            return await self.immich.search_random(job, count_override=fetch_count)
+
+        seen: dict[str, ImmichAsset] = {}
+        for tag_id in tag_ids:
+            assets = await self.immich.search_random(job, count_override=fetch_count, tag_id_override=tag_id)
+            for asset in assets:
+                seen.setdefault(asset.id, asset)  # dedupe by stable asset id
+
+        pool = list(seen.values())
+        # Each per-tag result is random, but the concatenation groups by tag;
+        # shuffle so downstream truncation to job.count draws fairly across tags.
+        random.shuffle(pool)
+        self.logger.info("Union over %d tags produced %d unique candidates", len(tag_ids), len(pool))
+        return pool
 
     def _filter_assets(
         self,

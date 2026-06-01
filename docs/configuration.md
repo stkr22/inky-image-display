@@ -184,13 +184,23 @@ Sync jobs are stored in the `immich_sync_jobs` table and managed via the API (`/
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `album_ids` | list[str] | Album UUIDs |
-| `person_ids` | list[str] | Person UUIDs |
-| `tag_ids` | list[str] | Tag UUIDs |
+| `album_ids` | list[str] | Album UUIDs — intersection (asset must be in **all** listed albums) |
+| `person_ids` | list[str] | Person UUIDs — intersection (asset must show **all** listed people) |
+| `tag_ids` | list[str] | Tag UUIDs — union (asset matches if it has **any** listed tag) |
 | `is_favorite` | bool | Favorites only |
 | `city`, `state`, `country` | str | Location filters |
 | `taken_after`, `taken_before` | datetime | Date range |
 | `rating` | int | Minimum Immich rating (0–5) |
+
+> **Multi-tag semantics:** Immich's search endpoints intersect multiple `tagIds`
+> (an asset would need *every* tag at once). To match the intuitive "photos from
+> any of these tags", the `RANDOM` strategy issues one query per tag and unions
+> the results (then shuffles). `album_ids` and `person_ids` keep Immich's native
+> intersection behavior. The `RANDOM` strategy uses Immich's `/search/random`
+> endpoint, which orders the whole filtered set randomly — so picks vary across
+> the entire album, not just recent photos. `overfetch_multiplier × count` sizes
+> each query (capped at Immich's maximum of 1000) so client-side orientation/size
+> filters still leave enough candidates.
 
 ### Color and vibrancy scores
 
