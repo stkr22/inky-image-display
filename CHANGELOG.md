@@ -1,5 +1,18 @@
 # Changelog
 
+## [4.7.0](https://github.com/stkr22/inky-image-display/compare/v4.6.0...v4.7.0) (2026-06-01)
+
+
+### Features
+
+* **sync:** support ANY-tag union for RANDOM Immich jobs ([d95f7fa](https://github.com/stkr22/inky-image-display/commit/d95f7fa3081f4167d8e3512fa57e568449f0002e))
+* **sync:** support ANY-tag union for RANDOM Immich jobs ([537647e](https://github.com/stkr22/inky-image-display/commit/537647eec6808fac178e1116e452ca62adf6bd64))
+
+
+### Documentation
+
+* clarify project scope and surface UI/grids in README ([1aba994](https://github.com/stkr22/inky-image-display/commit/1aba994348410b7f4b19d129ec903f362beea079))
+
 ## [4.6.0](https://github.com/stkr22/inky-image-display/compare/v4.5.0...v4.6.0) (2026-05-20)
 
 
