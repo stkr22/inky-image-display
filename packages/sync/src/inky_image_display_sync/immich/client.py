@@ -17,7 +17,13 @@ from inky_image_display_sync.immich.models import (
     RandomSearchResponse,
     SmartSearchResponse,
 )
-from inky_image_display_sync.immich.payloads import RandomSearchPayload, SmartSearchPayload
+from inky_image_display_sync.immich.payloads import (
+    RandomSearchPayload,
+    SmartSearchPayload,
+)
+
+# Immich's /search/random endpoint caps `size` at 1000.
+RANDOM_SEARCH_MAX_SIZE = 1000
 
 
 @runtime_checkable
@@ -120,18 +126,26 @@ class ImmichClient:
         self,
         job: ImmichJobFilter,
         count_override: int | None = None,
+        *,
+        tag_id_override: str | None = None,
     ) -> list[ImmichAsset]:
         """Fetch random assets matching job criteria.
 
+        Immich's /search/random orders the whole filtered set randomly, so a
+        single call yields a uniform random sample across the entire album.
+
         Args:
-            job: Sync job with filter configuration
-            count_override: Override job.count (for overfetching with client-side filters)
+            job: Sync job with filter configuration.
+            count_override: Override job.count (for overfetching with client-side filters).
+            tag_id_override: When set, the payload carries exactly this single
+                tag id instead of ``job.tag_ids`` — used by callers to build
+                ANY-tag (union) semantics across multiple per-tag queries.
 
         Returns:
-            List of matching assets
+            List of matching assets in random order.
 
         """
-        payload = self._build_random_payload(job, count_override)
+        payload = self._build_random_payload(job, count_override, tag_id_override=tag_id_override)
         body = payload.model_dump(by_alias=True, exclude_none=True)
         self.logger.debug("Searching random assets with filters: %s", body)
 
@@ -191,13 +205,20 @@ class ImmichClient:
         self,
         job: ImmichJobFilter,
         count_override: int | None = None,
+        *,
+        tag_id_override: str | None = None,
     ) -> RandomSearchPayload:
-        """Build payload for random search from job config."""
+        """Build payload for random search from job config.
+
+        ``size`` is clamped to Immich's maximum (1000); a high count *
+        overfetch_multiplier would otherwise be rejected by the endpoint.
+        """
+        tag_ids = [tag_id_override] if tag_id_override is not None else job.tag_ids
         return RandomSearchPayload(
-            size=count_override or job.count,
+            size=min(count_override or job.count, RANDOM_SEARCH_MAX_SIZE),
             album_ids=job.album_ids,
             person_ids=job.person_ids,
-            tag_ids=job.tag_ids,
+            tag_ids=tag_ids,
             is_favorite=job.is_favorite,
             city=job.city,
             state=job.state,

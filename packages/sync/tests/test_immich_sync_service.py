@@ -616,3 +616,162 @@ class TestProcessAssetCallsApiForResize:
 
         assert result == ProcessResult.SKIPPED_UNDERSIZED
         service.storage.upload_from_bytes.assert_not_called()  # ty: ignore[unresolved-attribute]
+
+
+def _make_random_job(
+    count: int = 10,
+    overfetch_multiplier: int = 3,
+    tag_ids: list[str] | None = None,
+    strategy: str = "RANDOM",
+    query: str | None = None,
+) -> SyncJobItem:
+    return SyncJobItem(
+        id=uuid4(),
+        name="test-job",
+        is_active=True,
+        target_device_profile_id=uuid4(),
+        orientation=None,
+        strategy=strategy,
+        query=query,
+        count=count,
+        random_pick=False,
+        overfetch_multiplier=overfetch_multiplier,
+        album_ids=None,
+        person_ids=None,
+        tag_ids=tag_ids,
+        is_favorite=None,
+        city=None,
+        state=None,
+        country=None,
+        taken_after=None,
+        taken_before=None,
+        rating=None,
+    )
+
+
+def _make_landscape_asset(asset_id: str) -> ImmichAsset:
+    return ImmichAsset(
+        id=asset_id,
+        type="IMAGE",
+        originalFileName="test.jpg",
+        originalMimeType="image/jpeg",
+        checksum="abc",
+        fileCreatedAt=datetime.now(),
+        width=4000,
+        height=3000,
+    )
+
+
+class TestFetchRandomPool:
+    """``_fetch_random_pool`` builds the candidate pool with ANY-tag union."""
+
+    @pytest.mark.asyncio
+    async def test_no_tags_single_query(self) -> None:
+        service = _make_service()
+        service.immich = AsyncMock()
+        assets = [_make_landscape_asset("a1")]
+        service.immich.search_random.return_value = assets
+
+        result = await service._fetch_random_pool(_make_random_job(tag_ids=None), fetch_count=30)
+
+        assert result == assets
+        service.immich.search_random.assert_awaited_once()
+        assert "tag_id_override" not in service.immich.search_random.call_args.kwargs
+
+    @pytest.mark.asyncio
+    async def test_single_tag_single_query(self) -> None:
+        service = _make_service()
+        service.immich = AsyncMock()
+        service.immich.search_random.return_value = [_make_landscape_asset("a1")]
+
+        await service._fetch_random_pool(_make_random_job(tag_ids=["t1"]), fetch_count=30)
+
+        service.immich.search_random.assert_awaited_once()
+        assert "tag_id_override" not in service.immich.search_random.call_args.kwargs
+
+    @pytest.mark.asyncio
+    async def test_multi_tag_union_dedupes(self) -> None:
+        service = _make_service()
+        service.immich = AsyncMock()
+        a1, a2, a3 = (_make_landscape_asset("a1"), _make_landscape_asset("a2"), _make_landscape_asset("a3"))
+        # a2 appears under both tags and must be deduped.
+        service.immich.search_random.side_effect = [[a1, a2], [a2, a3]]
+
+        result = await service._fetch_random_pool(_make_random_job(tag_ids=["t1", "t2"]), fetch_count=30)
+
+        # Set membership — order is shuffled, so never assert list order.
+        assert {a.id for a in result} == {"a1", "a2", "a3"}
+        assert service.immich.search_random.await_count == 2
+        overrides = {c.kwargs["tag_id_override"] for c in service.immich.search_random.call_args_list}
+        assert overrides == {"t1", "t2"}
+
+    @pytest.mark.asyncio
+    async def test_multi_tag_shuffled_single_tag_not(self) -> None:
+        service = _make_service()
+        service.immich = AsyncMock()
+        service.immich.search_random.return_value = [_make_landscape_asset("a1")]
+
+        with patch("inky_image_display_sync.immich.sync_service.random.shuffle") as shuffle_mock:
+            await service._fetch_random_pool(_make_random_job(tag_ids=["t1"]), fetch_count=30)
+            shuffle_mock.assert_not_called()  # single tag: results already random
+
+            service.immich.search_random.side_effect = [[_make_landscape_asset("a1")], [_make_landscape_asset("a2")]]
+            await service._fetch_random_pool(_make_random_job(tag_ids=["t1", "t2"]), fetch_count=30)
+            shuffle_mock.assert_called_once()  # multi-tag union mixed before truncation
+
+
+class TestSyncJobRandomFlow:
+    """RANDOM jobs fetch a pool then filter down to job.count (no extra sampling)."""
+
+    def _reqs(self) -> DeviceRequirements:
+        return DeviceRequirements(width=1920, height=1080, orientation="landscape")
+
+    @pytest.mark.asyncio
+    async def test_multi_tag_job_filters_to_count(self) -> None:
+        service = _make_service()
+        pool = [_make_landscape_asset(f"a{i}") for i in range(20)]
+
+        with (
+            patch.object(service, "_get_device_requirements", new_callable=AsyncMock, return_value=self._reqs()),
+            patch.object(service, "_fetch_random_pool", new_callable=AsyncMock, return_value=pool),
+            patch.object(
+                service, "_process_asset", new_callable=AsyncMock, return_value=ProcessResult.DOWNLOADED
+            ) as process_mock,
+        ):
+            result = await service._sync_job(_make_random_job(count=5, tag_ids=["t1", "t2"]))
+
+        assert result.filtered == 5
+        assert process_mock.await_count == 5
+
+    @pytest.mark.asyncio
+    async def test_pool_smaller_than_count(self) -> None:
+        service = _make_service()
+        pool = [_make_landscape_asset(f"a{i}") for i in range(3)]
+
+        with (
+            patch.object(service, "_get_device_requirements", new_callable=AsyncMock, return_value=self._reqs()),
+            patch.object(service, "_fetch_random_pool", new_callable=AsyncMock, return_value=pool),
+            patch.object(
+                service, "_process_asset", new_callable=AsyncMock, return_value=ProcessResult.DOWNLOADED
+            ) as process_mock,
+        ):
+            result = await service._sync_job(_make_random_job(count=5))
+
+        assert result.filtered == 3
+        assert process_mock.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_smart_path_does_not_call_fetch_random_pool(self) -> None:
+        service = _make_service()
+        service.immich = AsyncMock()
+        service.immich.search_smart.return_value = [_make_landscape_asset(f"a{i}") for i in range(5)]
+
+        with (
+            patch.object(service, "_get_device_requirements", new_callable=AsyncMock, return_value=self._reqs()),
+            patch.object(service, "_fetch_random_pool", new_callable=AsyncMock) as fetch_pool_mock,
+            patch.object(service, "_process_asset", new_callable=AsyncMock, return_value=ProcessResult.DOWNLOADED),
+        ):
+            await service._sync_job(_make_random_job(count=10, strategy="SMART", query="beach"))
+
+        fetch_pool_mock.assert_not_called()
+        service.immich.search_smart.assert_awaited_once()
