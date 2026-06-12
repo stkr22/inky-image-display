@@ -1,5 +1,16 @@
 # Changelog
 
+## [4.0.0](https://github.com/stkr22/inky-image-display/compare/shared-v3.3.0...shared-v4.0.0) (2026-06-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* replace NiceGUI UI with React frontend served by the API
+
+### Features
+
+* replace NiceGUI UI with React frontend served by the API ([701586a](https://github.com/stkr22/inky-image-display/commit/701586a95621eb09445ddae757f00d69ad0b3ad5))
+
 ## [3.3.0](https://github.com/stkr22/inky-image-display/compare/shared-v3.2.1...shared-v3.3.0) (2026-05-19)
 
 
