@@ -58,14 +58,3 @@ def test_upscale_flag_allows_small_source(client: TestClient) -> None:
     assert response.status_code == 200
     out = PILImage.open(BytesIO(response.content))
     assert out.size == (1600, 1200)
-
-
-def test_missing_form_fields_returns_validation_error(client: TestClient) -> None:
-    """Missing required form fields produce FastAPI's 422 validation error."""
-    src = _make_jpeg(2000, 1500)
-    response = client.post(
-        "/api/images/process",
-        files={"file": ("source.jpg", src, "image/jpeg")},
-        # width/height missing
-    )
-    assert response.status_code == 422

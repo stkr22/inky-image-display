@@ -26,16 +26,11 @@ def test_render_substitutes_subject_and_orders_blocks() -> None:
         assert needle in out
 
 
-def test_render_appends_portrait_orientation_hint() -> None:
-    out = _prompt(is_portrait=True).render("X")
-    assert out.endswith("Portrait orientation.")
+def test_orientation_drives_hint_and_aspect_ratio() -> None:
+    portrait = _prompt(is_portrait=True)
+    assert portrait.render("X").endswith("Portrait orientation.")
+    assert portrait.aspect_ratio == "3:4"
 
-
-def test_render_appends_landscape_orientation_hint() -> None:
-    out = _prompt(is_portrait=False).render("X")
-    assert out.endswith("Landscape orientation.")
-
-
-def test_aspect_ratio_matches_orientation() -> None:
-    assert _prompt(is_portrait=True).aspect_ratio == "3:4"
-    assert _prompt(is_portrait=False).aspect_ratio == "4:3"
+    landscape = _prompt(is_portrait=False)
+    assert landscape.render("X").endswith("Landscape orientation.")
+    assert landscape.aspect_ratio == "4:3"

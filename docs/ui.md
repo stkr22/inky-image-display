@@ -1,6 +1,9 @@
-# UI (`inky-image-display-ui`)
+# Web frontend (`packages/web`)
 
-NiceGUI-based web UI served by a FastAPI app. Lets an operator browse and upload images, command displays, manage sync jobs (Immich + Gemini), and trigger on-demand AI image generation from a phone or laptop.
+React single-page app (Vite + TypeScript + React Router + TanStack Query) with a
+bento-style design system, served as static files by the API service. It
+replaced the earlier NiceGUI UI service; the `/media` image proxy that service
+hosted now lives in the API (`packages/api/.../routes/media.py`).
 
 ## Sections
 
@@ -8,63 +11,43 @@ The top nav has five sections:
 
 | Path | Purpose |
 |------|---------|
-| `/images` | Library: browse, upload, edit, delete. Filter by source, orientation, or grid pool (Solo / per-grid) |
-| `/devices` | Online wall + per-device controls (push next, pick image, clear) |
-| `/grids` | Group devices into a shared physical canvas (cm) so they jointly show slices of one image. See [grids.md](grids.md) |
-| `/jobs` | Tabbed list of Immich and Gemini sync jobs. The "New job" button follows the active tab and routes to `/sync-jobs/new` or `/gemini-jobs/new`; the per-source forms still live there for editing existing jobs |
-| `/genai` | On-demand generation form on top, prompt library tucked behind an "Advanced" expansion below |
+| `/images` | Library: browse, search, upload, edit, delete. Filter by source, orientation, or grid pool; multi-select mode for bulk delete / bulk grid assignment |
+| `/displays` | Upcoming refresh schedule, online device wall with per-device controls (next, schedule, clear), and grid management |
+| `/grids/{id}` | Grid detail: proportional canvas preview of how an image is cover-cropped onto each placed device, placement editing, per-grid image pool with resolution traffic-light badges |
+| `/jobs` | Tabbed list of Immich and Gemini sync jobs (`?tab=gemini`). Create/edit forms live at `/sync-jobs/*` and `/gemini-jobs/*`. Immich filters use name-based pickers backed by the API's `/api/immich/*` browse proxy when configured |
+| `/genai` | On-demand generation form, a "Recent generations" status list (backed by `GET /api/genai/tasks`), and the prompt block/preset library behind an Advanced expansion |
+| `/settings` | Global default refresh interval |
 
-The Grids page lists wall layouts; clicking a card opens the detail page with a proportional canvas that previews how a selected image will be cover-cropped onto each device. Numeric midpoint inputs add/move devices; a source-image thumbnail dims the cropped strips so the operator can see which content gets thrown away. A traffic-light badge (sharp / soft / upscaled) flags whether the image meets the resolution floor set by the densest member device. The same quality hint also appears live in the upload form when a target grid is picked.
-
-The GenAI page is the full AI surface: a Subject textarea (capped at 200 characters) plus target device-profile, preset, orientation, and "push immediately" toggles for one-off generation. The profile dropdown defaults to the row marked `is_default` in `device_profiles`; the resulting image lands on a random online device whose profile + orientation match (no device picker — that decision happens server-side at dispatch time). The collapsed Advanced section lets operators add or edit prompt blocks (style / palette / legibility / composition / background) and prompt presets — including the Gemini model name each preset binds to.
+Legacy deep links (`/generate`, `/prompts`, bare `/sync-jobs`, `/gemini-jobs`)
+redirect to their new homes. A dark mode toggle in the nav persists per browser
+and defaults to the OS preference.
 
 ## Architecture
 
 ```
-Browser ──HTTP──► UI container ──HTTP──► API container
-                       │
-                       └──S3──► MinIO / Garage (reader credentials)
+Browser ──HTTP──► API container ──S3──► MinIO / Garage (writer credentials)
+   ▲                  │
+   └── static React   └── MQTT ──► devices
+       bundle + /media proxy
 ```
 
-The UI container hosts three pieces of surface area on one uvicorn process:
+- The browser talks **same-origin only**: `/api/*` for data, `/media/*` for
+  images, everything else falls back to the SPA's `index.html`.
+- `/media/{object_key}` streams originals with ETag/Cache-Control;
+  `?w=240|480|960` serves a downscaled JPEG generated lazily on first request
+  and cached in the bucket under `thumbs/w{width}/…`. Gallery and device-card
+  views request `?w=480`; detail views load originals.
+- No authentication — trusted LAN only (same model as before).
 
-| Route | Purpose |
-|-------|---------|
-| `/` | NiceGUI UI (mounted ASGI app) |
-| `/health` | Liveness probe |
-| `/media/{object_key:path}` | Streams image bytes from S3 using reader credentials |
-| `/internal/upload` | Accepts multipart uploads and forwards to the API |
-
-Plain routes are registered before the NiceGUI mount so FastAPI matches them first.
-
-Images are proxied through the UI rather than fetched directly by the browser — avoids configuring CORS on S3 and keeps reader credentials server-side.
-
-## Security
-
-**No authentication.** Assume trusted LAN only. Do not expose the UI to the public internet without fronting it with a reverse proxy that enforces auth.
-
-## Local development
+## Development
 
 ```bash
-export UI_API_BASE_URL=http://localhost:8000
-export UI_S3_ENDPOINT=localhost:9000
-export UI_S3_READER_ACCESS_KEY=reader
-export UI_S3_READER_SECRET_KEY=readerpass
-uv run --package inky-image-display-ui inky-image-display-ui
+cd packages/web
+npm install
+npm run dev        # Vite dev server on :5173, proxying /api and /media to localhost:8000
+npm run build      # typecheck + production bundle into dist/
 ```
 
-Then open <http://localhost:8001/>.
-
-See [configuration.md](configuration.md#ui-inky-image-display-ui) for the full environment variable reference.
-
-## Container
-
-```bash
-docker buildx build -f packages/ui/Containerfile --load -t ui:dev .
-docker run --rm -p 8001:8001 \
-  -e UI_API_BASE_URL=http://api:8000 \
-  -e UI_S3_ENDPOINT=minio:9000 \
-  -e UI_S3_READER_ACCESS_KEY=reader \
-  -e UI_S3_READER_SECRET_KEY=readerpass \
-  ui:dev
-```
+Point a locally running API at the build output with
+`API_WEB_DIST_PATH=$(pwd)/packages/web/dist`. The API container image builds
+and bundles the frontend automatically.

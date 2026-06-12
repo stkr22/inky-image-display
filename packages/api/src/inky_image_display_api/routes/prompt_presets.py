@@ -1,11 +1,11 @@
 """REST endpoints for prompt preset management."""
 
 import logging
-from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 from inky_image_display_shared.models import PromptPreset
+from inky_image_display_shared.time import utcnow
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -60,7 +60,7 @@ async def update_prompt_preset(request: Request, preset_id: UUID, body: PromptPr
             raise HTTPException(status_code=404, detail="Prompt preset not found")
         for key, value in body.model_dump(exclude_unset=True).items():
             setattr(preset, key, value)
-        preset.updated_at = datetime.now()
+        preset.updated_at = utcnow()
         session.add(preset)
         await session.commit()
         await session.refresh(preset)

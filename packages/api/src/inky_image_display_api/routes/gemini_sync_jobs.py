@@ -1,11 +1,11 @@
 """REST endpoints for Gemini batch sync job management."""
 
 import logging
-from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 from inky_image_display_shared.models import GeminiSyncJob
+from inky_image_display_shared.time import utcnow
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -63,7 +63,7 @@ async def update_gemini_sync_job(request: Request, job_id: UUID, body: GeminiSyn
             raise HTTPException(status_code=404, detail="Gemini sync job not found")
         for key, value in body.model_dump(exclude_unset=True).items():
             setattr(job, key, value)
-        job.updated_at = datetime.now()
+        job.updated_at = utcnow()
         session.add(job)
         await session.commit()
         await session.refresh(job)

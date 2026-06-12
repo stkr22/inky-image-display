@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 import aiomqtt
@@ -28,6 +27,7 @@ from inky_image_display_shared.schemas import (
     DeviceStatus,
     DisplayCommand,
 )
+from inky_image_display_shared.time import utcnow
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -84,7 +84,7 @@ async def upsert_device(
 
         result = await session.exec(select(Device).where(Device.device_id == device_id))
         device = result.first()
-        now = datetime.now()
+        now = utcnow()
 
         if device is None:
             device = Device(
@@ -120,7 +120,7 @@ async def _touch_last_seen(engine: AsyncEngine, device_id: str) -> None:
             result = await session.exec(select(Device).where(Device.device_id == device_id))
             device = result.first()
             if device is not None:
-                device.last_seen = datetime.now()
+                device.last_seen = utcnow()
                 device.is_online = True
                 session.add(device)
                 await session.commit()
@@ -137,7 +137,7 @@ async def _set_online_flag(engine: AsyncEngine, device_id: str, *, online: bool)
             if device is not None:
                 device.is_online = online
                 if online:
-                    device.last_seen = datetime.now()
+                    device.last_seen = utcnow()
                 session.add(device)
                 await session.commit()
     except Exception:

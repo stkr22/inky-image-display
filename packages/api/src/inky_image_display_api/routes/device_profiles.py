@@ -6,11 +6,11 @@ as the global default (used by genai when no override is supplied).
 """
 
 import logging
-from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 from inky_image_display_shared.models import DeviceProfile
+from inky_image_display_shared.time import utcnow
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -49,7 +49,7 @@ async def update_device_profile(request: Request, profile_id: UUID, body: Device
             raise HTTPException(status_code=404, detail="Device profile not found")
         for key, value in body.model_dump(exclude_unset=True).items():
             setattr(profile, key, value)
-        profile.updated_at = datetime.now()
+        profile.updated_at = utcnow()
         session.add(profile)
         await session.commit()
         await session.refresh(profile)
@@ -71,7 +71,7 @@ async def set_default_device_profile(request: Request, profile_id: UUID) -> Devi
                 col(DeviceProfile.id) != profile_id,
             )
         )
-        now = datetime.now()
+        now = utcnow()
         for other in others.all():
             other.is_default = False
             other.updated_at = now

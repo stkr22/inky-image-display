@@ -36,6 +36,15 @@ class Settings(BaseSettings):
     s3_reader_secret_key: str
     default_display_duration: int = 3600
 
+    # Browser-facing media proxy (/media/*): Cache-Control max-age for
+    # originals and thumbnails.
+    media_cache_max_age: int = 86400
+
+    # Directory holding the built React frontend (packages/web/dist). When
+    # set, the API serves it with an SPA fallback; when unset the API is
+    # headless and the frontend must be hosted elsewhere.
+    web_dist_path: str | None = None
+
     # MQTT broker — the API's own connection to the broker (server-side).
     # Typically an internal/cluster address with no TLS or websockets.
     mqtt_host: str
@@ -63,3 +72,10 @@ class Settings(BaseSettings):
     # Gemini AI image generation. Required only when the /api/images/generate
     # endpoint is exercised — leaving it blank disables on-demand generation.
     gemini_api_key: SecretStr | None = None
+
+    # Immich browsing proxy (/api/immich/*). Optional: when unset, the UI
+    # falls back to free-text ID inputs for sync-job filters. Use the same
+    # values the sync service is configured with.
+    immich_base_url: str | None = None
+    immich_api_key: SecretStr | None = None
+    immich_timeout_seconds: float = 20.0

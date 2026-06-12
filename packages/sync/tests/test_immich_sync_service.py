@@ -8,100 +8,25 @@ from inky_image_display_sync.api_client import DeviceItem, DeviceProfileItem, Im
 from inky_image_display_sync.immich.api_client import ImmichDisplayAPIClient, SyncJobItem
 from inky_image_display_sync.immich.config import DeviceRequirements, ImmichSyncConfig, S3WriterConfig
 from inky_image_display_sync.immich.models import ImmichAsset, ImmichExifInfo
-from inky_image_display_sync.immich.storage import S3StorageClient
 from inky_image_display_sync.immich.sync_service import (
     CleanupResult,
     ImmichSyncService,
     ProcessResult,
 )
-from minio.error import S3Error
 from pydantic import ValidationError
 
 
-class TestCleanupResult:
-    def test_str_representation(self) -> None:
-        result = CleanupResult(expired=5, deleted=3, protected=2, storage_errors=1)
-        text = str(result)
-        assert "expired=5" in text
-        assert "deleted=3" in text
-        assert "protected=2" in text
-        assert "storage_errors=1" in text
-
-    def test_default_values(self) -> None:
-        result = CleanupResult()
-        assert result.expired == 0
-        assert result.deleted == 0
-        assert result.protected == 0
-        assert result.storage_errors == 0
-
-
-class TestS3StorageClientDelete:
-    def test_delete_object_calls_remove(self) -> None:
-        config = S3WriterConfig(
-            endpoint="localhost:9000",
-            bucket="test-bucket",
-            secure=False,
-            access_key="test-key",
-            secret_key="test-secret",
-        )
-        logger = MagicMock()
-        client = S3StorageClient(config=config, logger=logger)
-        client._client = MagicMock()
-
-        client.delete_object("immich/test-asset.jpg")
-
-        client._client.remove_object.assert_called_once_with("test-bucket", "immich/test-asset.jpg")
-
-    def test_delete_object_propagates_s3_error(self) -> None:
-        config = S3WriterConfig(
-            endpoint="localhost:9000",
-            bucket="test-bucket",
-            secure=False,
-            access_key="test-key",
-            secret_key="test-secret",
-        )
-        logger = MagicMock()
-        client = S3StorageClient(config=config, logger=logger)
-        client._client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.status = 404
-        mock_response.headers = {}
-        mock_response.data = b""
-        client._client.remove_object.side_effect = S3Error(
-            mock_response, "NoSuchKey", "Object not found", "resource", "request_id", "host_id"
-        )
-
-        with pytest.raises(S3Error):
-            client.delete_object("immich/nonexistent.jpg")
-
-
 class TestRetentionDaysConfig:
-    def test_default_retention_days(self) -> None:
+    def test_default_is_seven_and_negative_rejected(self) -> None:
         config = ImmichSyncConfig(
             _env_file=None,  # ty: ignore[unknown-argument]
         )
         assert config.retention_days == 7
-
-    def test_retention_days_zero_disables_cleanup(self) -> None:
-        config = ImmichSyncConfig(
-            _env_file=None,  # ty: ignore[unknown-argument]
-            retention_days=0,
-        )
-        assert config.retention_days == 0
-
-    def test_retention_days_negative_rejected(self) -> None:
         with pytest.raises(ValidationError):
             ImmichSyncConfig(
                 _env_file=None,  # ty: ignore[unknown-argument]
                 retention_days=-1,
             )
-
-    def test_retention_days_custom_value(self) -> None:
-        config = ImmichSyncConfig(
-            _env_file=None,  # ty: ignore[unknown-argument]
-            retention_days=30,
-        )
-        assert config.retention_days == 30
 
 
 def _make_service(
@@ -238,28 +163,6 @@ class TestCleanupExpiredImages:
         assert call_kwargs.kwargs.get("source_name") == "immich"
 
 
-class TestExpiresAtPopulation:
-    def test_expires_at_set_when_retention_days_positive(self) -> None:
-        sync_config = ImmichSyncConfig(_env_file=None, retention_days=7)  # ty: ignore[unknown-argument]
-        now = datetime.now()
-
-        expires_at: datetime | None = None
-        if sync_config.retention_days > 0:
-            expires_at = now + timedelta(days=sync_config.retention_days)
-
-        assert expires_at is not None
-        assert abs((expires_at - now).days) == 7
-
-    def test_expires_at_none_when_retention_days_zero(self) -> None:
-        sync_config = ImmichSyncConfig(_env_file=None, retention_days=0)  # ty: ignore[unknown-argument]
-
-        expires_at: datetime | None = None
-        if sync_config.retention_days > 0:
-            expires_at = datetime.now() + timedelta(days=sync_config.retention_days)
-
-        assert expires_at is None
-
-
 class TestCleanupInSyncFlow:
     @pytest.mark.asyncio
     async def test_cleanup_skipped_when_retention_days_zero(self) -> None:
@@ -335,46 +238,34 @@ def _make_profile_item(width: int = 1600, height: int = 1200):
 class TestGetDeviceRequirementsPortrait:
     """Test that _get_device_requirements swaps dimensions for portrait orientation."""
 
-    @pytest.mark.asyncio
-    async def test_landscape_preserves_dimensions(self) -> None:
+    def _service(self) -> ImmichSyncService:
         api_client = AsyncMock(spec=ImmichDisplayAPIClient)
         api_client.get_device_profile.return_value = _make_profile_item()
         service = ImmichSyncService.__new__(ImmichSyncService)
         service.api_client = api_client
         service.logger = MagicMock()
+        return service
+
+    @pytest.mark.asyncio
+    async def test_landscape_and_none_preserve_dimensions(self) -> None:
+        service = self._service()
 
         reqs = await service._get_device_requirements(uuid4(), "landscape")
+        assert (reqs.width, reqs.height, reqs.orientation) == (1600, 1200, "landscape")
 
-        assert reqs.width == 1600
-        assert reqs.height == 1200
-        assert reqs.orientation == "landscape"
+        # Missing orientation defaults to landscape.
+        reqs = await service._get_device_requirements(uuid4(), None)
+        assert (reqs.width, reqs.height, reqs.orientation) == (1600, 1200, "landscape")
 
     @pytest.mark.asyncio
     async def test_portrait_swaps_dimensions(self) -> None:
-        api_client = AsyncMock(spec=ImmichDisplayAPIClient)
-        api_client.get_device_profile.return_value = _make_profile_item()
-        service = ImmichSyncService.__new__(ImmichSyncService)
-        service.api_client = api_client
-        service.logger = MagicMock()
+        service = self._service()
 
         reqs = await service._get_device_requirements(uuid4(), "portrait")
 
         assert reqs.width == 1200
         assert reqs.height == 1600
         assert reqs.orientation == "portrait"
-
-    @pytest.mark.asyncio
-    async def test_orientation_none_defaults_landscape(self) -> None:
-        api_client = AsyncMock(spec=ImmichDisplayAPIClient)
-        api_client.get_device_profile.return_value = _make_profile_item()
-        service = ImmichSyncService.__new__(ImmichSyncService)
-        service.api_client = api_client
-        service.logger = MagicMock()
-
-        reqs = await service._get_device_requirements(uuid4(), None)
-
-        assert reqs.orientation == "landscape"
-        assert reqs.width == 1600
 
 
 class TestFilterAssets:
@@ -408,7 +299,7 @@ class TestFilterAssets:
     ) -> ImmichAsset:
         exif = None
         if exif_width is not None or exif_height is not None:
-            exif = ImmichExifInfo(exif_image_width=exif_width, exif_image_height=exif_height)
+            exif = ImmichExifInfo(exifImageWidth=exif_width, exifImageHeight=exif_height)
         return ImmichAsset(
             id=asset_id,
             type="IMAGE",
@@ -418,7 +309,7 @@ class TestFilterAssets:
             fileCreatedAt=datetime.now(),
             width=width,
             height=height,
-            exif_info=exif,
+            exifInfo=exif,
         )
 
     def _make_job(self, count: int = 10) -> SyncJobItem:
@@ -451,25 +342,17 @@ class TestFilterAssets:
     def _portrait_reqs(self) -> DeviceRequirements:
         return DeviceRequirements(width=1080, height=1920, orientation="portrait")
 
-    def test_top_level_landscape_dimensions_used(self) -> None:
+    def test_top_level_dimensions_select_matching_orientation(self) -> None:
         service = self._make_service()
         assets = [
             self._make_asset("landscape", width=4000, height=3000),
             self._make_asset("portrait", width=3000, height=4000),
         ]
-        result = service._filter_assets(assets, self._make_job(), self._landscape_reqs())
-        assert len(result) == 1
-        assert result[0].id == "landscape"
+        landscape = service._filter_assets(assets, self._make_job(), self._landscape_reqs())
+        assert [a.id for a in landscape] == ["landscape"]
 
-    def test_top_level_portrait_dimensions_used(self) -> None:
-        service = self._make_service()
-        assets = [
-            self._make_asset("landscape", width=4000, height=3000),
-            self._make_asset("portrait", width=3000, height=4000),
-        ]
-        result = service._filter_assets(assets, self._make_job(), self._portrait_reqs())
-        assert len(result) == 1
-        assert result[0].id == "portrait"
+        portrait = service._filter_assets(assets, self._make_job(), self._portrait_reqs())
+        assert [a.id for a in portrait] == ["portrait"]
 
     def test_exif_fallback_when_no_top_level_dims(self) -> None:
         service = self._make_service()

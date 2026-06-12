@@ -10,10 +10,10 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
 from inky_image_display_shared.models import Image
 from PIL import Image as PILImage
-from sqlmodel import col, select
+from sqlmodel import col, func, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from inky_image_display_api.schemas import ImageCreate, ImageRegister, ImageResponse, ImageUpdate
+from inky_image_display_api.schemas import ImageCreate, ImageRegister, ImageResponse, ImageStatsResponse, ImageUpdate
 
 router = APIRouter(prefix="/api/images", tags=["images"])
 logger = logging.getLogger(__name__)
@@ -30,6 +30,7 @@ async def list_images(
     expires_before: datetime | None = None,
     target_grid_id: UUID | None = None,
     solo_only: bool = False,
+    search: str | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[Image]:
@@ -45,6 +46,7 @@ async def list_images(
         expires_before: Return only images expiring before this datetime.
         target_grid_id: Filter to images assigned to a specific grid's pool.
         solo_only: Return only images without a ``target_grid_id`` (the solo pool).
+        search: Case-insensitive substring match on title, description or tags.
         limit: Max results to return.
         offset: Number of results to skip.
 
@@ -70,9 +72,34 @@ async def list_images(
             query = query.where(col(Image.target_grid_id) == target_grid_id)
         if solo_only:
             query = query.where(col(Image.target_grid_id).is_(None))
+        if search:
+            pattern = f"%{search}%"
+            query = query.where(
+                or_(
+                    col(Image.title).ilike(pattern),
+                    col(Image.description).ilike(pattern),
+                    col(Image.tags).ilike(pattern),
+                )
+            )
         query = query.offset(offset).limit(limit)
         result = await session.exec(query)
         return list(result.all())
+
+
+# /stats must come before /{image_id} to avoid the path-parameter route
+# swallowing it as an (invalid) UUID.
+@router.get("/stats")
+async def image_stats(request: Request) -> ImageStatsResponse:
+    """Aggregate image counts for dashboard tiles.
+
+    A single COUNT/GROUP BY replaces the previous client-side pattern of
+    listing up to 500 full rows just to derive totals (which also silently
+    under-counted larger libraries).
+    """
+    async with AsyncSession(request.app.state.engine) as session:
+        result = await session.exec(select(Image.source_name, func.count()).group_by(col(Image.source_name)))
+        by_source = dict(result.all())
+    return ImageStatsResponse(total=sum(by_source.values()), by_source=by_source)
 
 
 # /register must come before /{image_id} to avoid path conflict

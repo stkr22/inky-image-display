@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
     from inky_image_display_api.config import Settings
     from inky_image_display_api.mqtt import MQTTService
+    from inky_image_display_api.services.generation_tasks import GenerationTaskRegistry
     from inky_image_display_api.services.s3_service import S3Service
 
 logger = logging.getLogger(__name__)
@@ -92,7 +93,7 @@ async def _resolve_profile(session: AsyncSession, profile_id: UUID | None) -> De
     return result.first()
 
 
-async def generate_and_publish(  # noqa: PLR0913
+async def generate_and_publish(  # noqa: PLR0912, PLR0913, PLR0915
     engine: AsyncEngine,
     settings: Settings,
     s3_service: S3Service,
@@ -104,23 +105,32 @@ async def generate_and_publish(  # noqa: PLR0913
     preset_id: UUID | None,
     orientation: str,
     push_immediately: bool,
+    tasks: GenerationTaskRegistry | None = None,
 ) -> None:
     """Run a single on-demand generation request end to end.
 
     Errors are logged but not re-raised — this runs as a fire-and-forget
     background task and crashing here would not surface to the client.
+    Outcomes are additionally recorded in the ``tasks`` registry so
+    ``GET /api/genai/tasks`` can report them.
     """
     if settings.gemini_api_key is None:
         logger.error("Generation task %s aborted: GEMINI_API_KEY is not configured", task_id)
+        if tasks is not None:
+            tasks.mark_failed(task_id, "GEMINI_API_KEY is not configured")
         return
 
     is_portrait = orientation == "portrait"
+    if tasks is not None:
+        tasks.mark_running(task_id)
 
     try:
         async with AsyncSession(engine) as session:
             profile = await _resolve_profile(session, target_device_profile_id)
             if profile is None:
                 logger.error("Generation task %s: no device profile available", task_id)
+                if tasks is not None:
+                    tasks.mark_failed(task_id, "No device profile available")
                 return
             profile_id = profile.id
 
@@ -148,6 +158,8 @@ async def generate_and_publish(  # noqa: PLR0913
         jpeg_bytes = ImageProcessor.process_for_display(raw_bytes, target_width, target_height, upscale=True)
         if jpeg_bytes is None:
             logger.error("Generation task %s: ImageProcessor returned None for generated image", task_id)
+            if tasks is not None:
+                tasks.mark_failed(task_id, "Image processing failed")
             return
 
         image_uuid = uuid4()
@@ -175,6 +187,8 @@ async def generate_and_publish(  # noqa: PLR0913
 
             if not push_immediately:
                 logger.info("Generation task %s: image %s registered, push skipped", task_id, image_pk)
+                if tasks is not None:
+                    tasks.mark_completed(task_id, image_id=image_pk, detail="Image registered; push skipped")
                 return
 
             # Dispatch to a random *online* device that matches profile + orientation.
@@ -193,6 +207,10 @@ async def generate_and_publish(  # noqa: PLR0913
                     profile_id,
                     orientation,
                 )
+                if tasks is not None:
+                    tasks.mark_completed(
+                        task_id, image_id=image_pk, detail="Image registered; no matching online device to push to"
+                    )
                 return
 
             device = random.choice(candidates)
@@ -201,8 +219,12 @@ async def generate_and_publish(  # noqa: PLR0913
             await mqtt.send_command(device_mqtt_id, command)
             await update_display_state(session, device, image, settings)
             logger.info("Generation task %s: pushed image %s to %s", task_id, image_pk, device_mqtt_id)
-    except Exception:
+            if tasks is not None:
+                tasks.mark_completed(task_id, image_id=image_pk, detail=f"Pushed to {device_mqtt_id}")
+    except Exception as exc:
         logger.exception("Generation task %s failed", task_id)
+        if tasks is not None:
+            tasks.mark_failed(task_id, str(exc) or exc.__class__.__name__)
 
 
 def schedule_retention_cleanup_window(settings: Settings) -> timedelta:

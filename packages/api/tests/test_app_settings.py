@@ -27,21 +27,7 @@ if TYPE_CHECKING:
 
 
 class TestGetDefaultRefreshSeconds:
-    """Service-level resolution prefers DB row, falls back to settings."""
-
-    async def test_falls_back_to_settings_when_absent(self, async_engine: AsyncEngine):
-        settings = MagicMock(default_display_duration=1234)
-        async with AsyncSession(async_engine) as session:
-            value = await get_default_refresh_seconds(session, settings)
-        assert value == 1234
-
-    async def test_returns_stored_value(self, async_engine: AsyncEngine):
-        settings = MagicMock(default_display_duration=1234)
-        async with AsyncSession(async_engine) as session:
-            await set_default_refresh_seconds(session, 600)
-        async with AsyncSession(async_engine) as session:
-            value = await get_default_refresh_seconds(session, settings)
-        assert value == 600
+    """Branches not reachable through the routes: corrupted rows."""
 
     async def test_corrupted_value_falls_back(self, async_engine: AsyncEngine):
         # A garbled row should not take down the rotation loop — we treat

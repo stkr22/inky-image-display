@@ -6,7 +6,8 @@ This is a uv workspace monorepo with packages in `packages/`:
 - **shared** (`inky-image-display-shared`): SQLModel models + Pydantic schemas shared across services
 - **sync** (`inky-image-display-sync`): Immich image sync service
 - **controller** (`inky-image-display-controller`): Inky e-ink display controller
-- **api** (`inky-image-display-api`): FastAPI service for device/image management
+- **api** (`inky-image-display-api`): FastAPI service for device/image management; also serves the built web frontend and the /media image proxy
+- **web** (`inky-image-display-web`): React operator UI (npm, not part of the uv workspace)
 
 ## Core Commands
 
@@ -26,6 +27,10 @@ Always use uv for any python module/code
 ```bash
 uv run pytest
 uv run python3 -c "print(1);"
+```
+Run the Playwright e2e suite after frontend changes (local only, not in CI). Needs a running API serving the fresh build — see packages/web/README.md.
+```bash
+cd packages/web && npm run build && npm run test:e2e
 ```
 
 ## Development Guidelines

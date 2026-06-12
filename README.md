@@ -49,8 +49,8 @@ uv sync --group dev --all-packages
 # Run the API
 uv run inky-image-display-api
 
-# Run the UI
-uv run --package inky-image-display-ui inky-image-display-ui
+# Run the web frontend (dev server proxying to the API on :8000)
+cd packages/web && npm install && npm run dev
 
 # Run the controller (on a Raspberry Pi, with a config file)
 uv run inky-controller --config /etc/inky/config.yaml
@@ -59,7 +59,7 @@ uv run inky-controller --config /etc/inky/config.yaml
 uv run inky-image-display-sync immich
 ```
 
-The API and UI both need an S3-compatible store (MinIO / Garage / AWS) and an MQTT broker. See [docs/deployment-requirements.md](docs/deployment-requirements.md) for the full list and [docs/configuration.md](docs/configuration.md) for environment variables.
+The API needs an S3-compatible store (MinIO / Garage / AWS) and an MQTT broker. See [docs/deployment-requirements.md](docs/deployment-requirements.md) for the full list and [docs/configuration.md](docs/configuration.md) for environment variables.
 
 ## Documentation
 

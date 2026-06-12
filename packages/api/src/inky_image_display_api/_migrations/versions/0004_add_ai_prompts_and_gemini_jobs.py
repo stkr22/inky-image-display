@@ -14,7 +14,7 @@ so a default preset (``e_ink_humanoid``) is usable out of the box.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 import sqlalchemy as sa
 from alembic import op
@@ -166,7 +166,7 @@ def _seed_defaults(bind: sa.engine.Connection) -> None:
         ("background", "bold_solid", _BACKGROUND_DEFAULT, True),
     ]
 
-    now = datetime.now()
+    now = datetime.now(UTC).replace(tzinfo=None)
     existing_by_name: dict[str, uuid.UUID] = {}
     for row in bind.execute(sa.text("SELECT id, name FROM prompt_blocks")).fetchall():
         existing_by_name[row[1]] = _coerce_uuid(row[0])
