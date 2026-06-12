@@ -13,29 +13,29 @@ A centralised system for driving one or more [Pimoroni Inky](https://github.com/
 - **Manage many displays from one place.** A central API tracks devices, images, and schedules; lightweight controllers on each Raspberry Pi receive commands over MQTT and pull images from S3-compatible storage.
 - **Sync from Immich.** A cron-driven job pulls photos that match album / people / tag / date filters, resizes them to each display's native resolution, and rotates them on-device.
 - **Coordinate displays into a grid.** Two or more Inky panels can be arranged on a shared physical canvas (cm-based) and jointly show slices of a single image — the API pre-renders each device's crop, no grid-aware code on the controllers.
-- **Generate images on demand.** A NiceGUI web UI can call Gemini to create images on a subject and push them straight to a matching online display.
+- **Generate images on demand.** The web UI can call Gemini to create images on a subject and push them straight to a matching online display.
 
 ## Architecture
 
 ```
-┌──────────────────────┐    MQTT broker     ┌─────────────────────┐
-│   Controller(s)      │◄──────────────────►│   API               │
-│   (Raspberry Pi)     │  HTTP /register    │   (FastAPI)         │
-│   inky-controller    │  S3 (images)       │   :8000             │
-└──────────────────────┘◄───────────────────└─────────────────────┘
+┌──────────────────────┐    MQTT broker     ┌─────────────────────────┐
+│   Controller(s)      │◄──────────────────►│   API (FastAPI) :8000   │
+│   (Raspberry Pi)     │  HTTP /register    │   /api · /media proxy   │
+│   inky-controller    │  S3 (images)       │   + serves the web UI   │
+└──────────────────────┘◄───────────────────└─────────────────────────┘
                                                       ▲
                                             ┌─────────┴─────────┐
                                             │                   │
                                   ┌─────────┴────────┐ ┌────────┴────────┐
-                                  │   UI             │ │   Sync          │
-                                  │   (NiceGUI)      │ │   (CLI/Cron)    │
-                                  │   :8001          │ │   immich/gemini │
+                                  │   Browser        │ │   Sync          │
+                                  │   (React SPA)    │ │   (CLI/Cron)    │
+                                  │   same-origin    │ │   immich/gemini │
                                   └──────────────────┘ └─────────────────┘
 ```
 
-- **API** — FastAPI service. Device registry, image library, sync-job CRUD, MQTT command dispatch, grid pre-rendering, on-demand Gemini generation.
+- **API** — FastAPI service. Device registry, image library, sync-job CRUD, MQTT command dispatch, grid pre-rendering, on-demand Gemini generation. Also serves the built web frontend and the `/media` image proxy (lazy, bucket-cached thumbnails).
 - **Controller** — Daemon on the Raspberry Pi attached to an Inky display. Registers over HTTP, then connects to MQTT, fetches images from S3, and refreshes the screen.
-- **UI** — NiceGUI web app for browsing images, managing displays and grids, configuring sync jobs, and triggering AI generation. No auth — trusted LAN only.
+- **Web frontend** — React SPA (`packages/web`) for browsing images, managing displays and grids, configuring sync jobs, and triggering AI generation. Built into the API container image. No auth — trusted LAN only.
 - **Sync** — CLI tool with `immich` and `gemini` subcommands, run from cron.
 
 See [docs/main.md](docs/main.md) for the full component breakdown and MQTT topic reference.
