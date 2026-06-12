@@ -23,6 +23,8 @@ eggs/
 .eggs/
 lib/
 lib64/
+# packages/web/src/lib is frontend source, not a Python build artifact
+!packages/web/src/lib/
 parts/
 sdist/
 var/
@@ -146,3 +148,6 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+# Local dev state (devcontainer compose mounts the SQLite DB here)
+data/

@@ -9,7 +9,7 @@ All variables are prefixed with `API_`.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `API_DATABASE_PATH` | Yes | — | Path to the SQLite database file, e.g. `/data/inky.db` |
-| `API_S3_ENDPOINT` | Yes | — | S3 endpoint, e.g. `garage.storage.svc:3900` |
+| `API_S3_ENDPOINT` | Yes | — | S3 endpoint, e.g. `s3.example.com`. This value is handed to controllers at registration and they pull images from it directly, so it must be reachable from **outside** the cluster (public/ingress address), not a cluster-internal service name. |
 | `API_S3_WRITER_ACCESS_KEY` | Yes | — | Write-access S3 key (for image upload) |
 | `API_S3_WRITER_SECRET_KEY` | Yes | — | Write-access S3 secret |
 | `API_S3_READER_ACCESS_KEY` | Yes | — | Read-only S3 key (sent to controllers on registration) |
@@ -36,6 +36,11 @@ All variables are prefixed with `API_`.
 | `API_DEVICE_MQTT_WEBSOCKET_PATH` | No | `/mqtt` | HTTP path controllers use for MQTT-over-WebSockets |
 | `API_DEVICE_MQTT_KEEP_ALIVE` | No | `30` | MQTT keep-alive interval advertised to controllers |
 | `API_GEMINI_API_KEY` | No | — | Google Generative AI key. Required only for `POST /api/genai/generate`; leave unset to disable on-demand generation (returns 503). |
+| `API_IMMICH_BASE_URL` | No | — | Immich base URL for the read-only browse proxy (`GET /api/immich/albums`, `/people`, `/tags`) that powers name-based sync-job filter pickers in the UI. Leave unset to disable (returns 503; the UI falls back to raw-ID inputs). |
+| `API_IMMICH_API_KEY` | No | — | Immich API key for the browse proxy. Use the same values the sync service is configured with. |
+| `API_IMMICH_TIMEOUT_SECONDS` | No | `20.0` | Timeout for Immich browse-proxy requests (seconds). |
+| `API_MEDIA_CACHE_MAX_AGE` | No | `86400` | `Cache-Control: max-age` for `/media` responses (originals and thumbnails). |
+| `API_WEB_DIST_PATH` | No | — | Directory containing the built React frontend (`packages/web/dist`). When set, the API serves it with an SPA fallback; when unset the API is headless. |
 
 ### MQTT transport / TLS combinations
 
@@ -55,24 +60,14 @@ two roles can use different endpoints and credentials — e.g. the API
 talks to the broker over plaintext TCP on an internal address while
 controllers connect via WSS through the public HTTPS ingress.
 
-## UI (`inky-image-display-ui`)
+## Web frontend (`packages/web`)
 
-All variables are prefixed with `UI_`.
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `UI_API_BASE_URL` | Yes | — | Base URL of the API, e.g. `http://api.svc:8000` |
-| `UI_API_TIMEOUT_SECONDS` | No | `30` | HTTP request timeout when calling the API |
-| `UI_S3_ENDPOINT` | Yes | — | S3 endpoint, e.g. `garage.storage.svc:3900` |
-| `UI_S3_READER_ACCESS_KEY` | Yes | — | Read-only S3 key (used by the `/media` proxy) |
-| `UI_S3_READER_SECRET_KEY` | Yes | — | Read-only S3 secret |
-| `UI_S3_BUCKET` | No | `inky-images` | S3 bucket name |
-| `UI_S3_SECURE` | No | `false` | Use HTTPS for S3 |
-| `UI_S3_REGION` | No | — | S3 region (omit for MinIO/Garage) |
-| `UI_HOST` | No | `0.0.0.0` | Bind address |
-| `UI_PORT` | No | `8001` | Listen port |
-| `UI_ROOT_PATH` | No | `""` | Reverse-proxy sub-path (e.g. `/ui`) |
-| `UI_MEDIA_CACHE_MAX_AGE` | No | `86400` | `Cache-Control: max-age` for `/media` responses |
+The React frontend is built as static files (`npm run build`) and served by the
+API itself when `API_WEB_DIST_PATH` points at the build output (the API
+container image does this by default). The API also owns the browser-facing
+`/media/{object_key}` proxy, which streams images from S3 and generates cached
+thumbnails on demand (`?w=240|480|960`), so the browser never needs S3
+credentials or direct bucket access.
 
 ## Controller (`inky-image-display-controller`)
 

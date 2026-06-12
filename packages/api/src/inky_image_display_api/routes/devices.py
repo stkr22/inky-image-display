@@ -11,7 +11,13 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.mqtt import upsert_device
-from inky_image_display_api.schemas import DeviceResponse, DeviceUpdate, DisplayCommandRequest, NextImageResponse
+from inky_image_display_api.schemas import (
+    DeviceResponse,
+    DeviceUpdate,
+    DisplayCommandRequest,
+    ImageSummary,
+    NextImageResponse,
+)
 from inky_image_display_api.services.image_service import (
     build_display_command,
     get_next_image_for_device,
@@ -20,6 +26,27 @@ from inky_image_display_api.services.image_service import (
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
 logger = logging.getLogger(__name__)
+
+
+async def _to_device_responses(session: AsyncSession, devices: list[Device]) -> list[DeviceResponse]:
+    """Serialize devices with their current image embedded.
+
+    One batched query resolves every ``current_image_id`` so list consumers
+    can render thumbnails without a follow-up request per device.
+    """
+    image_ids = {d.current_image_id for d in devices if d.current_image_id is not None}
+    images: dict[UUID, Image] = {}
+    if image_ids:
+        result = await session.exec(select(Image).where(col(Image.id).in_(image_ids)))
+        images = {img.id: img for img in result.all()}
+    responses = []
+    for device in devices:
+        response = DeviceResponse.model_validate(device)
+        image = images.get(device.current_image_id) if device.current_image_id else None
+        if image is not None:
+            response.current_image = ImageSummary.model_validate(image)
+        responses.append(response)
+    return responses
 
 
 @router.post("/register")
@@ -54,13 +81,13 @@ async def register_device(request: Request, registration: DeviceRegistration) ->
     )
 
 
-@router.get("", response_model=list[DeviceResponse])
+@router.get("")
 async def list_devices(
     request: Request,
     room: Annotated[str | None, Query(description="Filter by room name")] = None,
     is_online: Annotated[bool | None, Query(description="Filter by online status")] = None,
     id: Annotated[UUID | None, Query(description="Filter by device primary-key UUID")] = None,
-) -> list[Device]:
+) -> list[DeviceResponse]:
     """List registered devices with optional filters.
 
     ``is_online`` reflects the broker's view of the device, kept fresh
@@ -75,22 +102,22 @@ async def list_devices(
         if is_online is not None:
             stmt = stmt.where(Device.is_online == is_online)
         result = await session.exec(stmt)
-        return list(result.all())
+        return await _to_device_responses(session, list(result.all()))
 
 
-@router.get("/{device_id}", response_model=DeviceResponse)
-async def get_device(request: Request, device_id: str) -> Device:
+@router.get("/{device_id}")
+async def get_device(request: Request, device_id: str) -> DeviceResponse:
     """Get a device by its string identifier."""
     async with AsyncSession(request.app.state.engine) as session:
         result = await session.exec(select(Device).where(Device.device_id == device_id))
         device = result.first()
         if device is None:
             raise HTTPException(status_code=404, detail="Device not found")
-        return device
+        return (await _to_device_responses(session, [device]))[0]
 
 
-@router.patch("/{device_id}", response_model=DeviceResponse)
-async def update_device(request: Request, device_id: str, body: DeviceUpdate) -> Device:
+@router.patch("/{device_id}")
+async def update_device(request: Request, device_id: str, body: DeviceUpdate) -> DeviceResponse:
     """Update editable device fields.
 
     Today only the rotation cadence is editable here; pass
@@ -110,7 +137,7 @@ async def update_device(request: Request, device_id: str, body: DeviceUpdate) ->
         session.add(device)
         await session.commit()
         await session.refresh(device)
-        return device
+        return (await _to_device_responses(session, [device]))[0]
 
 
 @router.post("/{device_id}/display")

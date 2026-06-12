@@ -12,11 +12,25 @@ from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
-from inky_image_display_api.schemas import ImageGenerateRequest, ImageGenerateResponse
+from inky_image_display_api.schemas import GenerationTaskResponse, ImageGenerateRequest, ImageGenerateResponse
 from inky_image_display_api.services.generation_service import generate_and_publish
+from inky_image_display_api.services.generation_tasks import GenerationTaskRegistry
 
 router = APIRouter(prefix="/api/genai", tags=["genai"])
 logger = logging.getLogger(__name__)
+
+
+def _task_registry(request: Request) -> GenerationTaskRegistry:
+    """Return the app-wide task registry, creating it lazily.
+
+    Lazy creation keeps test apps (which assemble ``app.state`` by hand)
+    working without extra fixtures.
+    """
+    registry = getattr(request.app.state, "generation_tasks", None)
+    if registry is None:
+        registry = GenerationTaskRegistry()
+        request.app.state.generation_tasks = registry
+    return registry
 
 
 @router.post("/generate", status_code=202)
@@ -40,6 +54,8 @@ async def generate_image(
         )
 
     task_id = uuid4()
+    tasks = _task_registry(request)
+    tasks.create(task_id, body.subject)
     background_tasks.add_task(
         generate_and_publish,
         request.app.state.engine,
@@ -52,6 +68,30 @@ async def generate_image(
         preset_id=body.preset_id,
         orientation=body.orientation,
         push_immediately=body.push_immediately,
+        tasks=tasks,
     )
     logger.info("Queued generation task %s for subject=%r", task_id, body.subject)
     return ImageGenerateResponse(task_id=task_id, status="queued")
+
+
+@router.get("/tasks")
+async def list_generation_tasks(request: Request, limit: int = 50) -> list[GenerationTaskResponse]:
+    """Return recent generation tasks, newest first.
+
+    History is in-memory and covers the current API process lifetime —
+    intended for "did my generation work?" visibility, not auditing.
+    """
+    tasks = _task_registry(request)
+    return [
+        GenerationTaskResponse(
+            task_id=t.task_id,
+            subject=t.subject,
+            status=t.status,
+            created_at=t.created_at,
+            finished_at=t.finished_at,
+            image_id=t.image_id,
+            error=t.error,
+            detail=t.detail,
+        )
+        for t in tasks.list_recent(limit)
+    ]

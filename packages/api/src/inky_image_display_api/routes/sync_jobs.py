@@ -1,11 +1,11 @@
 """REST endpoints for Immich sync job management."""
 
 import logging
-from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 from inky_image_display_shared.models import ImmichSyncJob
+from inky_image_display_shared.time import utcnow
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -64,7 +64,7 @@ async def update_sync_job(request: Request, job_id: UUID, body: SyncJobUpdate) -
         update_data = body.model_dump(exclude_unset=True)
         for key, value in update_data.items():
             setattr(job, key, value)
-        job.updated_at = datetime.now()
+        job.updated_at = utcnow()
 
         session.add(job)
         await session.commit()

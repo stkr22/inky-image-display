@@ -30,9 +30,9 @@ Python daemon that runs on the Raspberry Pi hosting an Inky display. It:
 
 Reconnects automatically with exponential backoff if MQTT drops.
 
-### UI (`inky-image-display-ui`)
+### Web frontend (`packages/web`)
 
-NiceGUI-based web UI mounted inside a FastAPI app. Lets an operator browse, upload, and edit images, command devices (display next, pick a specific image, clear), and manage sync jobs. Images are proxied to the browser via a `/media/{object_key:path}` route using reader S3 credentials, so the browser never talks to S3 directly. No authentication — trusted LAN only. See [ui.md](ui.md).
+React single-page app (Vite + TypeScript) served as static files by the API (`API_WEB_DIST_PATH`). Lets an operator browse, upload, and edit images, command devices (display next, pick a specific image, clear), manage grids and sync jobs, and trigger on-demand AI generation. Images reach the browser via the API's `/media/{object_key:path}` proxy (with lazy `?w=` thumbnails cached in S3), so the browser never talks to S3 directly. No authentication — trusted LAN only. See [ui.md](ui.md).
 
 ### Sync (`inky-image-display-sync`)
 

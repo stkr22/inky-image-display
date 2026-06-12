@@ -10,11 +10,6 @@
       "resolved": "ghcr.io/devcontainers/features/node@sha256:fedd4c11f7adfb64283b578dddc7da906728daa25fa293351c9d913231acf12f",
       "integrity": "sha256:fedd4c11f7adfb64283b578dddc7da906728daa25fa293351c9d913231acf12f"
     },
-    "ghcr.io/stkr22/devcontainer-features/claude-code:2.0.3": {
-      "version": "2.0.3",
-      "resolved": "ghcr.io/stkr22/devcontainer-features/claude-code@sha256:57c53aa671eb209f4a4e93a47a8ea7ba114773ee6a868abf19545b6f129d2a6f",
-      "integrity": "sha256:57c53aa671eb209f4a4e93a47a8ea7ba114773ee6a868abf19545b6f129d2a6f"
-    },
     "ghcr.io/stkr22/devcontainer-features/uv:1.1.0": {
       "version": "1.1.0",
       "resolved": "ghcr.io/stkr22/devcontainer-features/uv@sha256:229686a1664817bf1bab7fef7b3b25b81fe5c90dfc4807e547ad9c1dd845e77b",

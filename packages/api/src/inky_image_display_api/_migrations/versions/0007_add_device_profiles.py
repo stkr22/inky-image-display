@@ -17,7 +17,7 @@ share the same primary keys.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 import sqlalchemy as sa
 from alembic import op
@@ -127,7 +127,7 @@ def _seed_lineup(bind: sa.engine.Connection) -> None:
         sa.Column("updated_at", sa.DateTime()),
     )
     existing_keys = {row[0] for row in bind.execute(sa.text("SELECT key FROM device_profiles")).fetchall()}
-    now = datetime.now()
+    now = datetime.now(UTC).replace(tzinfo=None)
     rows = [
         {
             "id": _profile_uuid(key),

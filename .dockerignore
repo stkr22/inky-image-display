@@ -1,0 +1,17 @@
+# Shared build-context excludes for all Containerfiles (context = repo root).
+.git
+.github
+.devcontainer
+.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+
+# Local dev state — never belongs in an image.
+data/
+
+# Frontend: the image runs `npm ci` itself; never copy host installs or builds.
+packages/web/node_modules
+packages/web/dist
+packages/web/test-results
+packages/web/playwright-report

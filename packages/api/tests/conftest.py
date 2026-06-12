@@ -16,14 +16,26 @@ from inky_image_display_api.routes import (
     app_settings,
     device_profiles,
     devices,
+    gemini_sync_jobs,
     grids,
     images,
     images_process,
+    prompt_blocks,
     schedule,
     sync_jobs,
 )
 from inky_image_display_api.routes.health import router as health_router
-from inky_image_display_shared.models import AppSetting, Device, DeviceProfile, Grid, GridDevice, Image
+from inky_image_display_shared.models import (
+    AppSetting,
+    Device,
+    DeviceProfile,
+    GeminiSyncJob,
+    Grid,
+    GridDevice,
+    Image,
+    PromptBlock,
+    PromptPreset,
+)
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -48,6 +60,9 @@ async def async_engine() -> AsyncIterator[AsyncEngine]:
             Device.__table__,  # ty: ignore[unresolved-attribute]
             GridDevice.__table__,  # ty: ignore[unresolved-attribute]
             AppSetting.__table__,  # ty: ignore[unresolved-attribute]
+            PromptBlock.__table__,  # ty: ignore[unresolved-attribute]
+            PromptPreset.__table__,  # ty: ignore[unresolved-attribute]
+            GeminiSyncJob.__table__,  # ty: ignore[unresolved-attribute]
         ]:
             await conn.run_sync(table.create, checkfirst=True)
     yield engine
@@ -137,6 +152,8 @@ def test_app(
     app.include_router(schedule.router)
     app.include_router(sync_jobs.router)
     app.include_router(app_settings.router)
+    app.include_router(prompt_blocks.router)
+    app.include_router(gemini_sync_jobs.router)
 
     return app
 

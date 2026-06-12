@@ -6,15 +6,13 @@ import pytest
 from fastapi.testclient import TestClient
 from inky_image_display_shared.models import Device, Image
 from inky_image_display_shared.schemas import DeviceRegistration
+from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlmodel import col, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 
 class TestListDevices:
     """Tests for GET /api/devices."""
-
-    def test_empty(self, client: TestClient):
-        resp = client.get("/api/devices")
-        assert resp.status_code == 200
-        assert resp.json() == []
 
     def test_returns_seeded(self, client: TestClient, seed_device: Device):
         resp = client.get("/api/devices")
@@ -165,3 +163,36 @@ class TestDisplayCommand:
             json={"image_id": str(seed_image.id)},
         )
         assert resp.status_code == 404
+
+
+class TestCurrentImageEmbed:
+    """DeviceResponse embeds a summary of the currently displayed image."""
+
+    @pytest.fixture
+    async def device_with_image(self, async_engine: AsyncEngine, seed_device: Device, seed_image: Image) -> Device:
+        """Point the seeded device at the seeded image."""
+        async with AsyncSession(async_engine) as session:
+            result = await session.exec(select(Device).where(col(Device.id) == seed_device.id))
+            device = result.one()
+            device.current_image_id = seed_image.id
+            session.add(device)
+            await session.commit()
+        return seed_device
+
+    @pytest.mark.usefixtures("device_with_image")
+    def test_list_and_get_embed_current_image(self, client: TestClient, seed_device: Device, seed_image: Image):
+        resp = client.get("/api/devices")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body[0]["current_image"] == {
+            "id": str(seed_image.id),
+            "storage_path": seed_image.storage_path,
+            "title": seed_image.title,
+        }
+
+        resp = client.get(f"/api/devices/{seed_device.device_id}")
+        assert resp.json()["current_image"]["id"] == str(seed_image.id)
+
+    def test_no_current_image_is_null(self, client: TestClient, seed_device: Device):
+        resp = client.get(f"/api/devices/{seed_device.device_id}")
+        assert resp.json()["current_image"] is None

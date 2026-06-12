@@ -2,12 +2,16 @@
 
 import io
 import logging
+from collections.abc import Iterator
+from typing import Any
 
 from minio import Minio
 
 from inky_image_display_api.config import Settings
 
 logger = logging.getLogger(__name__)
+
+_STREAM_CHUNK = 32 * 1024
 
 
 class S3Service:
@@ -62,3 +66,29 @@ class S3Service:
         """
         self._client.remove_object(self._bucket, storage_path)
         logger.info("Deleted %s from bucket %s", storage_path, self._bucket)
+
+    def stat_object(self, storage_path: str) -> Any:
+        """Stat an object (raises ``minio.error.S3Error`` when missing).
+
+        Used by the media proxy to turn missing objects into clean 404s
+        and to obtain the ETag for conditional GETs.
+        """
+        return self._client.stat_object(self._bucket, storage_path)
+
+    def get_object_bytes(self, storage_path: str) -> bytes:
+        """Read a full object into memory (for thumbnail generation)."""
+        response = self._client.get_object(self._bucket, storage_path)
+        try:
+            return response.read()
+        finally:
+            response.close()
+            response.release_conn()
+
+    def iter_object(self, storage_path: str) -> Iterator[bytes]:
+        """Yield an object's bytes in chunks, releasing the connection at the end."""
+        response = self._client.get_object(self._bucket, storage_path)
+        try:
+            yield from response.stream(_STREAM_CHUNK)
+        finally:
+            response.close()
+            response.release_conn()

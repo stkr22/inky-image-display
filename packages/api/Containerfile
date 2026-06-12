@@ -1,3 +1,14 @@
+# Build stage: React frontend (served by the API when API_WEB_DIST_PATH points at it).
+# --platform=$BUILDPLATFORM: the dist output is platform-independent, so always
+# build natively instead of once per target arch under QEMU.
+FROM --platform=$BUILDPLATFORM docker.io/library/node:24-trixie-slim AS build-web
+
+WORKDIR /web
+COPY packages/web/package.json packages/web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY packages/web/ ./
+RUN npm run build
+
 # Build stage: Python 3.14.4-trixie
 FROM docker.io/library/python:3.14.4-trixie@sha256:8f84f00e6981bff45ce0ed100019142e13a397412bc130425f34ece42906cd48 AS build-python
 
@@ -30,8 +41,10 @@ RUN addgroup --system --gid 1001 appuser && adduser --system --uid 1001 --no-cre
 
 WORKDIR /app
 COPY --from=build-python /app/.venv /app/.venv
+COPY --from=build-web /web/dist /app/web
 
-ENV PATH="/app/.venv/bin:$PATH"
+ENV PATH="/app/.venv/bin:$PATH" \
+    API_WEB_DIST_PATH=/app/web
 USER appuser
 
 ENTRYPOINT ["inky-image-display-api"]

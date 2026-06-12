@@ -1,11 +1,11 @@
 """REST endpoints for prompt block management."""
 
 import logging
-from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 from inky_image_display_shared.models import PromptBlock
+from inky_image_display_shared.time import utcnow
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -63,7 +63,7 @@ async def update_prompt_block(request: Request, block_id: UUID, body: PromptBloc
             raise HTTPException(status_code=404, detail="Prompt block not found")
         for key, value in body.model_dump(exclude_unset=True).items():
             setattr(block, key, value)
-        block.updated_at = datetime.now()
+        block.updated_at = utcnow()
         session.add(block)
         await session.commit()
         await session.refresh(block)

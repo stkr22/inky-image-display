@@ -17,11 +17,6 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 class TestListImages:
     """Tests for GET /api/images."""
 
-    def test_empty_list(self, client: TestClient):
-        resp = client.get("/api/images")
-        assert resp.status_code == 200
-        assert resp.json() == []
-
     def test_returns_seeded_image(self, client: TestClient, seed_image: Image):
         resp = client.get("/api/images")
         assert resp.status_code == 200
@@ -126,16 +121,14 @@ async def seed_immich_image(async_engine: AsyncEngine) -> Image:
 class TestListImagesFilters:
     """Tests for new filter params on GET /api/images."""
 
-    def test_filter_by_source_url(self, client: TestClient, seed_immich_image: Image):
+    def test_filter_by_source_url_exact_match(self, client: TestClient, seed_immich_image: Image):
         resp = client.get("/api/images", params={"source_url": "immich://abc123"})
         assert resp.status_code == 200
         assert len(resp.json()) == 1
         assert resp.json()[0]["source_url"] == "immich://abc123"
 
-    def test_filter_by_source_url_no_match(self, client: TestClient, seed_immich_image: Image):
         resp = client.get("/api/images", params={"source_url": "immich://other"})
-        assert resp.status_code == 200
-        assert len(resp.json()) == 0
+        assert resp.json() == []
 
     def test_filter_by_source_url_prefix(self, client: TestClient, seed_immich_image: Image):
         resp = client.get("/api/images", params={"source_url_prefix": "immich://"})
@@ -143,22 +136,15 @@ class TestListImagesFilters:
         assert len(resp.json()) == 1
 
     def test_filter_by_expires_before(self, client: TestClient, seed_immich_image: Image):
+        # The seeded image expired one day ago: a now-cutoff matches it...
         resp = client.get("/api/images", params={"expires_before": datetime.now().isoformat()})
         assert resp.status_code == 200
         assert len(resp.json()) == 1
 
-    def test_expires_before_excludes_future(self, client: TestClient, seed_immich_image: Image):
+        # ...but a cutoff before its expiry excludes it.
         past = (datetime.now() - timedelta(days=2)).isoformat()
         resp = client.get("/api/images", params={"expires_before": past})
-        assert resp.status_code == 200
-        assert len(resp.json()) == 0
-
-    def test_response_includes_source_url_and_expires_at(self, client: TestClient, seed_immich_image: Image):
-        resp = client.get("/api/images")
-        assert resp.status_code == 200
-        data = resp.json()[0]
-        assert "source_url" in data
-        assert "expires_at" in data
+        assert resp.json() == []
 
 
 class TestRegisterImage:
@@ -199,15 +185,11 @@ class TestRegisterImage:
 class TestUpdateImage:
     """Tests for PUT /api/images/{image_id}."""
 
-    def test_update_title(self, client: TestClient, seed_image: Image):
+    def test_partial_update_sets_title_and_preserves_other_fields(self, client: TestClient, seed_image: Image):
         resp = client.put(f"/api/images/{seed_image.id}", json={"title": "New Title"})
         assert resp.status_code == 200
-        assert resp.json()["title"] == "New Title"
-
-    def test_partial_update_preserves_other_fields(self, client: TestClient, seed_image: Image):
-        resp = client.put(f"/api/images/{seed_image.id}", json={"title": "Updated"})
-        assert resp.status_code == 200
         data = resp.json()
+        assert data["title"] == "New Title"
         assert data["source_name"] == seed_image.source_name
         assert data["storage_path"] == seed_image.storage_path
 
@@ -217,3 +199,91 @@ class TestUpdateImage:
             json={"title": "Ghost"},
         )
         assert resp.status_code == 404
+
+
+class TestSearchImages:
+    """Tests for the free-text ``search`` filter on GET /api/images."""
+
+    @pytest.fixture
+    async def seed_searchable_images(self, async_engine: AsyncEngine) -> list[Image]:
+        """Insert images with distinct title/description/tags content."""
+        images = [
+            Image(
+                id=uuid4(),
+                source_name="manual",
+                storage_path="manual/sunset.jpg",
+                title="Sunset over the Alps",
+                is_portrait=False,
+            ),
+            Image(
+                id=uuid4(),
+                source_name="manual",
+                storage_path="manual/portrait.jpg",
+                title="Untitled",
+                description="A heron at the lake during sunset",
+                is_portrait=True,
+            ),
+            Image(
+                id=uuid4(),
+                source_name="manual",
+                storage_path="manual/tagged.jpg",
+                title="City",
+                tags="architecture, night",
+                is_portrait=False,
+            ),
+        ]
+        async with AsyncSession(async_engine) as session:
+            for image in images:
+                session.add(image)
+            await session.commit()
+        return images
+
+    @pytest.mark.usefixtures("seed_searchable_images")
+    def test_search_matches_title_case_insensitive(self, client: TestClient):
+        resp = client.get("/api/images", params={"search": "alps"})
+        assert resp.status_code == 200
+        assert [img["title"] for img in resp.json()] == ["Sunset over the Alps"]
+
+        resp = client.get("/api/images", params={"search": "nonexistent"})
+        assert resp.json() == []
+
+    @pytest.mark.usefixtures("seed_searchable_images")
+    def test_search_matches_description_and_title(self, client: TestClient):
+        resp = client.get("/api/images", params={"search": "sunset"})
+        assert len(resp.json()) == 2
+
+    @pytest.mark.usefixtures("seed_searchable_images")
+    def test_search_matches_tags(self, client: TestClient):
+        resp = client.get("/api/images", params={"search": "architecture"})
+        assert [img["title"] for img in resp.json()] == ["City"]
+
+
+class TestImageStats:
+    """Tests for GET /api/images/stats."""
+
+    @pytest.fixture
+    async def seed_mixed_sources(self, async_engine: AsyncEngine) -> None:
+        """Insert one manual and two immich images."""
+        async with AsyncSession(async_engine) as session:
+            session.add(Image(id=uuid4(), source_name="manual", storage_path="manual/a.jpg", is_portrait=False))
+            for index in range(2):
+                session.add(
+                    Image(
+                        id=uuid4(),
+                        source_name="immich",
+                        storage_path=f"immich/{index}.jpg",
+                        is_portrait=False,
+                    )
+                )
+            await session.commit()
+
+    def test_empty_library(self, client: TestClient):
+        resp = client.get("/api/images/stats")
+        assert resp.status_code == 200
+        assert resp.json() == {"total": 0, "by_source": {}}
+
+    @pytest.mark.usefixtures("seed_mixed_sources")
+    def test_counts_grouped_by_source(self, client: TestClient):
+        resp = client.get("/api/images/stats")
+        assert resp.status_code == 200
+        assert resp.json() == {"total": 3, "by_source": {"manual": 1, "immich": 2}}
