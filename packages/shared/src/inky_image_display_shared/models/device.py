@@ -52,6 +52,14 @@ class Device(SQLModel, table=True):
         last_seen: Last time the device sent any traffic (registration / ack).
             Drives self-healing online detection so a stale ``is_online``
             flag is corrected on the next message.
+        last_refresh_ok: Outcome of the most recent display refresh as reported
+            by the device's ack. ``None`` until the first ack is seen, ``True``
+            after a successful refresh, ``False`` when the device reported the
+            refresh failed (e.g. the e-paper BUSY signal never cleared). Lets
+            operators spot a stuck display that is otherwise still "online".
+        last_error: Error message from the most recent failed refresh, cleared
+            back to ``None`` on the next success.
+        last_error_at: When ``last_error`` was recorded.
         created_at: When record was created
         updated_at: When record was last updated
 
@@ -72,6 +80,10 @@ class Device(SQLModel, table=True):
     displayed_since: datetime | None = Field(default=None)
     scheduled_next_at: datetime = Field(default_factory=utcnow)
     last_seen: datetime = Field(default_factory=utcnow)
+    # Display-refresh health, updated from device acks. None = no ack yet.
+    last_refresh_ok: bool | None = Field(default=None)
+    last_error: str | None = Field(default=None)
+    last_error_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
     # onupdate ensures any SQLAlchemy UPDATE bumps this — the original
     # default_factory only applied on insert, so updated_at silently

@@ -109,23 +109,34 @@ async def upsert_device(
     return outcome
 
 
-async def _touch_last_seen(engine: AsyncEngine, device_id: str) -> None:
-    """Bump ``last_seen`` and ``is_online`` on any inbound message.
+async def _record_ack(engine: AsyncEngine, device_id: str, *, success: bool, error: str | None) -> None:
+    """Persist a device ack: proof-of-life plus the refresh outcome.
 
-    This keeps the freshness-based online indicator self-healing even
-    if a stale event raced ahead and flipped ``is_online`` to False.
+    Bumps ``last_seen``/``is_online`` (keeping the freshness-based online
+    indicator self-healing even if a stale event flipped ``is_online`` to
+    False), and records the display-refresh health so a stuck display is
+    distinguishable from a healthy one in the UI. A successful refresh clears
+    any previous error; a failure stores the message and timestamp.
     """
     try:
         async with AsyncSession(engine) as session:
             result = await session.exec(select(Device).where(Device.device_id == device_id))
             device = result.first()
             if device is not None:
-                device.last_seen = utcnow()
+                now = utcnow()
+                device.last_seen = now
                 device.is_online = True
+                device.last_refresh_ok = success
+                if success:
+                    device.last_error = None
+                    device.last_error_at = None
+                else:
+                    device.last_error = error
+                    device.last_error_at = now
                 session.add(device)
                 await session.commit()
     except Exception:
-        logger.exception("Failed to touch last_seen for device %s", device_id)
+        logger.exception("Failed to record ack for device %s", device_id)
 
 
 async def _set_online_flag(engine: AsyncEngine, device_id: str, *, online: bool) -> None:
@@ -295,12 +306,12 @@ class MQTTService:
             logger.warning("Device %s sent unparseable ack: %s", device_id, text[:200])
             return
 
-        logger.info(
-            "Device %s ack: success=%s, image_id=%s",
-            device_id,
-            ack.successful_display_change,
-            ack.image_id,
-        )
+        if ack.successful_display_change:
+            logger.info("Device %s ack: success, image_id=%s", device_id, ack.image_id)
+        else:
+            # Surface the device-side error that was previously dropped — this
+            # is the signal that a refresh stalled even though the device is up.
+            logger.warning("Device %s reported failed refresh (image_id=%s): %s", device_id, ack.image_id, ack.error)
         # Acks count as proof-of-life — keep the device marked online.
         self._online.add(device_id)
-        await _touch_last_seen(self._engine, device_id)
+        await _record_ack(self._engine, device_id, success=ack.successful_display_change, error=ack.error)

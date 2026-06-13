@@ -4,8 +4,10 @@ MockDisplay mirrors the real InkyDisplay's contract (auto-rotate portrait
 input, reject wrong sizes), so these tests pin that contract without hardware.
 """
 
+import warnings
+
 import pytest
-from inky_image_display_controller.display import MockDisplay, create_display
+from inky_image_display_controller.display import InkyDisplay, MockDisplay, create_display
 from inky_image_display_controller.exceptions import DisplayError
 from PIL import Image
 
@@ -48,3 +50,84 @@ class TestDisplayContract:
         assert "800x600" in str(exc_info.value)
         assert "1600x1200" in str(exc_info.value)
         assert display.last_image is None  # No display update happened
+
+
+class _FakeInkyPanel:
+    """Stand-in for the Inky driver object injected into InkyDisplay.
+
+    Reproduces the driver's quirk: a stalled refresh emits a warnings.warn()
+    and returns (instead of raising), so show() looks successful. ``timeouts``
+    controls how many leading show() calls stall before one succeeds;
+    ``fail_forever`` stalls every call.
+    """
+
+    def __init__(
+        self,
+        width: int = 1600,
+        height: int = 1200,
+        timeouts: int = 0,
+        fail_forever: bool = False,
+        raise_exc: Exception | None = None,
+    ) -> None:
+        self.width = width
+        self.height = height
+        self._timeouts = timeouts
+        self._fail_forever = fail_forever
+        self._raise_exc = raise_exc
+        self.show_calls = 0
+        self.set_image_calls = 0
+        self.last_saturation: float | None = None
+
+    def set_image(self, image: Image.Image, saturation: float = 0.5) -> None:
+        self.set_image_calls += 1
+        self.last_saturation = saturation
+
+    def show(self, busy_wait: bool = True) -> None:
+        self.show_calls += 1
+        if self._raise_exc is not None:
+            raise self._raise_exc
+        if self._fail_forever or self.show_calls <= self._timeouts:
+            warnings.warn("Busy Wait: Timed out after 32.00s", stacklevel=1)
+
+
+def _landscape_image() -> Image.Image:
+    return Image.new("RGB", (1600, 1200), "white")
+
+
+class TestInkyRefreshRecovery:
+    """InkyDisplay must detect a swallowed busy-timeout and reset-and-retry."""
+
+    @pytest.mark.asyncio
+    async def test_successful_refresh_does_not_retry(self) -> None:
+        panel = _FakeInkyPanel()
+        display = InkyDisplay(_display=panel, retry_delay_s=0.0)
+        await display.show_image(_landscape_image(), saturation=0.3)
+        assert panel.show_calls == 1
+        assert panel.set_image_calls == 1
+        assert panel.last_saturation == 0.3
+
+    @pytest.mark.asyncio
+    async def test_retries_after_busy_timeout_then_succeeds(self) -> None:
+        # First show() stalls (warns), second completes — image should display.
+        panel = _FakeInkyPanel(timeouts=1)
+        display = InkyDisplay(_display=panel, retry_delay_s=0.0)
+        await display.show_image(_landscape_image())
+        assert panel.show_calls == 2
+
+    @pytest.mark.asyncio
+    async def test_raises_after_exhausting_attempts(self) -> None:
+        panel = _FakeInkyPanel(fail_forever=True)
+        display = InkyDisplay(_display=panel, retry_delay_s=0.0, max_refresh_attempts=3)
+        with pytest.raises(DisplayError) as exc_info:
+            await display.show_image(_landscape_image())
+        assert panel.show_calls == 3
+        assert "3 attempts" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_spi_errors_are_not_retried(self) -> None:
+        panel = _FakeInkyPanel(raise_exc=FileNotFoundError("/dev/spidev0.0"))
+        display = InkyDisplay(_display=panel, retry_delay_s=0.0)
+        with pytest.raises(DisplayError) as exc_info:
+            await display.show_image(_landscape_image())
+        assert panel.show_calls == 1  # hard SPI failure is fatal, no retry
+        assert "SPI device not found" in str(exc_info.value)

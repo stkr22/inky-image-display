@@ -117,6 +117,46 @@ async def test_ack_keeps_device_online_and_touches_last_seen(
         assert refreshed.is_online is True
         # last_seen should have been bumped past the seeded epoch value.
         assert refreshed.last_seen.year >= 2024
+        # A successful ack records healthy refresh state.
+        assert refreshed.last_refresh_ok is True
+        assert refreshed.last_error is None
+        assert refreshed.last_error_at is None
+
+
+async def _send_ack(service: MQTTService, device_id: str, *, success: bool, error: str | None) -> None:
+    payload = (
+        DeviceAcknowledge(device_id=device_id, image_id=None, successful_display_change=success, error=error)
+        .model_dump_json()
+        .encode()
+    )
+    await service._dispatch(_msg(f"inky/devices/{device_id}/ack", payload))
+
+
+@pytest.mark.asyncio
+async def test_failed_ack_persists_error_then_success_clears_it(
+    settings: Settings, async_engine: AsyncEngine, seeded_device: Device
+):
+    service = MQTTService(settings, async_engine)
+
+    # A failed refresh ack stores the error and keeps the device online —
+    # this is the stuck-display signal the UI surfaces.
+    await _send_ack(service, seeded_device.device_id, success=False, error="BUSY never cleared")
+    async with AsyncSession(async_engine) as session:
+        result = await session.exec(select(Device).where(Device.device_id == seeded_device.device_id))
+        refreshed = result.one()
+        assert refreshed.is_online is True
+        assert refreshed.last_refresh_ok is False
+        assert refreshed.last_error == "BUSY never cleared"
+        assert refreshed.last_error_at is not None
+
+    # A subsequent success clears the error state.
+    await _send_ack(service, seeded_device.device_id, success=True, error=None)
+    async with AsyncSession(async_engine) as session:
+        result = await session.exec(select(Device).where(Device.device_id == seeded_device.device_id))
+        refreshed = result.one()
+        assert refreshed.last_refresh_ok is True
+        assert refreshed.last_error is None
+        assert refreshed.last_error_at is None
 
 
 @pytest.mark.asyncio

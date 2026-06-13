@@ -167,12 +167,21 @@ function DeviceCard({ device, profile }: { device: Device; profile: DeviceProfil
           )}
         </div>
         <div className="col flex-1 gap-2">
-          <div className="row items-center gap-3">
+          <div className="row items-center gap-3 wrap">
             <h3 className="ink-h3">{device.device_id}</h3>
             <Badge tone={device.is_online ? 'ok' : 'muted'}>
               {device.is_online ? 'Online' : `Offline since ${formatDatetime(device.last_seen)}`}
             </Badge>
+            {/* A failed refresh is invisible from the online flag alone — a
+                stuck display keeps acking and stays "Online". Surface it. */}
+            {device.last_refresh_ok === false && <Badge tone="warn">Refresh failed</Badge>}
           </div>
+          {device.last_refresh_ok === false && (
+            <span className="ink-small" style={{ color: 'var(--ink-warn)' }}>
+              Last refresh failed{device.last_error_at ? ` ${formatRelative(device.last_error_at)}` : ''}
+              {device.last_error ? `: ${device.last_error}` : ''}
+            </span>
+          )}
           <span className="ink-small">{device.room || '(no room)'}</span>
           <span className="ink-small">
             {profileSummary} · {device.display_orientation}

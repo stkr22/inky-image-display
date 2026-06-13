@@ -2,14 +2,31 @@
 
 import asyncio
 import logging
+import time
+import warnings
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 from PIL import Image
 
 from inky_image_display_controller.exceptions import DisplayError
 
 logger = logging.getLogger(__name__)
+
+# The Inky driver does NOT raise when a refresh stalls. Its _busy_wait() only
+# calls warnings.warn() and returns once the panel's BUSY line fails to clear
+# within the timeout (the failure mode in docs/refresh-issues.md: the UC8159 /
+# EL133UF1 internal DC-DC sags mid-waveform and the state machine never reaches
+# idle). show() then returns as if it succeeded, so without intercepting that
+# warning the controller would ack a refresh that never physically happened.
+#
+# Recovery leans on a property of the driver: show() -> _update() -> setup(),
+# and setup() issues a full RST_N hardware reset on EVERY call (the reset is
+# outside its _gpio_setup guard). So simply re-running show() resets the panel
+# and retries the waveform from a clean state — no private-state poking needed.
+DEFAULT_MAX_REFRESH_ATTEMPTS = 3
+DEFAULT_RETRY_DELAY_S = 2.0
 
 
 # Maps the panel dimensions reported by the Inky library (always
@@ -91,11 +108,18 @@ class InkyDisplay(DisplayInterface):
     The Inky library itself handles any internal rotation required by the
     physical mounting — the public API always expects landscape images
     (wider than tall).
+
+    A stalled refresh (BUSY never clears) is detected and retried with a
+    hardware reset between attempts; see the module docstring constants.
     """
 
     def __init__(
         self,
         executor: ThreadPoolExecutor | None = None,
+        *,
+        max_refresh_attempts: int = DEFAULT_MAX_REFRESH_ATTEMPTS,
+        retry_delay_s: float = DEFAULT_RETRY_DELAY_S,
+        _display: Any = None,
     ) -> None:
         """Initialize the Inky display wrapper.
 
@@ -103,6 +127,12 @@ class InkyDisplay(DisplayInterface):
 
         Args:
             executor: Optional thread pool executor for display operations.
+            max_refresh_attempts: How many times to drive a single refresh
+                before giving up. Each retry re-runs the driver's setup(),
+                which issues a full RST_N hardware reset first.
+            retry_delay_s: Seconds to wait between refresh attempts.
+            _display: Pre-built Inky panel object, injected by tests so the
+                retry/detection logic can be exercised without hardware.
 
         Raises:
             DisplayError: If the display cannot be initialized.
@@ -110,12 +140,16 @@ class InkyDisplay(DisplayInterface):
         """
         self._executor = executor or ThreadPoolExecutor(max_workers=1, thread_name_prefix="inky")
         self._lock = asyncio.Lock()
+        self._max_refresh_attempts = max_refresh_attempts
+        self._retry_delay_s = retry_delay_s
 
         # Eager init - get dimensions from hardware
         try:
-            from inky.auto import auto  # noqa: PLC0415  # ty: ignore[unresolved-import]
+            if _display is None:
+                from inky.auto import auto  # noqa: PLC0415  # ty: ignore[unresolved-import]
 
-            self._display = auto()
+                _display = auto()
+            self._display: Any = _display
             self._width: int = self._display.width
             self._height: int = self._display.height
             logger.info("Inky display initialized: %dx%d", self._width, self._height)
@@ -185,17 +219,59 @@ class InkyDisplay(DisplayInterface):
                 f"Image size {image.size[0]}x{image.size[1]} does not match display size {self.width}x{self.height}."
             )
 
-        display_image = image
-
         logger.info("Updating display (this takes ~20-25 seconds)...")
-        self._display.set_image(display_image, saturation=saturation)
-        try:
-            self._display.show(busy_wait=True)
-        except FileNotFoundError as e:
-            raise DisplayError("SPI device not found. Ensure SPI is enabled via raspi-config and reboot.") from e
-        except PermissionError as e:
-            raise DisplayError("Permission denied accessing SPI device. Add user to 'spi' group and re-login.") from e
-        logger.info("Display update complete")
+        # The buffer set here persists on the driver object across show() calls,
+        # so retries re-send the same image without re-converting it.
+        self._display.set_image(image, saturation=saturation)
+
+        last_failure: str | None = None
+        for attempt in range(1, self._max_refresh_attempts + 1):
+            if self._run_show_once():
+                logger.info("Display update complete")
+                return
+            last_failure = "e-paper BUSY signal never cleared; refresh did not complete"
+            logger.warning(
+                "Display refresh attempt %d/%d did not complete (%s)",
+                attempt,
+                self._max_refresh_attempts,
+                last_failure,
+            )
+            if attempt < self._max_refresh_attempts:
+                time.sleep(self._retry_delay_s)
+
+        raise DisplayError(f"Display refresh failed after {self._max_refresh_attempts} attempts: {last_failure}")
+
+    def _run_show_once(self) -> bool:
+        """Drive one refresh and report whether it actually completed.
+
+        The Inky driver swallows a stalled refresh: _busy_wait() emits a
+        warnings.warn() and returns rather than raising, so show() looks
+        successful even when the panel never updated, and that warning goes
+        to stderr — never reaching the controller's logs. We capture warnings
+        to detect the stall and re-emit them through logging.
+
+        Returns:
+            True if the refresh completed, False if BUSY timed out (caller
+            should reset-and-retry).
+
+        Raises:
+            DisplayError: For hard SPI access failures, which are not retryable.
+
+        """
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                self._display.show(busy_wait=True)
+            except FileNotFoundError as e:
+                msg = "SPI device not found. Ensure SPI is enabled via raspi-config and reboot."
+                raise DisplayError(msg) from e
+            except PermissionError as e:
+                msg = "Permission denied accessing SPI device. Add user to 'spi' group and re-login."
+                raise DisplayError(msg) from e
+
+        for w in caught:
+            logger.warning("Inky driver warning during refresh: %s", w.message)
+        return not any("timed out" in str(w.message).lower() for w in caught)
 
     async def clear(self) -> None:
         """Clear the display to white."""
