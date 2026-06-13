@@ -61,19 +61,21 @@ class _FakeInkyPanel:
     ``fail_forever`` stalls every call.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 — test stub mirrors the driver's failure modes
         self,
         width: int = 1600,
         height: int = 1200,
         timeouts: int = 0,
         fail_forever: bool = False,
         raise_exc: Exception | None = None,
+        resource_warn: bool = False,
     ) -> None:
         self.width = width
         self.height = height
         self._timeouts = timeouts
         self._fail_forever = fail_forever
         self._raise_exc = raise_exc
+        self._resource_warn = resource_warn
         self.show_calls = 0
         self.set_image_calls = 0
         self.last_saturation: float | None = None
@@ -86,6 +88,15 @@ class _FakeInkyPanel:
         self.show_calls += 1
         if self._raise_exc is not None:
             raise self._raise_exc
+        if self._resource_warn:
+            # Mirrors the driver's setup() leaking /proc/device-tree/model on
+            # every refresh — a benign ResourceWarning that must not be treated
+            # as a stall nor surfaced at warning level.
+            warnings.warn(
+                "unclosed file <_io.TextIOWrapper name='/proc/device-tree/model' mode='r'>",
+                ResourceWarning,
+                stacklevel=1,
+            )
         if self._fail_forever or self.show_calls <= self._timeouts:
             warnings.warn("Busy Wait: Timed out after 32.00s", stacklevel=1)
 
@@ -122,6 +133,18 @@ class TestInkyRefreshRecovery:
             await display.show_image(_landscape_image())
         assert panel.show_calls == 3
         assert "3 attempts" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_driver_resource_warning_is_not_a_stall(self, caplog: pytest.LogCaptureFixture) -> None:
+        # The driver leaks /proc/device-tree/model on every refresh. That benign
+        # ResourceWarning must not be mistaken for a stall (no retry) nor logged
+        # at warning level as a refresh problem.
+        panel = _FakeInkyPanel(resource_warn=True)
+        display = InkyDisplay(_display=panel, retry_delay_s=0.0)
+        with caplog.at_level("WARNING"):
+            await display.show_image(_landscape_image())
+        assert panel.show_calls == 1  # treated as success, not a stall
+        assert "Inky driver warning during refresh" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_spi_errors_are_not_retried(self) -> None:
