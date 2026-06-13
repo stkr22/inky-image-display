@@ -63,16 +63,34 @@ processing.
 
 ## How the controller handles it
 
-The Inky library does not raise on a stall — its busy-wait only emits a Python
-warning and returns, so `show()` looks successful even when nothing updated. The
-controller's `InkyDisplay` wrapper
+The Inky library does not raise on a stall — and the two panel families fail
+differently, so the controller's `InkyDisplay` wrapper
 ([display.py](../packages/controller/src/inky_image_display_controller/display.py))
-captures that warning and treats it as a failed refresh. Recovery reuses the
-driver's own reset: re-running `show()` calls `setup()`, which pulses RST_N, so
-each retry restarts the waveform from a clean state. It retries up to three
-times with a short delay; if every attempt still stalls it raises instead of
-acking, and the API records the failure so the UI surfaces the stuck device
-rather than reporting a refresh that never physically happened.
+watches for both:
+
+- **UC8159 (4–7.3")**: its busy-wait emits a Python `warnings.warn("… timed
+  out …")` and returns. The controller captures that warning (it otherwise goes
+  to stderr, never the logs) and treats it as a failed refresh.
+- **EL133UF1 (13.3")**: its busy-wait is *silent* — when BUSY reads high it just
+  `time.sleep()`s a fixed duration and returns, so a refresh that never ran
+  looks identical to a good one. The controller instead **watches the BUSY GPIO
+  directly** (through the driver's own gpiod handle, sampled in a background
+  thread for the duration of `show()`): a healthy refresh drives BUSY low then
+  high; if it never goes low, no waveform ran, and if it's still low afterwards
+  it stalled mid-update.
+
+On either signal the refresh is treated as failed. Recovery reuses the driver's
+own reset: re-running `show()` calls `setup()`, which pulses RST_N, so each retry
+restarts the waveform from a clean state. It retries up to three times with a
+short delay; if every attempt still fails it raises instead of acking, and the
+API records the failure so the UI surfaces the stuck device rather than
+reporting a refresh that never physically happened.
+
+One failure the host *cannot* see: a **partial refresh**, where the 13.3 updates
+only one of its two SPI-driven halves. BUSY cycles normally and both chip-selects
+toggle, so the fault is downstream of any signal the Pi can observe — it shows as
+a successful refresh even though half the panel is stale. That's a hardware
+(panel/ribbon) fault, not something the controller can detect.
 
 ## Practical fix
 
