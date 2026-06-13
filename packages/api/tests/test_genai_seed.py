@@ -124,19 +124,45 @@ class TestSeededPresetIsReachable:
             assert single.json()["id"] == preset_id
 
 
+class TestDefaultBlocksRepainted:
+    """Migration 0013 must repaint the seeded defaults but spare operator edits."""
+
+    async def test_repaint_applied_on_fresh_db(self, seeded_engine: AsyncEngine) -> None:
+        """A fresh DB (all migrations applied) carries the repainted text, not the 0004 seed."""
+        async with seeded_engine.begin() as conn:
+            rows = (await conn.execute(sa.text("SELECT name, text FROM prompt_blocks WHERE is_default = 1"))).fetchall()
+        text_by_name = {row[0]: row[1] for row in rows}
+
+        # Palette is now a blacklist that leans on dithering, not a six-colour whitelist.
+        assert "dither" in text_by_name["spectra_6"].lower()
+        assert "Use only six colors" not in text_by_name["spectra_6"]
+        # Style invites painterly depth instead of flat blocks.
+        assert "painterly" in text_by_name["poster_screenprint"].lower()
+        assert "flat color blocks" not in text_by_name["poster_screenprint"]
+
+    async def test_operator_edited_block_is_preserved(self, seeded_engine: AsyncEngine) -> None:
+        """A block whose text was changed in the UI must survive a 0013 re-run untouched."""
+        mig0013 = _load_migration("0013_repaint_default_prompt_blocks")
+        custom = "MY HAND-TUNED PALETTE — keep this."
+
+        async with seeded_engine.begin() as conn:
+            await conn.execute(
+                sa.text("UPDATE prompt_blocks SET text = :t WHERE name = 'spectra_6'"),
+                {"t": custom},
+            )
+            await conn.run_sync(lambda sync_conn: _run_upgrade(sync_conn, mig0013))
+
+        async with seeded_engine.begin() as conn:
+            text = (await conn.execute(sa.text("SELECT text FROM prompt_blocks WHERE name = 'spectra_6'"))).scalar_one()
+        assert text == custom
+
+
 class TestUuidFormatBackfill:
     """Migration 0006 must repair already-deployed dashes-form rows."""
 
     async def test_backfill_normalises_existing_dashed_ids(self, seeded_engine: AsyncEngine) -> None:
         """Inject dashes-form rows like pre-fix prod, re-run 0006, verify lookups."""
-        api_root = Path(inky_image_display_api.__file__).parent
-        spec = importlib.util.spec_from_file_location(
-            "mig0006",
-            api_root / "_migrations" / "versions" / "0006_normalize_seeded_uuid_format.py",
-        )
-        assert spec is not None and spec.loader is not None
-        mig0006 = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mig0006)
+        mig0006 = _load_migration("0006_normalize_seeded_uuid_format")
 
         # Wipe the (correctly-formatted) seed so we can plant pre-fix data.
         async with seeded_engine.begin() as conn:
@@ -192,6 +218,16 @@ class TestUuidFormatBackfill:
             preset, blocks = await _resolve_preset(session, uuid.UUID(preset_id))
         assert preset.name == "legacy"
         assert len(blocks) == 5
+
+
+def _load_migration(stem: str) -> ModuleType:
+    """Import a migration module by file stem so its upgrade() can run in isolation."""
+    api_root = Path(inky_image_display_api.__file__).parent
+    spec = importlib.util.spec_from_file_location(stem, api_root / "_migrations" / "versions" / f"{stem}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _run_upgrade(sync_conn: sa.engine.Connection, mig_module: ModuleType) -> None:

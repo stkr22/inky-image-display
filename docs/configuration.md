@@ -89,7 +89,7 @@ api:
 
 display:
   orientation: landscape    # "landscape" or "portrait"
-  saturation: 0.5           # Spectra 6 color saturation (0.0–1.0)
+  saturation: 0.6           # Spectra 6 color saturation (0.0–1.0)
   mock: false               # true = no hardware required (for testing)
 ```
 
@@ -101,7 +101,7 @@ display:
 | `CONTROLLER_DEVICE__ROOM` | — | Room label |
 | `CONTROLLER_API__URL` | `http://localhost:8000` | API base URL (HTTP registration only) |
 | `CONTROLLER_DISPLAY__ORIENTATION` | `landscape` | `landscape` or `portrait` |
-| `CONTROLLER_DISPLAY__SATURATION` | `0.5` | Color saturation for Spectra 6 (0.0–1.0) |
+| `CONTROLLER_DISPLAY__SATURATION` | `0.6` | Color saturation for Spectra 6 (0.0–1.0). The Inky library applies this when dithering the image to the panel's six primaries; ~0.6 reads more vivid than the library's 0.5 default without banding. |
 | `CONTROLLER_DISPLAY__MOCK` | `false` | Use mock display (no hardware) |
 | `CONTROLLER_DISPLAY__MOCK_PROFILE_KEY` | `inky_impression_13_spectra6` | Seeded device-profile key whose panel dimensions the mock display should report. Valid keys: `inky_impression_4_spectra6`, `inky_impression_7_spectra6`, `inky_impression_13_spectra6`. |
 | `DEVICE_ID` | — | Overrides `CONTROLLER_DEVICE__ID` (also accepted as `--device-id` CLI flag) |
@@ -222,7 +222,23 @@ curl -X POST http://api.local:8000/api/sync-jobs \
 
 The Gemini integration is configured through three DB-backed resources, all
 managed through the API and the UI's GenAI page. Defaults are seeded on
-first run by the `0004_add_ai_prompts_and_gemini_jobs` migration.
+first run by the `0004_add_ai_prompts_and_gemini_jobs` migration and repainted
+by `0013_repaint_default_prompt_blocks` (only on blocks still at their original
+seed text — operator edits are preserved).
+
+**Default prompt philosophy.** The pipeline never quantizes to six colours
+itself: it sends Gemini's full-colour JPEG to the device, and the Inky library
+dithers it down to the panel's six native primaries (black, white, red, yellow,
+green, blue) at display time. So the default blocks deliberately *do not* ask
+for flat six-colour poster art — that throws away the depth dithering provides.
+Instead they invite painterly shading, texture and moderate detail (the 13.3"
+Spectra 6 at 1600×1200 holds it well), and the `palette` block is framed as a
+**blacklist**: paint freely, but avoid hues the panel can't reach and that
+dither to muddy speckle — magenta, purple/violet, cyan, teal/turquoise, hot
+pink, brown/beige/khaki — leaning on clean reds, golden yellows, deep blues and
+rich greens. The subject is named only by the composition block's `{subject}`
+placeholder; there is no hardcoded opener, so a preset can describe a scene
+(e.g. a forest) without a portrait framing being forced on it.
 
 ### Prompt blocks (`prompt_blocks`)
 
@@ -232,7 +248,7 @@ A prompt block is one reusable text fragment scoped to a single concern.
 |-------|------|-------------|
 | `kind` | enum | One of `style`, `palette`, `legibility`, `composition`, `background` |
 | `name` | str | Unique within a kind |
-| `text` | str | Prompt fragment. Composition blocks may include a `{subject}` placeholder. |
+| `text` | str | Prompt fragment. A composition block should include the `{subject}` placeholder — it is the only place the subject is named. |
 | `is_default` | bool | At most one default per kind, used as the fallback when a preset isn't fully specified |
 
 REST: `GET/POST /api/genai/blocks`, `GET/PUT/DELETE /api/genai/blocks/{id}`.

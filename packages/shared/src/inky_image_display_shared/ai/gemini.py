@@ -28,8 +28,12 @@ class RenderedPrompt:
     """The five composable prompt blocks for an e-ink illustration.
 
     Each block carries one concern of the final prompt. The composition
-    block may contain a ``{subject}`` placeholder which is substituted at
-    render time. The orientation flag controls the final orientation hint
+    block is the sole carrier of the subject: it names it via a
+    ``{subject}`` placeholder substituted at render time. There is no
+    separate hardcoded subject line — that lets a preset describe a forest
+    scene, an object, or a portrait without the prompt fighting the chosen
+    composition — so a composition block should always reference
+    ``{subject}``. The orientation flag controls the final orientation hint
     appended to the prompt and the aspect ratio used for the API call.
     """
 
@@ -41,12 +45,17 @@ class RenderedPrompt:
     is_portrait: bool
 
     def render(self, subject: str) -> str:
-        """Assemble the final prompt string for a given subject."""
+        """Assemble the final prompt string for a given subject.
+
+        The subject is introduced by the composition block alone (via its
+        ``{subject}`` placeholder), so the framing — portrait, scene,
+        object — is fully driven by the editable blocks rather than a
+        hardcoded opener.
+        """
         composition = self.composition.format(subject=subject)
         orientation_hint = "Portrait orientation." if self.is_portrait else "Landscape orientation."
         return " ".join(
             [
-                f"Bold illustrated portrait of {subject}.",
                 self.style,
                 composition,
                 self.background,

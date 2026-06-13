@@ -36,7 +36,10 @@ class DisplayConfig(BaseSettings):
     """Display hardware settings."""
 
     orientation: Literal["landscape", "portrait"] = Field(default="landscape", description="Display orientation")
-    saturation: float = Field(default=0.5, ge=0.0, le=1.0, description="Color saturation for Spectra 6")
+    # Pimoroni recommends boosting saturation/contrast to compensate for e-ink's
+    # muted appearance vs. a backlit screen; 0.6 reads more vivid than the Inky
+    # library's 0.5 default without over-saturating into banding.
+    saturation: float = Field(default=0.6, ge=0.0, le=1.0, description="Color saturation for Spectra 6")
     mock: bool = Field(default=False, description="Use mock display for testing without hardware")
     # Only used when mock=True — picks the panel dims a seeded profile reports.
     mock_profile_key: str = Field(
