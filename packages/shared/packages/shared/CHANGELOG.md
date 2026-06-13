@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.2.0](https://github.com/stkr22/inky-image-display/compare/shared-v4.1.0...shared-v4.2.0) (2026-06-13)
+
+
+### Features
+
+* richer painterly defaults for Spectra 6 generation ([6302e3a](https://github.com/stkr22/inky-image-display/commit/6302e3a4dcc66c0adfd7e205e39928ccda94aa3f))
+
 ## [4.1.0](https://github.com/stkr22/inky-image-display/compare/shared-v4.0.0...shared-v4.1.0) (2026-06-13)
 
 
