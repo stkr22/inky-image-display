@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.3.0](https://github.com/stkr22/inky-image-display/compare/controller-v4.2.0...controller-v4.3.0) (2026-06-13)
+
+
+### Features
+
+* detect silent 13.3 refresh stalls via BUSY-pin watching ([711bb2d](https://github.com/stkr22/inky-image-display/commit/711bb2dbee61f7b971b3cfea6f232982afa263b6))
+* detect silent 13.3 refresh stalls via BUSY-pin watching ([d80c4cb](https://github.com/stkr22/inky-image-display/commit/d80c4cbd722cc9abd29e99a5b0ed774c32cb872c))
+
 ## [4.2.0](https://github.com/stkr22/inky-image-display/compare/controller-v4.1.0...controller-v4.2.0) (2026-06-13)
 
 
