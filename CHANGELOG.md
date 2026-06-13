@@ -1,5 +1,23 @@
 # Changelog
 
+## [5.1.0](https://github.com/stkr22/inky-image-display/compare/v5.0.0...v5.1.0) (2026-06-13)
+
+
+### Features
+
+* detect stalled display refreshes and surface them in the UI ([3b41021](https://github.com/stkr22/inky-image-display/commit/3b4102172ada7bd72e8b759d7313572af61711d9))
+
+
+### Bug Fixes
+
+* make bare `alembic upgrade head` work on an empty database ([653c1eb](https://github.com/stkr22/inky-image-display/commit/653c1eb40263669a9ae40eab23d64d6c338a5961))
+
+
+### Documentation
+
+* update README architecture for the React frontend ([1db7093](https://github.com/stkr22/inky-image-display/commit/1db7093d047efec9030db88ad4a153422cab3710))
+* update README architecture for the React frontend ([7c012f6](https://github.com/stkr22/inky-image-display/commit/7c012f63a32a1fe181096e8b7eaec0c232da3ef0))
+
 ## [5.0.0](https://github.com/stkr22/inky-image-display/compare/v4.7.0...v5.0.0) (2026-06-12)
 
 
