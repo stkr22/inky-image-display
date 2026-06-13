@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.0](https://github.com/stkr22/inky-image-display/compare/controller-v4.0.0...controller-v4.1.0) (2026-06-13)
+
+
+### Features
+
+* detect stalled display refreshes and surface them in the UI ([3b41021](https://github.com/stkr22/inky-image-display/commit/3b4102172ada7bd72e8b759d7313572af61711d9))
+
 ## [4.0.0](https://github.com/stkr22/inky-image-display/compare/controller-v3.0.0...controller-v4.0.0) (2026-06-12)
 
 
