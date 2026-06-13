@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import threading
 import time
 import warnings
 from abc import ABC, abstractmethod
@@ -14,19 +15,75 @@ from inky_image_display_controller.exceptions import DisplayError
 
 logger = logging.getLogger(__name__)
 
-# The Inky driver does NOT raise when a refresh stalls. Its _busy_wait() only
-# calls warnings.warn() and returns once the panel's BUSY line fails to clear
-# within the timeout (the failure mode in docs/refresh-issues.md: the UC8159 /
-# EL133UF1 internal DC-DC sags mid-waveform and the state machine never reaches
-# idle). show() then returns as if it succeeded, so without intercepting that
-# warning the controller would ack a refresh that never physically happened.
+# A stalled refresh never raises from the Inky driver, and the two supported
+# panel families fail differently — so the controller watches for both:
 #
-# Recovery leans on a property of the driver: show() -> _update() -> setup(),
-# and setup() issues a full RST_N hardware reset on EVERY call (the reset is
-# outside its _gpio_setup guard). So simply re-running show() resets the panel
-# and retries the waveform from a clean state — no private-state poking needed.
+#  * UC8159 (4-7.3"): _busy_wait() emits warnings.warn("... timed out ...") and
+#    returns once BUSY fails to clear within its timeout. We capture that
+#    warning (it otherwise goes to stderr, never reaching the logs).
+#  * EL133UF1 (13.3"): _busy_wait() is SILENT — when BUSY reads high it simply
+#    time.sleep()s a fixed duration and returns, so a refresh that never ran is
+#    indistinguishable from a good one by warnings alone. We instead watch the
+#    BUSY GPIO directly (see _run_show_once): a healthy refresh drives BUSY low
+#    then high; if it never goes low the panel executed no waveform.
+#
+# Either way show() returns as if it succeeded, so without these checks the
+# controller would ack a refresh that never physically happened
+# (docs/refresh-issues.md). Recovery leans on a property of the driver:
+# show() -> _update() -> setup(), and setup() issues a full RST_N hardware reset
+# on EVERY call (the reset is outside its _gpio_setup guard). So simply
+# re-running show() resets the panel and retries the waveform from a clean
+# state — no private-state poking needed.
 DEFAULT_MAX_REFRESH_ATTEMPTS = 3
 DEFAULT_RETRY_DELAY_S = 2.0
+# How often to sample the BUSY GPIO while a refresh runs. A real refresh holds
+# BUSY low for seconds, so 100 ms comfortably catches the transition.
+DEFAULT_BUSY_POLL_INTERVAL_S = 0.1
+
+
+def _busy_is_asserted(value: object) -> bool | None:
+    """Interpret a gpiod line value for the active-low BUSY_N pin.
+
+    Returns True when the panel is asserting BUSY (line low = refresh running),
+    False when idle (line high), or None when the value can't be interpreted.
+    gpiod v2 returns a ``Value`` enum (``INACTIVE`` = low = busy, ``ACTIVE`` =
+    high = idle); we match by ``name`` so this module need not import gpiod (it
+    isn't installed off-device) and tests can pass a stand-in. Plain bools/ints
+    are also accepted (False/0 = low = busy).
+    """
+    name = getattr(value, "name", None)
+    if isinstance(name, str):
+        upper = name.upper()
+        if upper in {"INACTIVE", "LOW"}:
+            return True
+        if upper in {"ACTIVE", "HIGH"}:
+            return False
+        return None
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, int):
+        return value == 0
+    return None
+
+
+def _classify_refresh(*, timed_out: bool, busy_observed: bool, went_busy: bool, still_busy: bool | None) -> str | None:
+    """Decide whether one refresh attempt failed, returning a reason or None.
+
+    Pure (no I/O) so the stall logic can be unit-tested without hardware.
+    ``None`` means the refresh looks healthy; a string is the operator-facing
+    failure reason carried into the retry loop and the device-health ack.
+
+    This cannot detect a *partial* refresh (e.g. the 13.3 updating only one of
+    its two halves): BUSY cycles normally in that case and the fault is
+    downstream of any signal the host can observe.
+    """
+    if timed_out:
+        return "e-paper BUSY signal never cleared (driver reported a busy-wait timeout)"
+    if busy_observed and not went_busy:
+        return "panel never asserted BUSY during the refresh — no waveform ran"
+    if still_busy is True:
+        return "BUSY still asserted after show() returned — refresh stalled mid-update"
+    return None
 
 
 # Maps the panel dimensions reported by the Inky library (always
@@ -119,6 +176,7 @@ class InkyDisplay(DisplayInterface):
         *,
         max_refresh_attempts: int = DEFAULT_MAX_REFRESH_ATTEMPTS,
         retry_delay_s: float = DEFAULT_RETRY_DELAY_S,
+        busy_poll_interval_s: float = DEFAULT_BUSY_POLL_INTERVAL_S,
         _display: Any = None,
     ) -> None:
         """Initialize the Inky display wrapper.
@@ -131,6 +189,8 @@ class InkyDisplay(DisplayInterface):
                 before giving up. Each retry re-runs the driver's setup(),
                 which issues a full RST_N hardware reset first.
             retry_delay_s: Seconds to wait between refresh attempts.
+            busy_poll_interval_s: How often to sample the BUSY GPIO while a
+                refresh runs (stall detection on panels that don't warn).
             _display: Pre-built Inky panel object, injected by tests so the
                 retry/detection logic can be exercised without hardware.
 
@@ -142,6 +202,7 @@ class InkyDisplay(DisplayInterface):
         self._lock = asyncio.Lock()
         self._max_refresh_attempts = max_refresh_attempts
         self._retry_delay_s = retry_delay_s
+        self._busy_poll_interval_s = busy_poll_interval_s
 
         # Eager init - get dimensions from hardware
         try:
@@ -226,10 +287,10 @@ class InkyDisplay(DisplayInterface):
 
         last_failure: str | None = None
         for attempt in range(1, self._max_refresh_attempts + 1):
-            if self._run_show_once():
+            last_failure = self._run_show_once()
+            if last_failure is None:
                 logger.info("Display update complete")
                 return
-            last_failure = "e-paper BUSY signal never cleared; refresh did not complete"
             logger.warning(
                 "Display refresh attempt %d/%d did not complete (%s)",
                 attempt,
@@ -241,46 +302,105 @@ class InkyDisplay(DisplayInterface):
 
         raise DisplayError(f"Display refresh failed after {self._max_refresh_attempts} attempts: {last_failure}")
 
-    def _run_show_once(self) -> bool:
-        """Drive one refresh and report whether it actually completed.
+    def _busy_state(self) -> bool | None:
+        """Read the panel BUSY line through the Inky driver's own gpiod handle.
 
-        The Inky driver swallows a stalled refresh: _busy_wait() emits a
-        warnings.warn() and returns rather than raising, so show() looks
-        successful even when the panel never updated, and that warning goes
-        to stderr — never reaching the controller's logs. We capture warnings
-        to detect the stall and re-emit them through logging.
+        Returns True if BUSY is asserted (refresh in progress), False if idle,
+        or None if it can't be read — a mock panel, an Inky driver that exposes
+        the line differently, or any read error. The driver owns the line, so we
+        reuse its handle rather than requesting the pin again (which would
+        clash); reads run concurrently with the driver's own and are guarded so
+        a gpiod hiccup degrades to "unknown" instead of breaking the refresh.
+        """
+        gpio = getattr(self._display, "_gpio", None)
+        busy_pin = getattr(self._display, "busy_pin", None)
+        if gpio is None or busy_pin is None:
+            return None
+        try:
+            return _busy_is_asserted(gpio.get_value(busy_pin))
+        except Exception:
+            return None
+
+    def _run_show_once(self) -> str | None:
+        """Drive one refresh; return a failure reason, or None if it completed.
+
+        Two independent stall signals, because neither panel family exposes a
+        single reliable one (see the module-level comment):
+
+        * the driver's ``warnings.warn("... timed out ...")`` (UC8159), and
+        * direct BUSY-pin watching (EL133UF1, which never warns): BUSY is
+          sampled in a background thread for the duration of ``show()``. A
+          healthy refresh drives it low then high; never-low means no waveform
+          ran, still-low afterwards means it stalled mid-update. When BUSY can't
+          be read we fall back to the warning signal alone.
 
         Returns:
-            True if the refresh completed, False if BUSY timed out (caller
-            should reset-and-retry).
+            None if the refresh completed, otherwise a human-readable reason the
+            caller carries into the retry loop and the device-health ack.
 
         Raises:
             DisplayError: For hard SPI access failures, which are not retryable.
 
         """
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            try:
-                self._display.show(busy_wait=True)
-            except FileNotFoundError as e:
-                msg = "SPI device not found. Ensure SPI is enabled via raspi-config and reboot."
-                raise DisplayError(msg) from e
-            except PermissionError as e:
-                msg = "Permission denied accessing SPI device. Add user to 'spi' group and re-login."
-                raise DisplayError(msg) from e
+        went_busy = False
+        busy_observed = False
+        stop = threading.Event()
+
+        def _watch() -> None:
+            nonlocal went_busy, busy_observed
+            while not stop.is_set():
+                state = self._busy_state()
+                if state is not None:
+                    busy_observed = True
+                    if state:
+                        went_busy = True
+                stop.wait(self._busy_poll_interval_s)
+
+        # Always start the watcher rather than gating on _gpio being present:
+        # the EL133UF1 driver only creates its gpiod handle inside the first
+        # show() -> setup() (~0.7 s in), so _gpio is absent when the very first
+        # refresh begins. Gating here would miss that refresh; instead
+        # _busy_state() returns None until the handle appears, and busy_observed
+        # flips only once a real reading lands. Panels that never expose the line
+        # just yield all-None samples and fall back to the warning signal.
+        watcher = threading.Thread(target=_watch, name="inky-busy-watch", daemon=True)
+        watcher.start()
+
+        try:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                try:
+                    self._display.show(busy_wait=True)
+                except FileNotFoundError as e:
+                    msg = "SPI device not found. Ensure SPI is enabled via raspi-config and reboot."
+                    raise DisplayError(msg) from e
+                except PermissionError as e:
+                    msg = "Permission denied accessing SPI device. Add user to 'spi' group and re-login."
+                    raise DisplayError(msg) from e
+        finally:
+            stop.set()
+            watcher.join(timeout=1.0)
 
         for w in caught:
             # The driver's setup() re-detects the Pi model on every show() by
             # opening /proc/device-tree/model and leaking the handle, so each
             # refresh emits a benign ResourceWarning about the unclosed file.
             # It's not operator-actionable (a /proc handle the GC reclaims), so
-            # keep it out of the warning stream; the stall check below still
-            # scans every caught warning regardless.
+            # keep it out of the warning stream; the checks below still run.
             if issubclass(w.category, ResourceWarning):
                 logger.debug("Inky driver ResourceWarning during refresh: %s", w.message)
                 continue
             logger.warning("Inky driver warning during refresh: %s", w.message)
-        return not any("timed out" in str(w.message).lower() for w in caught)
+
+        reason = _classify_refresh(
+            timed_out=any("timed out" in str(w.message).lower() for w in caught),
+            busy_observed=busy_observed,
+            went_busy=went_busy,
+            still_busy=self._busy_state(),
+        )
+        if reason is not None:
+            logger.warning("Display refresh did not complete: %s", reason)
+        return reason
 
     async def clear(self) -> None:
         """Clear the display to white."""
