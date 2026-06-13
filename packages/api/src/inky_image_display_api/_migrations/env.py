@@ -8,6 +8,8 @@ from inky_image_display_shared.models import (
     Device,
     DeviceProfile,
     GeminiSyncJob,
+    Grid,
+    GridDevice,
     Image,
     ImmichSyncJob,
     PromptBlock,
@@ -32,8 +34,17 @@ if database_path:
     # Alembic runs synchronously — use plain sqlite:/// (no aiosqlite driver)
     config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
 
-# Keep references so the models are registered on the metadata
-_models = (Device, DeviceProfile, GeminiSyncJob, Image, ImmichSyncJob, PromptBlock, PromptPreset)
+# Keep references so the models are registered on the metadata — both
+# autogenerate and the create_all bootstrap in run_migrations_online read from
+# SQLModel.metadata, so every owned table must be imported here.
+_models = (Device, DeviceProfile, GeminiSyncJob, Grid, GridDevice, Image, ImmichSyncJob, PromptBlock, PromptPreset)
+
+# Tables create_all may bootstrap before migrations run. This must mirror
+# database.create_tables exactly: device_profiles and app_settings are
+# deliberately excluded because the migrations own them — 0007 seeds
+# device_profiles with its then-current columns and 0008 adds the rest, so
+# pre-creating the current (NOT NULL) shape would break 0007's seed.
+_BOOTSTRAP_MODELS = (Image, Grid, Device, GridDevice, ImmichSyncJob, PromptBlock, PromptPreset, GeminiSyncJob)
 
 
 def run_migrations_offline() -> None:
@@ -60,6 +71,20 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
+
+        # Mirror the app's hybrid bootstrap (see database.create_tables): the
+        # base tables are owned by create_all and the migrations only apply
+        # incremental changes on top, guarded to be no-ops on a fresh schema.
+        # Creating them here first means a bare ``alembic upgrade head`` against
+        # an empty database produces the same complete schema the app builds at
+        # startup, instead of crashing on a migration (e.g. 0007) that
+        # references a table no migration creates. ``checkfirst=True`` makes
+        # this a no-op on databases that already have the tables.
+        target_metadata.create_all(
+            connection,
+            tables=[model.__table__ for model in _BOOTSTRAP_MODELS],  # ty: ignore[unresolved-attribute]
+            checkfirst=True,
+        )
 
         with context.begin_transaction():
             context.run_migrations()
