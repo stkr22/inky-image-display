@@ -18,12 +18,15 @@ def _prompt(*, is_portrait: bool = True) -> RenderedPrompt:
 
 def test_render_substitutes_subject_and_orders_blocks() -> None:
     out = _prompt().render("Ada Lovelace")
-    # Subject is inserted both at the top and inside the composition block.
-    assert "Bold illustrated portrait of Ada Lovelace." in out
+    # The composition block is the sole carrier of the subject — there is no
+    # hardcoded opener line, so the only mention comes from {subject} there.
     assert "COMP about Ada Lovelace" in out
+    assert "portrait of Ada Lovelace" not in out
     # All blocks make it into the final prompt.
     for needle in ("STYLE_TEXT", "PALETTE_TEXT", "LEG_TEXT", "BG_TEXT"):
         assert needle in out
+    # The style block leads now that the opener is gone.
+    assert out.startswith("STYLE_TEXT")
 
 
 def test_orientation_drives_hint_and_aspect_ratio() -> None:

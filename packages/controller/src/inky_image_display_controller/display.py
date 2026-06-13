@@ -270,6 +270,15 @@ class InkyDisplay(DisplayInterface):
                 raise DisplayError(msg) from e
 
         for w in caught:
+            # The driver's setup() re-detects the Pi model on every show() by
+            # opening /proc/device-tree/model and leaking the handle, so each
+            # refresh emits a benign ResourceWarning about the unclosed file.
+            # It's not operator-actionable (a /proc handle the GC reclaims), so
+            # keep it out of the warning stream; the stall check below still
+            # scans every caught warning regardless.
+            if issubclass(w.category, ResourceWarning):
+                logger.debug("Inky driver ResourceWarning during refresh: %s", w.message)
+                continue
             logger.warning("Inky driver warning during refresh: %s", w.message)
         return not any("timed out" in str(w.message).lower() for w in caught)
 
