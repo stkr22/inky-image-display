@@ -1,5 +1,17 @@
 # Changelog
 
+## [4.2.0](https://github.com/stkr22/inky-image-display/compare/controller-v4.1.0...controller-v4.2.0) (2026-06-13)
+
+
+### Features
+
+* richer painterly defaults for Spectra 6 generation ([6302e3a](https://github.com/stkr22/inky-image-display/commit/6302e3a4dcc66c0adfd7e205e39928ccda94aa3f))
+
+
+### Bug Fixes
+
+* keep benign Inky ResourceWarning out of the refresh log ([22732ab](https://github.com/stkr22/inky-image-display/commit/22732ab267fcdfb5260f92e0ff2444c8f6412330))
+
 ## [4.1.0](https://github.com/stkr22/inky-image-display/compare/controller-v4.0.0...controller-v4.1.0) (2026-06-13)
 
 
