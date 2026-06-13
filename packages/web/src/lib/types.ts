@@ -52,6 +52,11 @@ export interface Device {
   displayed_since: string | null
   scheduled_next_at: string
   last_seen: string
+  // Most recent display-refresh outcome from the device ack. null = no ack yet;
+  // false flags a stuck/failed refresh even while the device is online.
+  last_refresh_ok: boolean | null
+  last_error: string | null
+  last_error_at: string | null
   refresh_interval_seconds: number | null
   current_image: ImageSummary | null
 }

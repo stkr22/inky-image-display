@@ -115,6 +115,11 @@ class DeviceResponse(BaseModel):
     displayed_since: UtcDatetime | None
     scheduled_next_at: UtcDatetime
     last_seen: UtcDatetime
+    # Most recent display-refresh outcome reported by the device. None until
+    # the first ack; False flags a stuck/failed refresh on an online device.
+    last_refresh_ok: bool | None = None
+    last_error: str | None = None
+    last_error_at: UtcDatetime | None = None
     refresh_interval_seconds: int | None = None
     # Populated by the device routes from current_image_id in one batched
     # query, so list consumers don't issue a follow-up request per device.
