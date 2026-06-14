@@ -292,6 +292,19 @@ button { font-family: inherit; }
   display: flex; align-items: center; justify-content: center;
 }
 
+/* Device wall summary row: image beside the status text on wide screens. On
+   narrow screens (phones) the image stacks on top with the text below at full
+   width — otherwise flex-1 with min-width:0 lets the text column collapse into
+   a sliver, crushing every line into a word-per-row, especially with the error
+   text present. */
+.ink-device-summary { display: flex; flex-direction: row; gap: 20px; align-items: flex-start; width: 100%; }
+.ink-device-summary-media { width: 300px; flex-shrink: 0; }
+.ink-device-summary-info { flex: 1; min-width: 0; }
+@media (max-width: 560px) {
+  .ink-device-summary { flex-direction: column; }
+  .ink-device-summary-media { width: 100%; max-width: 100%; }
+}
+
 /* ---------- Page container ----------------------------------------------------------------- */
 .ink-page {
   width: 100%;

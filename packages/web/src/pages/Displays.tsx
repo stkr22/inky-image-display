@@ -153,8 +153,8 @@ function DeviceCard({ device, profile }: { device: Device; profile: DeviceProfil
 
   return (
     <div className="ink-card" style={{ padding: 20, borderRadius: 20, gap: 16 }}>
-      <div className="row w-full gap-5 wrap items-start">
-        <div className="col gap-2" style={{ width: '100%', maxWidth: 300 }}>
+      <div className="ink-device-summary">
+        <div className="col gap-2 ink-device-summary-media">
           {currentImage ? (
             <>
               <img className="ink-device-image" style={{ borderRadius: 10 }} src={mediaUrl(currentImage.storage_path, 480)} loading="lazy" alt={imageTitle(currentImage)} />
@@ -166,7 +166,7 @@ function DeviceCard({ device, profile }: { device: Device; profile: DeviceProfil
             </div>
           )}
         </div>
-        <div className="col flex-1 gap-2" style={{ minWidth: 0 }}>
+        <div className="col gap-2 ink-device-summary-info">
           <div className="row items-center gap-3 wrap">
             <h3 className="ink-h3 break-words">{device.device_id}</h3>
             <Badge tone={device.is_online ? 'ok' : 'muted'}>
