@@ -65,6 +65,9 @@ button { font-family: inherit; }
 .justify-between { justify-content: space-between; }
 .justify-end { justify-content: flex-end; }
 .truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Let long, unbreakable strings (device ids, error messages) wrap instead of
+   forcing horizontal overflow that distorts the layout on narrow screens. */
+.break-words { overflow-wrap: anywhere; word-break: break-word; min-width: 0; }
 
 /* ---------- Bento grid + tiles --------------------------------------------- */
 .bento-grid {

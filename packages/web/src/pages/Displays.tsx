@@ -166,9 +166,9 @@ function DeviceCard({ device, profile }: { device: Device; profile: DeviceProfil
             </div>
           )}
         </div>
-        <div className="col flex-1 gap-2">
+        <div className="col flex-1 gap-2" style={{ minWidth: 0 }}>
           <div className="row items-center gap-3 wrap">
-            <h3 className="ink-h3">{device.device_id}</h3>
+            <h3 className="ink-h3 break-words">{device.device_id}</h3>
             <Badge tone={device.is_online ? 'ok' : 'muted'}>
               {device.is_online ? 'Online' : `Offline since ${formatDatetime(device.last_seen)}`}
             </Badge>
@@ -177,20 +177,20 @@ function DeviceCard({ device, profile }: { device: Device; profile: DeviceProfil
             {device.last_refresh_ok === false && <Badge tone="warn">Refresh failed</Badge>}
           </div>
           {device.last_refresh_ok === false && (
-            <span className="ink-small" style={{ color: 'var(--ink-warn)' }}>
+            <span className="ink-small break-words" style={{ color: 'var(--ink-warn)' }}>
               Last refresh failed{device.last_error_at ? ` ${formatRelative(device.last_error_at)}` : ''}
               {device.last_error ? `: ${device.last_error}` : ''}
             </span>
           )}
-          <span className="ink-small">{device.room || '(no room)'}</span>
-          <span className="ink-small">
+          <span className="ink-small break-words">{device.room || '(no room)'}</span>
+          <span className="ink-small break-words">
             {profileSummary} · {device.display_orientation}
           </span>
-          <span className="ink-small">Displayed since {formatDatetime(device.displayed_since)}</span>
-          <span className="ink-small">
+          <span className="ink-small break-words">Displayed since {formatDatetime(device.displayed_since)}</span>
+          <span className="ink-small break-words">
             Next scheduled {formatDatetime(device.scheduled_next_at)} ({formatRelative(device.scheduled_next_at)})
           </span>
-          <span className="ink-small">Refresh every {formatIntervalSeconds(device.refresh_interval_seconds)}</span>
+          <span className="ink-small break-words">Refresh every {formatIntervalSeconds(device.refresh_interval_seconds)}</span>
         </div>
       </div>
       <div className="row w-full gap-2 wrap" style={{ borderTop: '1px solid var(--ink-border)', paddingTop: 14 }}>
