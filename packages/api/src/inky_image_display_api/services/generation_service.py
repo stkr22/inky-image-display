@@ -198,7 +198,13 @@ async def generate_and_publish(  # noqa: PLR0912, PLR0913, PLR0915
                     col(Device.display_orientation) == orientation,
                 )
             )
-            candidates = [d for d in cand_result.all() if mqtt.is_connected(d.device_id)]
+            # Skip devices with a failed last refresh — a stuck panel can't show
+            # the generated image, and its controller is already retrying the
+            # image it got stuck on. (last_refresh_ok is None for never-acked
+            # devices, which stay eligible.)
+            candidates = [
+                d for d in cand_result.all() if mqtt.is_connected(d.device_id) and d.last_refresh_ok is not False
+            ]
             if not candidates:
                 logger.info(
                     "Generation task %s: image %s persisted but no online device matches profile %s + %s",

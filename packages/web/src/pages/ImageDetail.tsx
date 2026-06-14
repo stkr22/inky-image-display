@@ -272,10 +272,17 @@ function SendDialog({ image, onClose }: { image: Image; onClose: () => void }) {
                 onClick={device.is_online ? () => sendToDevice(device) : undefined}
               >
                 <div className="row items-center justify-between gap-2">
-                  <span style={{ fontSize: 14, fontWeight: 500 }}>{device.device_id}</span>
+                  <span className="truncate" style={{ fontSize: 14, fontWeight: 500, minWidth: 0 }}>{device.device_id}</span>
                   <Badge tone={device.is_online ? 'ok' : 'muted'}>{device.is_online ? 'Online' : 'Offline'}</Badge>
                 </div>
                 <span className="ink-small">{device.room || '—'}</span>
+                {/* This device's last refresh failed and auto-rotation is paused
+                    for it — warn before the operator deliberately sends here. */}
+                {device.last_refresh_ok === false && (
+                  <div className="row" style={{ marginTop: 4 }}>
+                    <Badge tone="warn">Refresh failed</Badge>
+                  </div>
+                )}
               </div>
             ))}
           </div>

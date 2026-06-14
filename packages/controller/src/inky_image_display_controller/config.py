@@ -40,6 +40,12 @@ class DisplayConfig(BaseSettings):
     # muted appearance vs. a backlit screen; 0.6 reads more vivid than the Inky
     # library's 0.5 default without over-saturating into banding.
     saturation: float = Field(default=0.6, ge=0.0, le=1.0, description="Color saturation for Spectra 6")
+    # When a display refresh fails (e.g. a stuck panel), the API stops auto-rotating
+    # this device until it recovers. The controller bridges that by re-attempting the
+    # same image on this cadence; the success ack is what clears the error server-side.
+    retry_interval_seconds: int = Field(
+        default=300, ge=10, description="How often to re-attempt a failed display refresh, in seconds"
+    )
     mock: bool = Field(default=False, description="Use mock display for testing without hardware")
     # Only used when mock=True — picks the panel dims a seeded profile reports.
     mock_profile_key: str = Field(

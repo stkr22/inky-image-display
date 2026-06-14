@@ -47,7 +47,13 @@ async def _rotate_due_devices(app: FastAPI) -> None:
     """Find and rotate all online devices that are due for a new image.
 
     Devices currently claimed by a grid are skipped — the grid scheduler
-    drives them instead.
+    drives them instead. Devices whose last refresh failed
+    (``last_refresh_ok is False``) are also skipped: a stuck panel keeps
+    acking and stays "online", so without this gate the scheduler would
+    keep pushing fresh images at a display that can't show them. The
+    controller retries the stuck image on its own; once it succeeds the
+    ack clears ``last_refresh_ok`` and the device re-enters rotation here.
+    ``IS NOT FALSE`` keeps never-acked devices (NULL) eligible.
     """
     now = utcnow()
     async with AsyncSession(app.state.engine) as session:
@@ -56,6 +62,7 @@ async def _rotate_due_devices(app: FastAPI) -> None:
                 Device.is_online == True,  # noqa: E712 — SQLModel comparison
                 Device.scheduled_next_at <= now,
                 col(Device.claimed_by_grid_id).is_(None),
+                col(Device.last_refresh_ok).is_not(False),
             )
         )
         due_devices = result.all()
@@ -119,6 +126,21 @@ async def _rotate_single_grid(app: FastAPI, grid_id: object) -> None:
         placements = await grid_service.list_grid_devices(session, db_grid.id)
         if not placements:
             logger.debug("No devices placed on grid %s", db_grid.id)
+            return
+        # A grid renders one image in lockstep across every member, so a
+        # single stuck panel makes the whole composite unshowable. Pause
+        # the grid until that member recovers (its controller retries the
+        # stuck image and the success ack clears last_refresh_ok).
+        member_ids = [p.device_id for p in placements]
+        errored = await session.exec(
+            select(Device.device_id).where(
+                col(Device.id).in_(member_ids),
+                Device.last_refresh_ok == False,  # noqa: E712 — SQLModel comparison
+            )
+        )
+        stuck = errored.all()
+        if stuck:
+            logger.debug("Grid %s paused — member(s) %s have a failed refresh", db_grid.id, ", ".join(stuck))
             return
         image = await grid_service.get_next_grid_image(session, db_grid)
         if image is None:
