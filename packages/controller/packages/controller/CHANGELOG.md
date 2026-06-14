@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.4.1](https://github.com/stkr22/inky-image-display/compare/controller-v4.4.0...controller-v4.4.1) (2026-06-14)
+
+
+### Bug Fixes
+
+* correct BUSY-pin polarity so healthy 13.3 refreshes aren't flagged as stalled ([ad9c3f8](https://github.com/stkr22/inky-image-display/commit/ad9c3f8ea581fcb5224a7954ce6c014ed139ad57))
+* correct BUSY-pin polarity so healthy 13.3 refreshes aren't flagged as stalled ([fff8b68](https://github.com/stkr22/inky-image-display/commit/fff8b686f60ffa4cfcdf6afb7076df9316f80eb7))
+
 ## [4.4.0](https://github.com/stkr22/inky-image-display/compare/controller-v4.3.0...controller-v4.4.0) (2026-06-14)
 
 
