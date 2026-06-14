@@ -1,5 +1,15 @@
 # Changelog
 
+## [5.4.1](https://github.com/stkr22/inky-image-display/compare/v5.4.0...v5.4.1) (2026-06-14)
+
+
+### Bug Fixes
+
+* correct BUSY-pin polarity so healthy 13.3 refreshes aren't flagged as stalled ([ad9c3f8](https://github.com/stkr22/inky-image-display/commit/ad9c3f8ea581fcb5224a7954ce6c014ed139ad57))
+* correct BUSY-pin polarity so healthy 13.3 refreshes aren't flagged as stalled ([fff8b68](https://github.com/stkr22/inky-image-display/commit/fff8b686f60ffa4cfcdf6afb7076df9316f80eb7))
+* **web:** stack device card image and status on narrow screens ([7f6d795](https://github.com/stkr22/inky-image-display/commit/7f6d795a778eda3d992d437e2c9d3afc4c4d2be1))
+* **web:** stack device card image and status on narrow screens ([5c461f5](https://github.com/stkr22/inky-image-display/commit/5c461f59d3bc11543e07473536374f8c7a2cb483))
+
 ## [5.4.0](https://github.com/stkr22/inky-image-display/compare/v5.3.0...v5.4.0) (2026-06-14)
 
 
