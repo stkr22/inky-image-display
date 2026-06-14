@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.4.0](https://github.com/stkr22/inky-image-display/compare/v5.3.0...v5.4.0) (2026-06-14)
+
+
+### Features
+
+* stop auto-dispatching images to devices with a failed refresh ([c08c683](https://github.com/stkr22/inky-image-display/commit/c08c68363d038d1d315de853757f59138ca4a512))
+* stop auto-dispatching images to devices with a failed refresh ([fc9745e](https://github.com/stkr22/inky-image-display/commit/fc9745e625aa9b4221743c456f5a6f9e2890eae8))
+
 ## [5.3.0](https://github.com/stkr22/inky-image-display/compare/v5.2.0...v5.3.0) (2026-06-13)
 
 
