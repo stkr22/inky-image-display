@@ -69,15 +69,15 @@ class _FakeBusyValue:
 class _FakeGpio:
     """Stand-in for the EL133UF1 driver's gpiod request handle.
 
-    Reports the BUSY line off the panel's ``busy_low`` flag: active-low BUSY_N
-    reads ``INACTIVE`` (low) while the panel claims to be mid-refresh.
+    Reports the BUSY line off the panel's ``busy_active`` flag: the Inky driver
+    treats ``ACTIVE`` (high) as mid-refresh and ``INACTIVE`` (low) as idle.
     """
 
     def __init__(self, panel: "_FakeInkyPanel") -> None:
         self._panel = panel
 
     def get_value(self, pin: int) -> _FakeBusyValue:
-        return _FakeBusyValue("INACTIVE" if self._panel.busy_low else "ACTIVE")
+        return _FakeBusyValue("ACTIVE" if self._panel.busy_active else "INACTIVE")
 
 
 class _FakeInkyPanel:
@@ -87,9 +87,9 @@ class _FakeInkyPanel:
     and returns (instead of raising), so show() looks successful. ``timeouts``
     controls how many leading show() calls stall before one succeeds;
     ``fail_forever`` stalls every call. ``busy_profile`` simulates the silent
-    EL133UF1 case via a gpiod-like BUSY line: ``"asserts"`` drives BUSY low then
-    high (healthy), ``"never"`` keeps it high (no waveform), ``"stuck"`` leaves
-    it low (stalled mid-update). A busy profile is the only thing that exposes a
+    EL133UF1 case via a gpiod-like BUSY line: ``"asserts"`` drives BUSY active
+    then inactive (healthy), ``"never"`` keeps it inactive (no waveform),
+    ``"stuck"`` leaves it active (stalled mid-update). A busy profile is the only thing that exposes a
     ``_gpio``/``busy_pin``, so the default fake stays on the warning-only path.
     """
 
@@ -115,7 +115,7 @@ class _FakeInkyPanel:
         self.show_calls = 0
         self.set_image_calls = 0
         self.last_saturation: float | None = None
-        self.busy_low = False
+        self.busy_active = False
         if busy_profile is not None and not gpio_lazy:
             self._attach_gpio()
 
@@ -152,10 +152,10 @@ class _FakeInkyPanel:
         # Hold the line in the profile's "during refresh" state long enough for
         # the watcher thread to sample it (~50 ms >> the test poll interval).
         if self._busy_profile in ("asserts", "stuck"):
-            self.busy_low = True
+            self.busy_active = True
         time.sleep(0.05)
         if self._busy_profile == "asserts":
-            self.busy_low = False
+            self.busy_active = False
 
 
 def _landscape_image() -> Image.Image:
@@ -219,13 +219,13 @@ class TestBusyInterpretation:
     @pytest.mark.parametrize(
         ("value", "expected"),
         [
-            (_FakeBusyValue("INACTIVE"), True),  # low = busy (active-low BUSY_N)
-            (_FakeBusyValue("ACTIVE"), False),  # high = idle
+            (_FakeBusyValue("ACTIVE"), True),  # high = busy (driver waits while ACTIVE)
+            (_FakeBusyValue("INACTIVE"), False),  # low = idle
             (_FakeBusyValue("garbage"), None),
-            (0, True),
-            (1, False),
-            (False, True),
-            (True, False),
+            (1, True),
+            (0, False),
+            (True, True),
+            (False, False),
             (object(), None),
         ],
     )

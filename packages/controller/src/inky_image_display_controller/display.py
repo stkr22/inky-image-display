@@ -21,11 +21,13 @@ logger = logging.getLogger(__name__)
 #  * UC8159 (4-7.3"): _busy_wait() emits warnings.warn("... timed out ...") and
 #    returns once BUSY fails to clear within its timeout. We capture that
 #    warning (it otherwise goes to stderr, never reaching the logs).
-#  * EL133UF1 (13.3"): _busy_wait() is SILENT — when BUSY reads high it simply
-#    time.sleep()s a fixed duration and returns, so a refresh that never ran is
-#    indistinguishable from a good one by warnings alone. We instead watch the
-#    BUSY GPIO directly (see _run_show_once): a healthy refresh drives BUSY low
-#    then high; if it never goes low the panel executed no waveform.
+#  * EL133UF1 (13.3"): _busy_wait() is SILENT — it time.sleep()s a fixed
+#    duration and returns, so a refresh that never ran is indistinguishable from
+#    a good one by warnings alone. We instead watch the BUSY GPIO directly (see
+#    _run_show_once): per the Inky driver's own _busy_wait (which loops while the
+#    line reads Value.ACTIVE), BUSY is ACTIVE (high) while the panel refreshes
+#    and INACTIVE (low) when idle. A healthy refresh drives BUSY active then
+#    inactive; if it never goes active the panel executed no waveform.
 #
 # Either way show() returns as if it succeeded, so without these checks the
 # controller would ack a refresh that never physically happened
@@ -42,27 +44,32 @@ DEFAULT_BUSY_POLL_INTERVAL_S = 0.1
 
 
 def _busy_is_asserted(value: object) -> bool | None:
-    """Interpret a gpiod line value for the active-low BUSY_N pin.
+    """Interpret a gpiod line value for the panel's BUSY pin.
 
-    Returns True when the panel is asserting BUSY (line low = refresh running),
-    False when idle (line high), or None when the value can't be interpreted.
-    gpiod v2 returns a ``Value`` enum (``INACTIVE`` = low = busy, ``ACTIVE`` =
-    high = idle); we match by ``name`` so this module need not import gpiod (it
-    isn't installed off-device) and tests can pass a stand-in. Plain bools/ints
-    are also accepted (False/0 = low = busy).
+    Returns True when the panel is asserting BUSY (refresh running), False when
+    idle/ready, or None when the value can't be interpreted. The Inky 2.x
+    drivers define the polarity: ``_busy_wait`` loops *while*
+    ``get_value() == Value.ACTIVE``, so **ACTIVE (high) = busy** and
+    **INACTIVE (low) = idle**. Verified on EL133UF1 hardware — the line reads
+    ACTIVE for the duration of ``show()`` and INACTIVE once the refresh
+    completes. (An earlier active-low assumption here inverted this and made
+    every healthy refresh look stalled.) We match the gpiod ``Value`` enum by
+    ``name`` so this module need not import gpiod (it isn't installed off-device)
+    and tests can pass a stand-in; plain bools/ints follow the same mapping
+    (True/1/high = busy).
     """
     name = getattr(value, "name", None)
     if isinstance(name, str):
         upper = name.upper()
-        if upper in {"INACTIVE", "LOW"}:
-            return True
         if upper in {"ACTIVE", "HIGH"}:
+            return True
+        if upper in {"INACTIVE", "LOW"}:
             return False
         return None
     if isinstance(value, bool):
-        return not value
+        return value
     if isinstance(value, int):
-        return value == 0
+        return value != 0
     return None
 
 
@@ -330,9 +337,10 @@ class InkyDisplay(DisplayInterface):
         * the driver's ``warnings.warn("... timed out ...")`` (UC8159), and
         * direct BUSY-pin watching (EL133UF1, which never warns): BUSY is
           sampled in a background thread for the duration of ``show()``. A
-          healthy refresh drives it low then high; never-low means no waveform
-          ran, still-low afterwards means it stalled mid-update. When BUSY can't
-          be read we fall back to the warning signal alone.
+          healthy refresh drives it active (high) then inactive (low);
+          never-active means no waveform ran, still-active afterwards means it
+          stalled mid-update. When BUSY can't be read we fall back to the
+          warning signal alone.
 
         Returns:
             None if the refresh completed, otherwise a human-readable reason the
