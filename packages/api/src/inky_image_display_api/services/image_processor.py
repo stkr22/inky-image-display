@@ -112,6 +112,4 @@ class ImageProcessor:
                 return output.getvalue()
 
         except Exception as e:
-            if isinstance(e, ImageProcessingError):
-                raise
             raise ImageProcessingError(f"Failed to process image: {e}") from e

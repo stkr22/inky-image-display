@@ -12,7 +12,8 @@ from inky_image_display_shared.schemas import (
 
 from inky_image_display_controller.config import Settings
 from inky_image_display_controller.display import (
-    DisplayInterface,
+    InkyDisplay,
+    MockDisplay,
     create_display,
     profile_key_for_panel,
 )
@@ -47,7 +48,7 @@ class DisplayController:
         self._retry_task: asyncio.Task[None] | None = None
 
         self._s3 = S3ImageClient()
-        self._display: DisplayInterface = create_display(
+        self._display: InkyDisplay | MockDisplay = create_display(
             mock=settings.display.mock,
             mock_profile_key=settings.display.mock_profile_key,
         )

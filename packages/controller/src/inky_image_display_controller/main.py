@@ -87,8 +87,6 @@ def main(
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, signal_handler, sig)
 
-    _ = shutdown_task  # Reference to prevent unused variable warning
-
     try:
         loop.run_until_complete(controller.run())
     except KeyboardInterrupt:

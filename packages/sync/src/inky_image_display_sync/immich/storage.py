@@ -1,7 +1,6 @@
 """S3-compatible storage utilities for Immich sync."""
 
 import logging
-from collections.abc import AsyncIterator
 from io import BytesIO
 
 from minio import Minio
@@ -60,45 +59,6 @@ class S3StorageClient:
             return True
         except S3Error:
             return False
-
-    async def upload_from_stream(
-        self,
-        object_path: str,
-        data_stream: AsyncIterator[bytes],
-        content_type: str,
-    ) -> str:
-        """Upload file from async byte stream.
-
-        Collects stream into memory then uploads.
-        AIDEV-NOTE: For very large files, consider chunked upload or temp file.
-
-        Args:
-            object_path: Destination path in bucket
-            data_stream: Async iterator of bytes
-            content_type: MIME type
-
-        Returns:
-            Full storage path (bucket/object_path)
-
-        """
-        # Collect stream into buffer
-        buffer = BytesIO()
-        async for chunk in data_stream:
-            buffer.write(chunk)
-
-        buffer.seek(0)
-        size = buffer.getbuffer().nbytes
-
-        self._client.put_object(
-            bucket_name=self.config.bucket,
-            object_name=object_path,
-            data=buffer,
-            length=size,
-            content_type=content_type,
-        )
-
-        self.logger.debug("Uploaded %s (%d bytes)", object_path, size)
-        return object_path
 
     def delete_object(self, object_path: str) -> None:
         """Delete an object from S3.

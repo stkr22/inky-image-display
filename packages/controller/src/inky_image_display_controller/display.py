@@ -5,7 +5,6 @@ import logging
 import threading
 import time
 import warnings
-from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -134,35 +133,7 @@ def panel_dims_for_profile_key(key: str) -> tuple[int, int]:
     return dims
 
 
-class DisplayInterface(ABC):
-    """Abstract interface for display implementations."""
-
-    @property
-    @abstractmethod
-    def width(self) -> int:
-        """Display width in pixels."""
-
-    @property
-    @abstractmethod
-    def height(self) -> int:
-        """Display height in pixels."""
-
-    @abstractmethod
-    async def show_image(self, image: Image.Image, saturation: float = 0.5) -> None:
-        """Display an image on the screen.
-
-        Args:
-            image: PIL Image to display.
-            saturation: Color saturation for Spectra 6 displays (0.0-1.0).
-
-        """
-
-    @abstractmethod
-    async def clear(self) -> None:
-        """Clear the display to white."""
-
-
-class InkyDisplay(DisplayInterface):
+class InkyDisplay:
     """Wrapper for Pimoroni Inky e-paper displays.
 
     The display refresh is a blocking operation (~20-25 seconds),
@@ -421,7 +392,7 @@ class InkyDisplay(DisplayInterface):
             self._executor.shutdown(wait=False)
 
 
-class MockDisplay(DisplayInterface):
+class MockDisplay:
     """Mock display for testing without hardware.
 
     Stores the last displayed image for inspection in tests.
@@ -499,7 +470,7 @@ class MockDisplay(DisplayInterface):
 def create_display(
     mock: bool = False,
     mock_profile_key: str = "inky_impression_13_spectra6",
-) -> DisplayInterface:
+) -> InkyDisplay | MockDisplay:
     """Create the appropriate display implementation.
 
     Args:
@@ -508,7 +479,7 @@ def create_display(
             mock should report (ignored for real hardware).
 
     Returns:
-        DisplayInterface implementation.
+        The display implementation for the configured target.
 
     Raises:
         DisplayError: If real hardware initialization fails.

@@ -3,12 +3,12 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
 from http import HTTPStatus
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 import httpx
 
+from inky_image_display_sync.immich.api_client import SyncJobItem
 from inky_image_display_sync.immich.config import ImmichConnectionConfig
 from inky_image_display_sync.immich.models import (
     AlbumsResponse,
@@ -24,29 +24,6 @@ from inky_image_display_sync.immich.payloads import (
 
 # Immich's /search/random endpoint caps `size` at 1000.
 RANDOM_SEARCH_MAX_SIZE = 1000
-
-
-@runtime_checkable
-class ImmichJobFilter(Protocol):
-    """Structural protocol for objects that carry Immich search parameters.
-
-    Both ``ImmichSyncJob`` (ORM) and ``SyncJobItem`` (API client model) satisfy
-    this protocol, allowing ``ImmichClient`` to accept either without importing
-    the ORM model directly.
-    """
-
-    count: int
-    query: str | None
-    album_ids: list[str] | None
-    person_ids: list[str] | None
-    tag_ids: list[str] | None
-    is_favorite: bool | None
-    city: str | None
-    state: str | None
-    country: str | None
-    taken_after: datetime | None
-    taken_before: datetime | None
-    rating: int | None
 
 
 class ImmichClientError(Exception):
@@ -124,7 +101,7 @@ class ImmichClient:
 
     async def search_random(
         self,
-        job: ImmichJobFilter,
+        job: SyncJobItem,
         count_override: int | None = None,
         *,
         tag_id_override: str | None = None,
@@ -154,7 +131,7 @@ class ImmichClient:
 
     async def search_smart(
         self,
-        job: ImmichJobFilter,
+        job: SyncJobItem,
         count_override: int | None = None,
         enrich_with_people: bool = True,
     ) -> list[ImmichAsset]:
@@ -203,7 +180,7 @@ class ImmichClient:
 
     def _build_random_payload(
         self,
-        job: ImmichJobFilter,
+        job: SyncJobItem,
         count_override: int | None = None,
         *,
         tag_id_override: str | None = None,
@@ -230,7 +207,7 @@ class ImmichClient:
 
     def _build_smart_payload(
         self,
-        job: ImmichJobFilter,
+        job: SyncJobItem,
         count_override: int | None = None,
     ) -> SmartSearchPayload:
         """Build payload for smart search from job config."""

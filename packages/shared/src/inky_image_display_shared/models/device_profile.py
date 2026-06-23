@@ -10,6 +10,8 @@ from uuid import UUID, uuid4
 
 from sqlmodel import Field, SQLModel
 
+from inky_image_display_shared.time import utcnow
+
 
 class DeviceProfile(SQLModel, table=True):
     """A supported Inky display panel."""
@@ -31,5 +33,5 @@ class DeviceProfile(SQLModel, table=True):
     physical_height_cm: float = Field(default=0.0)
     model: str = Field(description="Hardware identifier reported by inky.auto")
     is_default: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now, sa_column_kwargs={"onupdate": datetime.now})
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow, sa_column_kwargs={"onupdate": utcnow})

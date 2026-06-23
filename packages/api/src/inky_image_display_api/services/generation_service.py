@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import random
-from datetime import timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
@@ -231,13 +230,3 @@ async def generate_and_publish(  # noqa: PLR0912, PLR0913, PLR0915
         logger.exception("Generation task %s failed", task_id)
         if tasks is not None:
             tasks.mark_failed(task_id, str(exc) or exc.__class__.__name__)
-
-
-def schedule_retention_cleanup_window(settings: Settings) -> timedelta:
-    """Default retention window for on-demand images (unused placeholder).
-
-    Reserved for a future feature; on-demand images currently never expire
-    automatically.
-    """
-    del settings
-    return timedelta(days=0)

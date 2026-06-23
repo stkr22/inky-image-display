@@ -5,6 +5,8 @@ from uuid import UUID, uuid4
 
 from sqlmodel import Field, SQLModel
 
+from inky_image_display_shared.time import utcnow
+
 
 class Image(SQLModel, table=True):
     """Image metadata stored in the database.
@@ -77,8 +79,8 @@ class Image(SQLModel, table=True):
     # Timestamps
     last_displayed_at: datetime | None = Field(default=None, description="Last display time for FIFO")
     expires_at: datetime | None = Field(default=None, description="Expiration time for cleanup")
-    created_at: datetime = Field(default_factory=datetime.now, description="When record was created")
-    updated_at: datetime = Field(default_factory=datetime.now, description="When record was last updated")
+    created_at: datetime = Field(default_factory=utcnow, description="When record was created")
+    updated_at: datetime = Field(default_factory=utcnow, description="When record was last updated")
 
     # Categorization
     tags: str | None = Field(default=None, description="Comma-separated tags for categorization")
