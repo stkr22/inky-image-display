@@ -10,8 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import aiomqtt
 from inky_image_display_shared.schemas import (
@@ -20,9 +19,10 @@ from inky_image_display_shared.schemas import (
     DisplayCommand,
 )
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
-CommandHandler = Callable[[DisplayCommand], Awaitable[None]]
+logger = logging.getLogger(__name__)
 
 TOPIC_PREFIX = "inky/devices"
 
@@ -50,7 +50,7 @@ class MQTTClient:
     def __init__(  # noqa: PLR0913
         self,
         device_id: str,
-        on_command: CommandHandler,
+        on_command: Callable[[DisplayCommand], Awaitable[None]],
         host: str,
         port: int,
         username: str | None,

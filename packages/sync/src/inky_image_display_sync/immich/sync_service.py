@@ -2,7 +2,6 @@
 
 import logging
 import random
-from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum, auto
@@ -302,23 +301,18 @@ class ImmichSyncService:
 
             try:
                 process_result = await self._process_asset(asset, job, device_reqs)
-                self._update_result_counters(result, process_result)
+                if process_result == ProcessResult.DOWNLOADED:
+                    result.downloaded += 1
+                elif process_result == ProcessResult.SKIPPED_EXISTING:
+                    result.skipped_existing += 1
+                elif process_result == ProcessResult.SKIPPED_UNDERSIZED:
+                    result.skipped_undersized += 1
             except Exception as e:
                 error_msg = f"Failed to process asset {asset.id}: {e}"
                 result.errors.append(error_msg)
                 self.logger.exception("Failed to process asset %s", asset.id)
 
         return result
-
-    @staticmethod
-    def _update_result_counters(result: SyncResult, process_result: ProcessResult) -> None:
-        """Update result counters based on process result."""
-        if process_result == ProcessResult.DOWNLOADED:
-            result.downloaded += 1
-        elif process_result == ProcessResult.SKIPPED_EXISTING:
-            result.skipped_existing += 1
-        elif process_result == ProcessResult.SKIPPED_UNDERSIZED:
-            result.skipped_undersized += 1
 
     async def _get_device_requirements(self, profile_id: UUID, orientation: str | None) -> DeviceRequirements:
         """Resolve target panel dims from a profile + optional orientation.
@@ -391,7 +385,7 @@ class ImmichSyncService:
             self.logger.debug("Object already in S3: %s", storage_path)
         else:
             self.logger.info("Downloading asset: %s", asset.id)
-            image_bytes = await self._collect_stream(self.immich.download_original(asset.id))
+            image_bytes = b"".join([chunk async for chunk in self.immich.download_original(asset.id)])
 
             self.logger.debug("Processing image via API to %dx%d", target_width, target_height)
             try:
@@ -633,14 +627,6 @@ class ImmichSyncService:
         if orientation == "square":
             return width == height
         return True
-
-    @staticmethod
-    async def _collect_stream(stream: AsyncIterator[bytes]) -> bytes:
-        """Collect async byte stream into a single bytes object."""
-        chunks: list[bytes] = []
-        async for chunk in stream:
-            chunks.append(chunk)
-        return b"".join(chunks)
 
     def _build_source_url(self, asset_id: str) -> str:
         """Build a user-facing HTTPS URL to the asset on the Immich web UI."""

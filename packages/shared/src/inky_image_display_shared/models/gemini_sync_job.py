@@ -12,6 +12,8 @@ from sqlalchemy import Column
 from sqlalchemy.types import JSON
 from sqlmodel import Field, SQLModel
 
+from inky_image_display_shared.time import utcnow
+
 
 class GeminiSyncJob(SQLModel, table=True):
     """Recurring AI-generation job: subjects x images_per_subject per run."""
@@ -46,5 +48,5 @@ class GeminiSyncJob(SQLModel, table=True):
         description="If set, generated images expire after this many days.",
     )
 
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)

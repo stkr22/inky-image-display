@@ -117,16 +117,12 @@ def derive_rect(
         width_cm=width_cm,
         height_cm=height_cm,
     )
-    _validate_rect_in_canvas(grid, rect)
+    validate_rect_in_canvas(grid, rect)
     return rect
 
 
 def validate_rect_in_canvas(grid: Grid, rect: DeviceRect) -> None:
-    """Public wrapper for canvas-bounds validation."""
-    _validate_rect_in_canvas(grid, rect)
-
-
-def _validate_rect_in_canvas(grid: Grid, rect: DeviceRect) -> None:
+    """Validate that a device rectangle lies fully within the canvas."""
     eps = 1e-6
     if rect.top_left_x_cm < -eps or rect.top_left_y_cm < -eps:
         raise GridValidationError(400, "Device rectangle starts outside the canvas")

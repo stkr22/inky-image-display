@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react'
 
 export type ToastType = 'info' | 'positive' | 'negative' | 'warning'
 
@@ -22,10 +22,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setTimeout(() => setToasts((current) => current.filter((t) => t.id !== id)), 4000)
   }, [])
 
-  const value = useMemo(() => notify, [notify])
-
   return (
-    <ToastContext.Provider value={value}>
+    <ToastContext.Provider value={notify}>
       {children}
       <div className="ink-toasts" role="status" aria-live="polite">
         {toasts.map((toast) => (

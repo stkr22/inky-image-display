@@ -11,6 +11,8 @@ from uuid import UUID, uuid4
 
 from sqlmodel import Field, SQLModel
 
+from inky_image_display_shared.time import utcnow
+
 
 class PromptBlock(SQLModel, table=True):
     """One reusable prompt fragment, scoped to a single concern (``kind``)."""
@@ -28,5 +30,5 @@ class PromptBlock(SQLModel, table=True):
         default=False,
         description="At most one block per kind should have this set; used as fallback.",
     )
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)

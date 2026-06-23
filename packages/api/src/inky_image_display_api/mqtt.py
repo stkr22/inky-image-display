@@ -46,14 +46,6 @@ def _command_topic(device_id: str) -> str:
     return f"{TOPIC_PREFIX}/{device_id}/cmd"
 
 
-def _status_filter() -> str:
-    return f"{TOPIC_PREFIX}/+/status"
-
-
-def _ack_filter() -> str:
-    return f"{TOPIC_PREFIX}/+/ack"
-
-
 _TOPIC_MIN_PARTS = 4
 
 
@@ -232,8 +224,8 @@ class MQTTService:
                     self._client_ready.set()
                     backoff = 5
 
-                    await client.subscribe(_status_filter(), qos=1)
-                    await client.subscribe(_ack_filter(), qos=1)
+                    await client.subscribe(f"{TOPIC_PREFIX}/+/status", qos=1)
+                    await client.subscribe(f"{TOPIC_PREFIX}/+/ack", qos=1)
                     logger.info(
                         "MQTT connected to %s:%s, subscribed to status and ack topics",
                         self._settings.mqtt_host,

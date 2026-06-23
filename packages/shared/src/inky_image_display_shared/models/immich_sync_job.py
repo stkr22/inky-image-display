@@ -8,6 +8,8 @@ from sqlalchemy import Column
 from sqlalchemy.types import JSON
 from sqlmodel import Field, SQLModel
 
+from inky_image_display_shared.time import utcnow
+
 
 class SyncStrategy(enum.StrEnum):
     """Strategy for selecting images from Immich.
@@ -102,5 +104,5 @@ class ImmichSyncJob(SQLModel, table=True):
     rating: int | None = Field(default=None, ge=0, le=5, description="Minimum rating")
 
     # Timestamps
-    created_at: datetime = Field(default_factory=datetime.now, description="When created")
-    updated_at: datetime = Field(default_factory=datetime.now, description="When last updated")
+    created_at: datetime = Field(default_factory=utcnow, description="When created")
+    updated_at: datetime = Field(default_factory=utcnow, description="When last updated")

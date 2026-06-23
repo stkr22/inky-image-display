@@ -9,6 +9,8 @@ from uuid import UUID, uuid4
 
 from sqlmodel import Field, SQLModel
 
+from inky_image_display_shared.time import utcnow
+
 
 class PromptPreset(SQLModel, table=True):
     """A named bundle of five prompt blocks (one per kind)."""
@@ -27,5 +29,5 @@ class PromptPreset(SQLModel, table=True):
         description="Gemini image model used when this preset is selected.",
     )
     is_default: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
