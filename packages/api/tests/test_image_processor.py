@@ -79,6 +79,15 @@ class TestExifOrientation:
         out = Image.open(BytesIO(processed))
         assert out.size == (200, 100)
 
+    def test_cover_fit_never_undershoots_target_by_rounding(self) -> None:
+        """Regression: a 2156x1617 source cover-fitted to 1600x1200 used to
+        floor the overflow axis to 1599, which the controller rejected with
+        'Image size 1599x1200 does not match display size 1600x1200'."""
+        raw = Image.new("RGB", (2156, 1617), color=(100, 150, 200))
+        processed = ImageProcessor.process_for_display(_make_jpeg(raw), target_width=1600, target_height=1200)
+        assert processed is not None
+        assert Image.open(BytesIO(processed)).size == (1600, 1200)
+
     @pytest.mark.parametrize("orientation", [3, 6, 8])
     def test_rotation_orientations_produce_portrait_output(self, orientation: int) -> None:
         """All rotation orientations (180°, 90° CW, 90° CCW) must resolve

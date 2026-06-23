@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from io import BytesIO
 
 import httpx
-import numpy as np
+import numpy as np  # ty: ignore[unresolved-import]  # script-only dep, intentionally not in project pyproject
 import pillow_heif
 from PIL import Image
 

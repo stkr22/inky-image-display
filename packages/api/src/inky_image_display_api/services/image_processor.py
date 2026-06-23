@@ -5,6 +5,7 @@ produces display-ready bytes — sync workers and other clients no longer
 touch this code directly, they POST through the HTTP endpoint instead.
 """
 
+import math
 from io import BytesIO
 
 import pillow_heif
@@ -83,8 +84,13 @@ class ImageProcessor:
                 if not upscale and scale > 1.0:
                     scale = 1.0
 
-                new_width = int(orig_width * scale)
-                new_height = int(orig_height * scale)
+                # Round up: cover-fit guarantees both axes are >= target in
+                # real arithmetic, but int() truncation can drop the overflow
+                # axis 1px below target (e.g. 1599 vs 1600). The center-crop
+                # below only trims when current > target, so a floored axis
+                # would slip through and the controller rejects the mismatch.
+                new_width = math.ceil(orig_width * scale)
+                new_height = math.ceil(orig_height * scale)
 
                 # Step 2: Resize with LANCZOS (high quality)
                 if scale != 1.0:
