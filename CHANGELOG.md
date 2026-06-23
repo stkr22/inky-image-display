@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.4.2](https://github.com/stkr22/inky-image-display/compare/v5.4.1...v5.4.2) (2026-06-23)
+
+
+### Bug Fixes
+
+* round up cover-fit dimensions to prevent 1px display mismatch ([c810b53](https://github.com/stkr22/inky-image-display/commit/c810b530191f7a06928ba53a66774e96d40e7a1b))
+* round up cover-fit dimensions to prevent 1px display mismatch ([c0bc0ba](https://github.com/stkr22/inky-image-display/commit/c0bc0ba0ea33e78501615f0804417bb5391c9ee0))
+
 ## [5.4.1](https://github.com/stkr22/inky-image-display/compare/v5.4.0...v5.4.1) (2026-06-14)
 
 
