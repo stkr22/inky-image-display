@@ -124,9 +124,12 @@ class ImmichSyncService:
         )
 
     async def sync_all_active_jobs(self) -> None:
-        """Execute all active sync jobs via the Display API."""
-        total_uploads = 0
+        """Execute all active sync jobs via the Display API.
 
+        Each job's ``max_images`` cap is counted against only the images that
+        job uploaded (``images.sync_job_name``), so one job can never spend
+        another's budget.
+        """
         jobs = await self.api_client.get_active_sync_jobs()
 
         if not jobs:
@@ -135,58 +138,39 @@ class ImmichSyncService:
 
         self.logger.info("Found %d active sync jobs", len(jobs))
 
+        # Cleanup first so expired images free up each job's budget before counting.
         if self.sync_config.retention_days > 0:
             await self._cleanup_expired_images()
-
-        max_images = self.sync_config.max_images
-        existing_count = await self._count_existing_immich_images()
-
-        if max_images > 0:
-            remaining_capacity = max_images - existing_count
-            self.logger.info(
-                "Existing Immich images: %d, limit: %d, can upload: %d",
-                existing_count,
-                max_images,
-                max(0, remaining_capacity),
-            )
-            if remaining_capacity <= 0:
-                self.logger.warning(
-                    "Total image limit reached (%d/%d), skipping all jobs",
-                    existing_count,
-                    max_images,
-                )
-                return
 
         self.storage.ensure_bucket_exists()
 
         async with self.immich.connect():
             for job in jobs:
-                if max_images > 0:
-                    remaining = max_images - existing_count - total_uploads
-                    if remaining <= 0:
+                max_uploads_remaining: int | None = None
+                if job.max_images > 0:
+                    existing = await self._count_job_images(job.name)
+                    max_uploads_remaining = job.max_images - existing
+                    self.logger.info(
+                        "Job '%s': %d/%d images already synced, can upload %d",
+                        job.name,
+                        existing,
+                        job.max_images,
+                        max(0, max_uploads_remaining),
+                    )
+                    if max_uploads_remaining <= 0:
                         self.logger.info(
-                            "Skipping job '%s': total image limit (%d) already reached",
+                            "Skipping job '%s': reached its image limit (%d)",
                             job.name,
-                            max_images,
+                            job.max_images,
                         )
                         continue
 
                 self.logger.info("Processing sync job: %s", job.name)
                 try:
-                    max_uploads_remaining = max_images - existing_count - total_uploads if max_images > 0 else None
                     result = await self._sync_job(job, max_uploads_remaining=max_uploads_remaining)
-                    total_uploads += result.downloaded
                     self.logger.info("Job '%s' completed: %s", job.name, result)
                 except Exception:
                     self.logger.exception("Job '%s' failed", job.name)
-
-        if max_images > 0:
-            self.logger.info(
-                "Uploaded %d images this run, total Immich images now: %d/%d",
-                total_uploads,
-                existing_count + total_uploads,
-                max_images,
-            )
 
     async def _cleanup_expired_images(self) -> CleanupResult:
         """Remove expired Immich images via the Display API.
@@ -341,14 +325,14 @@ class ImmichSyncService:
             display_model=profile.model,
         )
 
-    async def _count_existing_immich_images(self) -> int:
-        """Count images already synced from Immich.
+    async def _count_job_images(self, job_name: str) -> int:
+        """Count images already synced by a specific job.
 
         Returns:
-            Number of images with source_name == 'immich'
+            Number of Immich images whose sync_job_name matches ``job_name``
 
         """
-        images = await self.api_client.list_images(source_name=IMMICH_SOURCE_NAME)
+        images = await self.api_client.list_images(source_name=IMMICH_SOURCE_NAME, sync_job_name=job_name)
         return len(images)
 
     async def _process_asset(

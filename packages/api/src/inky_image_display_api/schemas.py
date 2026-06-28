@@ -176,6 +176,7 @@ class SyncJobCreate(BaseModel):
     strategy: str = "RANDOM"
     query: str | None = None
     count: int = 10
+    max_images: int = 10
     random_pick: bool = False
     overfetch_multiplier: int = 3
     album_ids: list[str] | None = None
@@ -200,6 +201,7 @@ class SyncJobUpdate(BaseModel):
     strategy: str | None = None
     query: str | None = None
     count: int | None = None
+    max_images: int | None = None
     random_pick: bool | None = None
     overfetch_multiplier: int | None = None
     album_ids: list[str] | None = None

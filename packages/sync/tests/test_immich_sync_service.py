@@ -32,7 +32,6 @@ class TestRetentionDaysConfig:
 def _make_service(
     api_client: ImmichDisplayAPIClient | MagicMock | None = None,
     retention_days: int = 7,
-    max_images: int = 20,
 ) -> ImmichSyncService:
     """Create an ImmichSyncService with mocked dependencies."""
     if api_client is None:
@@ -41,7 +40,6 @@ def _make_service(
     sync_config = ImmichSyncConfig(
         _env_file=None,  # ty: ignore[unknown-argument]
         retention_days=retention_days,
-        max_images=max_images,
     )
     s3_config = S3WriterConfig(
         endpoint="localhost:9000",
@@ -181,13 +179,14 @@ class TestCleanupInSyncFlow:
         # Return one job so cleanup is triggered, then return empty image list
         job = MagicMock(spec=SyncJobItem)
         job.name = "test-job"
+        job.max_images = 10
         api_client.get_active_sync_jobs.return_value = [job]
         api_client.list_images.return_value = []
         service = _make_service(api_client=api_client, retention_days=7)
 
         with patch.object(service, "_cleanup_expired_images", new_callable=AsyncMock) as mock_cleanup:
             mock_cleanup.return_value = CleanupResult()
-            with patch.object(service, "_count_existing_immich_images", new_callable=AsyncMock, return_value=20):
+            with patch.object(service, "_count_job_images", new_callable=AsyncMock, return_value=10):
                 await service.sync_all_active_jobs()
 
         mock_cleanup.assert_called_once()
@@ -195,10 +194,11 @@ class TestCleanupInSyncFlow:
 
 @pytest.mark.asyncio
 async def test_cleanup_called_before_capacity_check() -> None:
-    """Verify cleanup runs before the max_images capacity check."""
+    """Verify cleanup runs before a job's per-job capacity check."""
     api_client = AsyncMock(spec=ImmichDisplayAPIClient)
     job = MagicMock(spec=SyncJobItem)
     job.name = "test-job"
+    job.max_images = 5
     api_client.get_active_sync_jobs.return_value = [job]
 
     call_order: list[str] = []
@@ -207,15 +207,15 @@ async def test_cleanup_called_before_capacity_check() -> None:
         call_order.append("cleanup")
         return CleanupResult(expired=3, deleted=3)
 
-    async def mock_count() -> int:
+    async def mock_count(_job_name: str) -> int:
         call_order.append("count")
         return 5  # At limit
 
-    service = _make_service(api_client=api_client, retention_days=7, max_images=5)
+    service = _make_service(api_client=api_client, retention_days=7)
 
     with (
         patch.object(service, "_cleanup_expired_images", side_effect=mock_cleanup),
-        patch.object(service, "_count_existing_immich_images", side_effect=mock_count),
+        patch.object(service, "_count_job_images", side_effect=mock_count),
     ):
         await service.sync_all_active_jobs()
 
@@ -322,6 +322,7 @@ class TestFilterAssets:
             strategy="RANDOM",
             query=None,
             count=count,
+            max_images=10,
             random_pick=False,
             overfetch_multiplier=3,
             album_ids=None,
@@ -438,6 +439,7 @@ class TestProcessAssetCallsApiForResize:
             strategy="RANDOM",
             query=None,
             count=10,
+            max_images=10,
             random_pick=False,
             overfetch_multiplier=3,
             album_ids=None,
@@ -517,6 +519,7 @@ def _make_random_job(
         strategy=strategy,
         query=query,
         count=count,
+        max_images=10,
         random_pick=False,
         overfetch_multiplier=overfetch_multiplier,
         album_ids=None,

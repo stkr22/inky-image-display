@@ -34,6 +34,7 @@ class SyncJobItem(BaseModel):
     strategy: str
     query: str | None
     count: int
+    max_images: int
     random_pick: bool
     overfetch_multiplier: int
     album_ids: list[str] | None
