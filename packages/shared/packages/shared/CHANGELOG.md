@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.3.0](https://github.com/stkr22/inky-image-display/compare/shared-v4.2.0...shared-v4.3.0) (2026-06-28)
+
+
+### Features
+
+* make Immich image cap per-job instead of global ([f0b5d6c](https://github.com/stkr22/inky-image-display/commit/f0b5d6c865566799a1091d44019ce7aa127cf2ae))
+* make Immich image cap per-job instead of global ([82b720e](https://github.com/stkr22/inky-image-display/commit/82b720e1620eb7ca4a27c78b6aa02843c4affe0f))
+
 ## [4.2.0](https://github.com/stkr22/inky-image-display/compare/shared-v4.1.0...shared-v4.2.0) (2026-06-13)
 
 
