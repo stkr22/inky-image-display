@@ -130,7 +130,6 @@ display:
 |----------|----------|---------|-------------|
 | `IMMICH_STORAGE_PREFIX` | No | `immich` | S3 path prefix for synced images |
 | `IMMICH_SKIP_EXISTING` | No | `true` | Skip images already in the database |
-| `IMMICH_MAX_IMAGES` | No | `20` | Maximum Immich-sourced images in the database (`0` = unlimited) |
 | `IMMICH_RETENTION_DAYS` | No | `7` | Days before Immich images expire (`0` = never) |
 | `IMMICH_TARGET_WIDTH` | No | — | Resize images to this width before storing |
 | `IMMICH_TARGET_HEIGHT` | No | — | Resize images to this height before storing |

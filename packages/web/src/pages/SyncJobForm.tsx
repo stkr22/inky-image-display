@@ -36,6 +36,7 @@ export function SyncJobForm() {
   const [targetProfile, setTargetProfile] = useState('')
   const [orientation, setOrientation] = useState('')
   const [count, setCount] = useState<number | ''>(10)
+  const [maxImages, setMaxImages] = useState<number | ''>(10)
   const [overfetch, setOverfetch] = useState(3)
   const [randomPick, setRandomPick] = useState(false)
   const [active, setActive] = useState(true)
@@ -59,6 +60,7 @@ export function SyncJobForm() {
     setTargetProfile(job.target_device_profile_id)
     setOrientation(job.orientation ?? '')
     setCount(job.count)
+    setMaxImages(job.max_images)
     setOverfetch(job.overfetch_multiplier || 3)
     setRandomPick(job.random_pick)
     setActive(job.is_active)
@@ -87,6 +89,10 @@ export function SyncJobForm() {
     if (!Number.isInteger(countValue) || countValue < MIN_COUNT || countValue > MAX_COUNT) {
       return setError(`Count must be between ${MIN_COUNT} and ${MAX_COUNT}`)
     }
+    const maxImagesValue = Number(maxImages)
+    if (!Number.isInteger(maxImagesValue) || maxImagesValue < 0) {
+      return setError('Max images must be 0 (unlimited) or greater')
+    }
     if (strategy === 'SMART' && !query.trim()) return setError('Query is required when strategy is SMART')
 
     const body = {
@@ -96,6 +102,7 @@ export function SyncJobForm() {
       target_device_profile_id: targetProfile,
       orientation: orientation || null,
       count: countValue,
+      max_images: maxImagesValue,
       random_pick: randomPick,
       overfetch_multiplier: overfetch,
       album_ids: albumIds.length ? albumIds : null,
@@ -167,6 +174,7 @@ export function SyncJobForm() {
           />
           <div className="ink-form-row items-end w-full">
             <NumberField label={`Count (${MIN_COUNT}-${MAX_COUNT})`} value={count} onChange={setCount} min={MIN_COUNT} max={MAX_COUNT} step={1} />
+            <NumberField label="Max images kept (0 = unlimited)" value={maxImages} onChange={setMaxImages} min={0} step={1} />
             <Slider label="Overfetch multiplier" value={overfetch} onChange={setOverfetch} min={1} max={10} />
           </div>
           <div className="row w-full gap-4 items-center wrap">

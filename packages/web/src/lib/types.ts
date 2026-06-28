@@ -70,6 +70,7 @@ export interface SyncJob {
   strategy: string
   query: string | null
   count: number
+  max_images: number
   random_pick: boolean
   overfetch_multiplier: number
   album_ids: string[] | null

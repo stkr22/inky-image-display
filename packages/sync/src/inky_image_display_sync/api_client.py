@@ -155,6 +155,7 @@ class DisplayAPIClient:
     async def list_images(
         self,
         source_name: str | None = None,
+        sync_job_name: str | None = None,
         expires_before: datetime | None = None,
         limit: int = 1000,
     ) -> list[ImageItem]:
@@ -162,6 +163,8 @@ class DisplayAPIClient:
         params: dict[str, str | int] = {"limit": limit}
         if source_name is not None:
             params["source_name"] = source_name
+        if sync_job_name is not None:
+            params["sync_job_name"] = sync_job_name
         if expires_before is not None:
             params["expires_before"] = expires_before.isoformat()
         response = await self._request("GET", "/api/images", params=params)

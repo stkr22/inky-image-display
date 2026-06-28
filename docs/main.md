@@ -45,7 +45,7 @@ CLI with two subcommands, both intended to run as cron jobs:
 3. Filters results client-side by orientation, minimum color score, and vibrancy score.
 4. Downloads, resizes, and stores qualifying images to S3.
 5. Persists image metadata to the `images` table.
-6. Enforces the `max_images` cap and `retention_days` expiry by deleting old Immich-sourced images.
+6. Enforces each job's `max_images` cap (counted against only that job's own uploads) and the `retention_days` expiry by deleting old Immich-sourced images.
 
 **`inky-image-display-sync gemini`** — for each active `GeminiSyncJob`:
 

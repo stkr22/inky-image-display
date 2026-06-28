@@ -24,6 +24,7 @@ async def list_images(
     request: Request,
     source_name: str | None = None,
     source_id: str | None = None,
+    sync_job_name: str | None = None,
     is_portrait: bool | None = None,
     source_url: str | None = None,
     source_url_prefix: str | None = None,
@@ -40,6 +41,7 @@ async def list_images(
         request: Incoming HTTP request.
         source_name: Filter by source type (e.g. "immich", "manual").
         source_id: Filter by stable source identifier (e.g. an Immich asset UUID).
+        sync_job_name: Filter by the sync job that created the image.
         is_portrait: Filter by orientation.
         source_url: Filter by exact source URL.
         source_url_prefix: Filter by source URL prefix (LIKE match).
@@ -57,6 +59,8 @@ async def list_images(
             query = query.where(Image.source_name == source_name)
         if source_id is not None:
             query = query.where(Image.source_id == source_id)
+        if sync_job_name is not None:
+            query = query.where(Image.sync_job_name == sync_job_name)
         if is_portrait is not None:
             query = query.where(Image.is_portrait == is_portrait)
         if source_url is not None:

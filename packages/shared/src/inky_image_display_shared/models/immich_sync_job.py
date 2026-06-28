@@ -37,6 +37,7 @@ class ImmichSyncJob(SQLModel, table=True):
         strategy: Selection strategy - 'random' or 'smart' (CLIP search)
         query: Semantic search query (required for 'smart' strategy)
         count: Number of images to sync per run
+        max_images: Cap on images this job keeps in the database (0 = unlimited)
         random_pick: Randomly sample from smart search results
         overfetch_multiplier: Fetch more images to allow for client-side filtering
         album_ids: Filter by album UUIDs
@@ -80,6 +81,11 @@ class ImmichSyncJob(SQLModel, table=True):
         description="Semantic search query for 'smart' strategy",
     )
     count: int = Field(default=10, ge=1, le=1000, description="Images to sync per run")
+    max_images: int = Field(
+        default=10,
+        ge=0,
+        description="Max images this job keeps in the database; counted against its own uploads (0 = unlimited)",
+    )
     random_pick: bool = Field(
         default=False,
         description="Randomly sample from smart search results",
