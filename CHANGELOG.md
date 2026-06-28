@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.5.0](https://github.com/stkr22/inky-image-display/compare/v5.4.2...v5.5.0) (2026-06-28)
+
+
+### Features
+
+* make Immich image cap per-job instead of global ([f0b5d6c](https://github.com/stkr22/inky-image-display/commit/f0b5d6c865566799a1091d44019ce7aa127cf2ae))
+* make Immich image cap per-job instead of global ([82b720e](https://github.com/stkr22/inky-image-display/commit/82b720e1620eb7ca4a27c78b6aa02843c4affe0f))
+
 ## [5.4.2](https://github.com/stkr22/inky-image-display/compare/v5.4.1...v5.4.2) (2026-06-23)
 
 
