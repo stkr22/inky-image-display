@@ -5,6 +5,7 @@
 	"remoteUser": "vscode",
 	"workspaceFolder": "/workspaces/inky-image-display",
     "features": {
+		"ghcr.io/stkr22/devcontainer-features/claude-code:2.0.3": {},
         "ghcr.io/stkr22/devcontainer-features/uv:1.1.0": {},
 		"ghcr.io/devcontainer-community/devcontainer-features/starship.rs:1": {},
 		"ghcr.io/devcontainers/features/node:2.0.0": {
@@ -50,7 +51,7 @@
 	},
 	"postCreateCommand": {
 		"uv-sync": "uv sync --all-packages --group dev",
-		"uv-pre-commit": "uv tool run pre-commit install",
+		"uv-prek": "uv tool run prek install",
 		"playwright-install": "npx -y playwright install-deps chromium && npx -y playwright install chromium"
 	}
 }
