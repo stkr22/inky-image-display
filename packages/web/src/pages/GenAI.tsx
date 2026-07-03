@@ -1,9 +1,12 @@
-// Unified GenAI page: on-demand generation form on top, prompt library
-// (blocks + presets) tucked into an "Advanced" expansion below.
+// Unified GenAI page with the tab in the URL (?tab=motd|prompts) so deep
+// links and back/forward work, mirroring the Jobs page. "Images" holds the
+// on-demand generation form; "Message of the day" the daily-story feature;
+// "Prompt library" the blocks/presets both of them build their image
+// prompts from.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { ConfirmDialog } from '../components/Dialog'
 import { Button, Expansion, SelectField, Switch, TextArea, TextField } from '../components/fields'
 import { useNotify } from '../components/Toast'
@@ -18,6 +21,7 @@ import {
   type PromptBlockKind,
   type PromptPreset,
 } from '../lib/types'
+import { Motd } from './Motd'
 
 const SUBJECT_MAX_CHARS = 200
 const BLOCK_PREVIEW_CHARS = 80
@@ -26,13 +30,46 @@ function errMessage(err: unknown): string {
   return err instanceof ApiError ? err.detail || err.message : String(err)
 }
 
+const GENAI_TABS = [
+  { key: 'images', label: 'Images', icon: 'auto_awesome' },
+  { key: 'motd', label: 'Message of the day', icon: 'wb_sunny' },
+  { key: 'prompts', label: 'Prompt library', icon: 'tune' },
+] as const
+
+type GenAITab = (typeof GENAI_TABS)[number]['key']
+
 export function GenAI() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requested = searchParams.get('tab')
+  const tab: GenAITab = requested === 'motd' || requested === 'prompts' ? requested : 'images'
+
   return (
     <>
-      <GenerateSection />
-      <RecentGenerations />
-      <div style={{ height: 24 }} />
-      <AdvancedSection />
+      <div
+        className="row w-full gap-2 items-center"
+        style={{ borderBottom: '1px solid var(--ink-border)', paddingBottom: 8 }}
+      >
+        {GENAI_TABS.map((entry) => (
+          <Button
+            key={entry.key}
+            primary={tab === entry.key}
+            flat={tab !== entry.key}
+            icon={entry.icon}
+            onClick={() => setSearchParams(entry.key === 'images' ? {} : { tab: entry.key })}
+          >
+            {entry.label}
+          </Button>
+        ))}
+      </div>
+
+      {tab === 'images' && (
+        <>
+          <GenerateSection />
+          <RecentGenerations />
+        </>
+      )}
+      {tab === 'motd' && <Motd />}
+      {tab === 'prompts' && <PromptLibrarySection />}
     </>
   )
 }
@@ -193,21 +230,26 @@ function GenerateSection() {
   )
 }
 
-// --- Advanced: prompt library -----------------------------------------------------
+// --- Prompt library -----------------------------------------------------
 
-function AdvancedSection() {
+function PromptLibrarySection() {
   const { data: blocks } = useQuery({ queryKey: ['prompt-blocks'], queryFn: api.listPromptBlocks })
   const { data: presets } = useQuery({ queryKey: ['prompt-presets'], queryFn: api.listPromptPresets })
 
   return (
-    <Expansion title="Advanced — prompt library">
-      <span className="ink-small" style={{ marginBottom: 8 }}>
-        Power-user controls. Blocks are the reusable text fragments that make up a preset; presets are what the
-        generate form and Gemini batch jobs reference. Composition blocks may include {'{subject}'}.
-      </span>
+    <section className="col w-full gap-4">
+      <div className="col gap-0">
+        <span className="ink-eyebrow">GenAI</span>
+        <h2 className="ink-h2">Prompt library</h2>
+        <p className="ink-body ink-muted" style={{ maxWidth: 640, margin: 0 }}>
+          Blocks are the reusable text fragments that make up a preset; presets are what the generate form, Gemini
+          batch jobs, and the message of the day reference for image style. Composition blocks may include{' '}
+          {'{subject}'}.
+        </p>
+      </div>
       <BlocksCard blocks={blocks ?? []} />
       <PresetsCard presets={presets ?? []} blocks={blocks ?? []} />
-    </Expansion>
+    </section>
   )
 }
 

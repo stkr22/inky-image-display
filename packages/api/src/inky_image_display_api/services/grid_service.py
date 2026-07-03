@@ -298,6 +298,11 @@ async def claim_devices_and_push(  # noqa: PLR0913 — explicit deps mirror the 
                 status_code=409,
                 detail=f"Device {device.device_id} is already claimed by another grid",
             )
+        if device.claimed_by_motd_config_id is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Device {device.device_id} is claimed by an active message of the day",
+            )
         devices.append(device)
 
     # Apply claims and push commands. Cadence is grid-owned now — every

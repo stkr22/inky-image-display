@@ -26,6 +26,7 @@ from inky_image_display_api.routes import (
     images_process,
     immich_browse,
     media,
+    motd,
     prompt_blocks,
     prompt_presets,
     schedule,
@@ -88,6 +89,7 @@ app.include_router(prompt_blocks.router)
 app.include_router(prompt_presets.router)
 app.include_router(gemini_sync_jobs.router)
 app.include_router(genai_generate.router)
+app.include_router(motd.router)
 app.include_router(immich_browse.router)
 app.include_router(app_settings.router)
 app.include_router(media.router)

@@ -20,6 +20,7 @@ from inky_image_display_api.routes import (
     grids,
     images,
     images_process,
+    motd,
     prompt_blocks,
     schedule,
     sync_jobs,
@@ -33,6 +34,10 @@ from inky_image_display_shared.models import (
     Grid,
     GridDevice,
     Image,
+    MotdConfig,
+    MotdDeviceAssignment,
+    MotdMessage,
+    MotdScreen,
     PromptBlock,
     PromptPreset,
 )
@@ -57,12 +62,16 @@ async def async_engine() -> AsyncIterator[AsyncEngine]:
             Image.__table__,  # ty: ignore[unresolved-attribute]
             DeviceProfile.__table__,  # ty: ignore[unresolved-attribute]
             Grid.__table__,  # ty: ignore[unresolved-attribute]
+            PromptBlock.__table__,  # ty: ignore[unresolved-attribute]
+            PromptPreset.__table__,  # ty: ignore[unresolved-attribute]
+            MotdConfig.__table__,  # ty: ignore[unresolved-attribute]
             Device.__table__,  # ty: ignore[unresolved-attribute]
             GridDevice.__table__,  # ty: ignore[unresolved-attribute]
             AppSetting.__table__,  # ty: ignore[unresolved-attribute]
-            PromptBlock.__table__,  # ty: ignore[unresolved-attribute]
-            PromptPreset.__table__,  # ty: ignore[unresolved-attribute]
             GeminiSyncJob.__table__,  # ty: ignore[unresolved-attribute]
+            MotdDeviceAssignment.__table__,  # ty: ignore[unresolved-attribute]
+            MotdMessage.__table__,  # ty: ignore[unresolved-attribute]
+            MotdScreen.__table__,  # ty: ignore[unresolved-attribute]
         ]:
             await conn.run_sync(table.create, checkfirst=True)
     yield engine
@@ -154,6 +163,7 @@ def test_app(
     app.include_router(app_settings.router)
     app.include_router(prompt_blocks.router)
     app.include_router(gemini_sync_jobs.router)
+    app.include_router(motd.router)
 
     return app
 

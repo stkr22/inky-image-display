@@ -9,7 +9,7 @@ from inky_image_display_shared.time import utcnow
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from inky_image_display_api.services import grid_service
+from inky_image_display_api.services import grid_service, motd_service
 from inky_image_display_api.services.image_service import (
     build_display_command,
     get_next_image_for_device,
@@ -33,6 +33,10 @@ async def rotation_loop(app: FastAPI) -> None:
     """
     while True:
         await asyncio.sleep(30)
+        try:
+            await motd_service.tick(app)
+        except Exception:
+            logger.exception("Error in MOTD tick")
         try:
             await _rotate_due_grids(app)
         except Exception:
@@ -62,6 +66,7 @@ async def _rotate_due_devices(app: FastAPI) -> None:
                 Device.is_online == True,  # noqa: E712 — SQLModel comparison
                 Device.scheduled_next_at <= now,
                 col(Device.claimed_by_grid_id).is_(None),
+                col(Device.claimed_by_motd_config_id).is_(None),
                 col(Device.last_refresh_ok).is_not(False),
             )
         )
@@ -141,6 +146,18 @@ async def _rotate_single_grid(app: FastAPI, grid_id: object) -> None:
         stuck = errored.all()
         if stuck:
             logger.debug("Grid %s paused — member(s) %s have a failed refresh", db_grid.id, ", ".join(stuck))
+            return
+        # An active MOTD session holds its devices exclusively (same rule as
+        # a competing grid claim); pause the grid until the MOTD releases.
+        motd_claimed = await session.exec(
+            select(Device.device_id).where(
+                col(Device.id).in_(member_ids),
+                col(Device.claimed_by_motd_config_id).is_not(None),
+            )
+        )
+        taken = motd_claimed.all()
+        if taken:
+            logger.debug("Grid %s paused — member(s) %s claimed by MOTD", db_grid.id, ", ".join(taken))
             return
         image = await grid_service.get_next_grid_image(session, db_grid)
         if image is None:

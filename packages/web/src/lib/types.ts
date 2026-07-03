@@ -177,6 +177,106 @@ export interface ImmichRef {
   name: string
 }
 
+// --- Message of the day ---
+
+export interface MotdAssignment {
+  device_id: string
+  parts: string[]
+  rotation_index: number
+}
+
+export interface MotdConfig {
+  id: string
+  content_prompt: string
+  default_prompt: string
+  source_mode: 'grounded' | 'knowledge'
+  image_preset_id: string | null
+  text_model_name: string
+  schedule_enabled: boolean
+  display_time: string
+  weekday_mask: number
+  timezone: string
+  generation_lead_minutes: number
+  display_duration_seconds: number | null
+  active_message_id: string | null
+  active_since: string | null
+  active_expires_at: string | null
+  last_generated_on: string | null
+  last_displayed_on: string | null
+  created_at: string
+  updated_at: string
+  assignments: MotdAssignment[]
+}
+
+export interface MotdScreen {
+  id: string
+  part: string
+  width: number
+  height: number
+  is_portrait: boolean
+  storage_path: string
+  created_at: string
+}
+
+export interface MotdMessage {
+  id: string
+  status: 'generating' | 'ready' | 'failed'
+  error: string | null
+  headline: string | null
+  what: string | null
+  why: string | null
+  when_text: string | null
+  takeaway: string | null
+  image_subject: string | null
+  source_url: string | null
+  source_title: string | null
+  source_mode: string
+  created_at: string
+  screens: MotdScreen[]
+}
+
+export interface MotdDeviceStatus {
+  device_id: string
+  is_online: boolean
+  current_part: string | null
+}
+
+export interface MotdStatus {
+  active: boolean
+  message_id: string | null
+  headline: string | null
+  active_since: string | null
+  active_expires_at: string | null
+  devices: MotdDeviceStatus[]
+}
+
+export interface MotdDisplayResult {
+  message_id: string
+  headline: string | null
+  displayed: string[]
+  offline: string[]
+  skipped_grid_claimed: string[]
+  skipped_no_content: string[]
+}
+
+// Atomic parts in canonical order plus the offered two-per-screen combos
+// (only text parts stack; image and QR always get a full screen).
+export const MOTD_PARTS = ['what', 'why', 'when', 'image', 'qr', 'takeaway'] as const
+export const MOTD_COMPOUND_PARTS = ['what+why', 'what+when', 'why+takeaway', 'when+takeaway'] as const
+
+export const MOTD_PART_LABELS: Record<string, string> = {
+  what: 'What?',
+  why: 'Why?',
+  when: 'When?',
+  image: 'AI image',
+  qr: 'QR details',
+  takeaway: 'Takeaway',
+  'what+why': 'What + Why',
+  'what+when': 'What + When',
+  'why+takeaway': 'Why + Takeaway',
+  'when+takeaway': 'When + Takeaway',
+}
+
 export const PROMPT_BLOCK_KINDS = ['style', 'palette', 'legibility', 'composition', 'background'] as const
 export type PromptBlockKind = (typeof PROMPT_BLOCK_KINDS)[number]
 

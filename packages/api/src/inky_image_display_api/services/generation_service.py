@@ -35,9 +35,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def _resolve_preset(
-    session: AsyncSession, preset_id: UUID | None
-) -> tuple[PromptPreset, dict[UUID, PromptBlock]]:
+async def resolve_preset(session: AsyncSession, preset_id: UUID | None) -> tuple[PromptPreset, dict[UUID, PromptBlock]]:
     """Load preset (defaulting to the ``is_default`` row) and its blocks."""
     if preset_id is None:
         result = await session.exec(select(PromptPreset).where(PromptPreset.is_default == True))  # noqa: E712
@@ -67,7 +65,8 @@ async def _resolve_preset(
     return preset, blocks
 
 
-def _build_rendered_prompt(preset: PromptPreset, blocks: dict[UUID, PromptBlock], is_portrait: bool) -> RenderedPrompt:
+def build_rendered_prompt(preset: PromptPreset, blocks: dict[UUID, PromptBlock], is_portrait: bool) -> RenderedPrompt:
+    """Assemble a ``RenderedPrompt`` from a preset's five blocks."""
     return RenderedPrompt(
         style=blocks[preset.style_block_id].text,
         palette=blocks[preset.palette_block_id].text,
@@ -133,8 +132,8 @@ async def generate_and_publish(  # noqa: PLR0912, PLR0913, PLR0915
                 return
             profile_id = profile.id
 
-            preset, blocks = await _resolve_preset(session, preset_id)
-            rendered = _build_rendered_prompt(preset, blocks, is_portrait)
+            preset, blocks = await resolve_preset(session, preset_id)
+            rendered = build_rendered_prompt(preset, blocks, is_portrait)
             model_name = preset.model_name
 
             # Profile.width/height are panel-native (landscape); swap for portrait

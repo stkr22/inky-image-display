@@ -68,6 +68,7 @@ The API needs an S3-compatible store (MinIO / Garage / AWS) and an MQTT broker. 
 - [Deployment requirements](docs/deployment-requirements.md) — external dependencies and minimal env
 - [UI guide](docs/ui.md) — pages, routes, local development
 - [Grids](docs/grids.md) — multi-display canvas layout and slice rendering
+- [Message of the day](docs/motd.md) — daily AI-generated positive story across displays
 
 ## License
 

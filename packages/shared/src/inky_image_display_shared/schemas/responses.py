@@ -9,7 +9,7 @@ Request/update schemas remain in ``inky_image_display_api.schemas`` —
 only the API accepts input, so there is nothing to share on that side.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -281,3 +281,108 @@ class AppSettingsResponse(BaseModel):
     """Operator-tunable app settings."""
 
     default_refresh_seconds: int
+
+
+# --- Message of the day ---
+
+
+class MotdAssignmentResponse(BaseModel):
+    """One device's part assignment within the MOTD config."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    device_id: UUID
+    parts: list[str]
+    rotation_index: int
+
+
+class MotdConfigResponse(BaseModel):
+    """The MOTD configuration plus live session state."""
+
+    id: UUID
+    content_prompt: str
+    # Shipped default so the UI can offer "reset to default" without
+    # hardcoding a copy of the prompt.
+    default_prompt: str
+    source_mode: str
+    image_preset_id: UUID | None
+    text_model_name: str
+    schedule_enabled: bool
+    display_time: str
+    weekday_mask: int
+    timezone: str
+    generation_lead_minutes: int
+    display_duration_seconds: int | None
+    active_message_id: UUID | None
+    active_since: UtcDatetime | None
+    active_expires_at: UtcDatetime | None
+    last_generated_on: date | None
+    last_displayed_on: date | None
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
+    assignments: list[MotdAssignmentResponse]
+
+
+class MotdScreenResponse(BaseModel):
+    """One pre-rendered screen of a generated message."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    part: str
+    width: int
+    height: int
+    is_portrait: bool
+    storage_path: str
+    created_at: UtcDatetime
+
+
+class MotdMessageResponse(BaseModel):
+    """A generated MOTD story with its rendered screens."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    status: str
+    error: str | None
+    headline: str | None
+    what: str | None
+    why: str | None
+    when_text: str | None
+    takeaway: str | None
+    image_subject: str | None
+    source_url: str | None
+    source_title: str | None
+    source_mode: str
+    created_at: UtcDatetime
+    screens: list[MotdScreenResponse] = []
+
+
+class MotdDeviceStatus(BaseModel):
+    """Live per-device state while a MOTD session is active."""
+
+    device_id: str
+    is_online: bool
+    current_part: str | None
+
+
+class MotdStatusResponse(BaseModel):
+    """Whether a MOTD session is active and what each device shows."""
+
+    active: bool
+    message_id: UUID | None
+    headline: str | None
+    active_since: UtcDatetime | None
+    active_expires_at: UtcDatetime | None
+    devices: list[MotdDeviceStatus]
+
+
+class MotdDisplayResult(BaseModel):
+    """Per-device outcome of ``POST /api/motd/display``."""
+
+    message_id: UUID
+    headline: str | None
+    displayed: list[str]
+    offline: list[str]
+    skipped_grid_claimed: list[str]
+    skipped_no_content: list[str]

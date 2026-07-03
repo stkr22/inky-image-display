@@ -13,6 +13,8 @@ const SECTIONS: Array<{ path: string; heading: string | RegExp }> = [
   { path: '/sync-jobs/new', heading: 'New sync job' },
   { path: '/gemini-jobs/new', heading: 'New Gemini job' },
   { path: '/genai', heading: 'Generate an image' },
+  { path: '/genai?tab=motd', heading: 'Daily positive story' },
+  { path: '/genai?tab=prompts', heading: 'Prompt library' },
   { path: '/settings', heading: 'Settings' },
 ]
 

@@ -12,6 +12,10 @@ from inky_image_display_shared.models import (
     GridDevice,
     Image,
     ImmichSyncJob,
+    MotdConfig,
+    MotdDeviceAssignment,
+    MotdMessage,
+    MotdScreen,
     PromptBlock,
     PromptPreset,
 )
@@ -56,12 +60,18 @@ async def create_tables(engine: AsyncEngine) -> None:
         tables = [
             Image.__table__,  # ty: ignore[unresolved-attribute]
             Grid.__table__,  # ty: ignore[unresolved-attribute]
+            PromptBlock.__table__,  # ty: ignore[unresolved-attribute]
+            PromptPreset.__table__,  # ty: ignore[unresolved-attribute]
+            # motd_configs precedes devices: the device claim column carries
+            # a FK to it, and Postgres checks referenced tables at DDL time.
+            MotdConfig.__table__,  # ty: ignore[unresolved-attribute]
             Device.__table__,  # ty: ignore[unresolved-attribute]
             GridDevice.__table__,  # ty: ignore[unresolved-attribute]
             ImmichSyncJob.__table__,  # ty: ignore[unresolved-attribute]
-            PromptBlock.__table__,  # ty: ignore[unresolved-attribute]
-            PromptPreset.__table__,  # ty: ignore[unresolved-attribute]
             GeminiSyncJob.__table__,  # ty: ignore[unresolved-attribute]
+            MotdDeviceAssignment.__table__,  # ty: ignore[unresolved-attribute]
+            MotdMessage.__table__,  # ty: ignore[unresolved-attribute]
+            MotdScreen.__table__,  # ty: ignore[unresolved-attribute]
         ]
         for table in tables:
             await conn.run_sync(table.create, checkfirst=True)

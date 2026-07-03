@@ -10,7 +10,7 @@ the seeded ``e_ink_humanoid`` preset from any ID-keyed lookup:
 
 The test below runs the real migrations on a fresh temp database, then drives
 every code path the generate flow touches: the API's list+get endpoints, the
-generation service's two ``_resolve_preset`` branches, and the block fan-out.
+generation service's two ``resolve_preset`` branches, and the block fan-out.
 A second test simulates a pre-fix prod database (rows already seeded with
 dashes-form IDs) and asserts migration 0006 normalises them.
 """
@@ -34,7 +34,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from inky_image_display_api.database import create_tables
 from inky_image_display_api.routes.prompt_presets import router as presets_router
-from inky_image_display_api.services.generation_service import _resolve_preset
+from inky_image_display_api.services.generation_service import resolve_preset
 from inky_image_display_shared.models import PromptPreset
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -79,17 +79,17 @@ class TestSeededPresetIsReachable:
         assert preset is not None
         assert preset.name == "e_ink_humanoid"
 
-    async def test_resolve_preset_without_id(self, seeded_engine: AsyncEngine) -> None:
-        """``_resolve_preset(None)`` (the dropdown-empty path) returns preset+blocks."""
+    async def testresolve_preset_without_id(self, seeded_engine: AsyncEngine) -> None:
+        """``resolve_preset(None)`` (the dropdown-empty path) returns preset+blocks."""
         async with AsyncSession(seeded_engine) as session:
-            preset, blocks = await _resolve_preset(session, None)
+            preset, blocks = await resolve_preset(session, None)
         assert preset.name == "e_ink_humanoid"
         # Every FK on the preset must resolve to a block — this is what
         # exposed the bug end-to-end (in_-clause silently returning empty).
         assert len(blocks) == 5
 
-    async def test_resolve_preset_by_id(self, seeded_engine: AsyncEngine) -> None:
-        """``_resolve_preset(preset_id)`` (the UI-default path) must succeed.
+    async def testresolve_preset_by_id(self, seeded_engine: AsyncEngine) -> None:
+        """``resolve_preset(preset_id)`` (the UI-default path) must succeed.
 
         This is the exact path that failed in prod with "No prompt preset
         available" — the UUID stored in dashes form never matched the
@@ -101,7 +101,7 @@ class TestSeededPresetIsReachable:
         assert seeded is not None
 
         async with AsyncSession(seeded_engine) as session:
-            preset, blocks = await _resolve_preset(session, seeded.id)
+            preset, blocks = await resolve_preset(session, seeded.id)
         assert preset.id == seeded.id
         assert len(blocks) == 5
 
@@ -155,6 +155,71 @@ class TestDefaultBlocksRepainted:
         async with seeded_engine.begin() as conn:
             text = (await conn.execute(sa.text("SELECT text FROM prompt_blocks WHERE name = 'spectra_6'"))).scalar_one()
         assert text == custom
+
+
+class TestDefaultBlocksTuned:
+    """Migration 0015 must retune the defaults but spare operator edits."""
+
+    async def test_tuning_applied_on_fresh_db(self, seeded_engine: AsyncEngine) -> None:
+        """A fresh DB carries the tuned text: no named artist, hard no-text rule."""
+        async with seeded_engine.begin() as conn:
+            rows = (await conn.execute(sa.text("SELECT name, text FROM prompt_blocks"))).fetchall()
+        text_by_name = {row[0]: row[1] for row in rows}
+
+        # Named artists leak into content (Van Gogh painted himself into MOTD
+        # illustrations); the style now names only the painterly qualities.
+        assert "Van Gogh" not in text_by_name["poster_screenprint"]
+        assert "painterly" in text_by_name["poster_screenprint"].lower()
+        # Generated captions dither badly and misspell — text is forbidden.
+        assert "no text of any kind" in text_by_name["eink_bold_shapes"]
+        # The scene block is now a generic hero-subject composition.
+        assert "emblematic" in text_by_name["scene_full_frame"]
+
+    async def test_operator_edited_block_is_preserved(self, seeded_engine: AsyncEngine) -> None:
+        """A block edited in the UI must survive a 0015 re-run untouched."""
+        mig0015 = _load_migration("0015_add_motd")
+        custom = "MY HAND-TUNED STYLE — keep this."
+
+        async with seeded_engine.begin() as conn:
+            await conn.execute(
+                sa.text("UPDATE prompt_blocks SET text = :t WHERE name = 'poster_screenprint'"),
+                {"t": custom},
+            )
+            await conn.run_sync(lambda sync_conn: _run_upgrade(sync_conn, mig0015))
+
+        async with seeded_engine.begin() as conn:
+            text = (
+                await conn.execute(sa.text("SELECT text FROM prompt_blocks WHERE name = 'poster_screenprint'"))
+            ).scalar_one()
+        assert text == custom
+
+
+class TestScenePresetSeeded:
+    """Migration 0015 must seed the scene preset for MOTD image generation."""
+
+    async def test_scene_preset_seeded_with_scene_composition(self, seeded_engine: AsyncEngine) -> None:
+        async with seeded_engine.begin() as conn:
+            row = (
+                await conn.execute(
+                    sa.text(
+                        "SELECT p.is_default, b.name FROM prompt_presets p "
+                        "JOIN prompt_blocks b ON b.id = p.composition_block_id WHERE p.name = 'e_ink_scene'"
+                    )
+                )
+            ).fetchone()
+        assert row is not None, "e_ink_scene preset missing"
+        assert not row[0], "scene preset must not displace the library default"
+        assert row[1] == "scene_full_frame"
+
+    async def test_seed_is_idempotent(self, seeded_engine: AsyncEngine) -> None:
+        mig0015 = _load_migration("0015_add_motd")
+        async with seeded_engine.begin() as conn:
+            await conn.run_sync(lambda sync_conn: _run_upgrade(sync_conn, mig0015))
+        async with seeded_engine.begin() as conn:
+            count = (
+                await conn.execute(sa.text("SELECT COUNT(*) FROM prompt_presets WHERE name = 'e_ink_scene'"))
+            ).scalar_one()
+        assert count == 1
 
 
 class TestUuidFormatBackfill:
@@ -215,7 +280,7 @@ class TestUuidFormatBackfill:
 
         # Post-condition: every ID-keyed lookup now succeeds.
         async with AsyncSession(seeded_engine) as session:
-            preset, blocks = await _resolve_preset(session, uuid.UUID(preset_id))
+            preset, blocks = await resolve_preset(session, uuid.UUID(preset_id))
         assert preset.name == "legacy"
         assert len(blocks) == 5
 
