@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.6.0](https://github.com/stkr22/inky-image-display/compare/v5.5.0...v5.6.0) (2026-07-03)
+
+
+### Features
+
+* add message-of-the-day story takeover across displays ([6ad2020](https://github.com/stkr22/inky-image-display/commit/6ad20204fec338761d88b4a46e017a0feb216264))
+
+
+### Bug Fixes
+
+* log grid rotation with pre-commit ids to avoid MissingGreenlet ([e5dcf77](https://github.com/stkr22/inky-image-display/commit/e5dcf7729747c2c8611b21b28966266a8b73e72f))
+
 ## [5.5.0](https://github.com/stkr22/inky-image-display/compare/v5.4.2...v5.5.0) (2026-06-28)
 
 
