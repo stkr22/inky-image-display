@@ -13,6 +13,10 @@ import type {
   Image,
   ImageStats,
   ImmichRef,
+  MotdConfig,
+  MotdDisplayResult,
+  MotdMessage,
+  MotdStatus,
   PromptBlock,
   PromptPreset,
   ScheduleEntry,
@@ -181,6 +185,16 @@ export const api = {
   generateImage: (body: Record<string, unknown>) =>
     request<{ task_id: string; status: string }>('/api/genai/generate', { method: 'POST', body }),
   listGenerationTasks: (limit = 20) => request<GenerationTask[]>('/api/genai/tasks', { params: { limit } }),
+
+  // --- Message of the day ---
+  getMotdConfig: () => request<MotdConfig>('/api/motd/config'),
+  updateMotdConfig: (body: Record<string, unknown>) =>
+    request<MotdConfig>('/api/motd/config', { method: 'PUT', body }),
+  motdGenerate: () => request<{ task_id: string; status: string }>('/api/motd/generate', { method: 'POST' }),
+  motdDisplay: () => request<MotdDisplayResult>('/api/motd/display', { method: 'POST' }),
+  motdRelease: () => request<{ status: string }>('/api/motd/release', { method: 'POST' }),
+  getMotdStatus: () => request<MotdStatus>('/api/motd/status'),
+  getLatestMotdMessage: () => request<MotdMessage | null>('/api/motd/messages/latest'),
 
   // --- Immich browse proxy (503 when not configured server-side) ---
   listImmichAlbums: () => request<ImmichRef[]>('/api/immich/albums'),

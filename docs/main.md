@@ -15,9 +15,10 @@ FastAPI service running at `:8000`. Responsibilities:
 - **AI generation**: `/api/genai/*` endpoints expose the prompt library (blocks + presets), Gemini batch jobs, and on-demand generation. `POST /api/genai/generate` runs the Gemini call in a FastAPI background task and pushes the result to a matching online device over MQTT as soon as it's ready — no polling.
 - **Display control**: REST endpoints publish commands (display, clear) to connected devices over MQTT. A background rotation loop also periodically advances the displayed image.
 - **Grids**: `/api/grids/*` groups devices into a shared physical canvas (cm) so they jointly display slices of a larger image. The API pre-renders per-device crops to S3 and pushes ordinary display commands; controllers need no grid-aware code. See [grids.md](grids.md).
+- **Message of the day**: `/api/motd/*` generates a daily positive story with Gemini (optionally grounded in Google Search for real recent news), renders its parts (What/Why/When, AI image, QR source link, takeaway) as exact-size screens, and shows them as a scheduled or manual takeover across assigned displays. See [motd.md](motd.md).
 - **Online tracking**: The API subscribes to retained MQTT status topics. Devices publish `online` on connect and configure an MQTT Last-Will-and-Testament with `offline`, so the broker announces unexpected disconnects automatically.
 
-On startup the API auto-creates the `device_profiles`, `devices`, `images`, `grids`, `grid_devices`, `immich_sync_jobs`, `prompt_blocks`, `prompt_presets`, and `gemini_sync_jobs` tables, applies any pending Alembic migrations (the AI tables get seeded with a default prompt library on first run; `device_profiles` gets the three-panel Inky Impression Spectra 6 lineup plus physical-area dimensions used by grids), and connects to the MQTT broker.
+On startup the API auto-creates the `device_profiles`, `devices`, `images`, `grids`, `grid_devices`, `immich_sync_jobs`, `prompt_blocks`, `prompt_presets`, `gemini_sync_jobs`, and `motd_*` tables, applies any pending Alembic migrations (the AI tables get seeded with a default prompt library on first run; `device_profiles` gets the three-panel Inky Impression Spectra 6 lineup plus physical-area dimensions used by grids), and connects to the MQTT broker.
 
 ### Controller (`inky-image-display-controller`)
 

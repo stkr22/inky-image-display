@@ -6,9 +6,11 @@ wire contract; they are re-exported here for backwards compatibility.
 """
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
+from inky_image_display_shared.motd import is_valid_part
 from inky_image_display_shared.schemas.responses import (
     AppSettingsResponse,
     DeviceProfileResponse,
@@ -26,7 +28,7 @@ from inky_image_display_shared.schemas.responses import (
     SyncJobResponse,
     UtcDatetime,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 __all__ = [
     "AppSettingsResponse",
@@ -56,6 +58,8 @@ __all__ = [
     "ImageSummary",
     "ImageUpdate",
     "ImmichBrowseItem",
+    "MotdAssignmentUpdate",
+    "MotdConfigUpdate",
     "NextImageResponse",
     "PromptBlockCreate",
     "PromptBlockResponse",
@@ -409,3 +413,57 @@ class AppSettingsUpdate(BaseModel):
     """Body for ``PUT /api/app-settings``."""
 
     default_refresh_seconds: RefreshIntervalSeconds
+
+
+# --- Message of the day ---
+
+
+class MotdAssignmentUpdate(BaseModel):
+    """One device's ordered part list inside a config update."""
+
+    device_id: UUID
+    parts: list[str] = Field(min_length=1)
+
+    @field_validator("parts")
+    @classmethod
+    def _valid_parts(cls, value: list[str]) -> list[str]:
+        invalid = [part for part in value if not is_valid_part(part)]
+        if invalid:
+            raise ValueError(f"Unknown content parts: {', '.join(invalid)}")
+        if len(set(value)) != len(value):
+            raise ValueError("Content parts must not repeat")
+        return value
+
+
+class MotdConfigUpdate(BaseModel):
+    """Body for ``PUT /api/motd/config``.
+
+    All fields optional so the UI can save one section at a time;
+    ``assignments`` replaces the full device list when present.
+    """
+
+    content_prompt: str | None = Field(default=None, min_length=1, max_length=4000)
+    source_mode: Literal["grounded", "knowledge"] | None = None
+    image_preset_id: UUID | None = None
+    clear_image_preset: bool = False
+    text_model_name: str | None = Field(default=None, min_length=1, max_length=100)
+    schedule_enabled: bool | None = None
+    display_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    weekday_mask: int | None = Field(default=None, ge=1, le=127)
+    timezone: str | None = None
+    generation_lead_minutes: int | None = Field(default=None, ge=0, le=24 * 60)
+    display_duration_seconds: RefreshIntervalSeconds | None = None
+    # Duration None means "until released"; a dedicated flag distinguishes
+    # "leave unchanged" from "set indefinite" in the partial update.
+    clear_display_duration: bool = False
+    assignments: list[MotdAssignmentUpdate] | None = None
+
+    @field_validator("timezone")
+    @classmethod
+    def _valid_timezone(cls, value: str | None) -> str | None:
+        if value is not None:
+            try:
+                ZoneInfo(value)
+            except (KeyError, ValueError) as exc:
+                raise ValueError(f"Unknown IANA timezone: {value}") from exc
+        return value
