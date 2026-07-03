@@ -1,0 +1,16 @@
+apiVersion: v2
+name: inky-image-display
+description: >-
+  E-ink photo display fleet: FastAPI backend serving the operator UI and
+  media proxy, plus Immich and Gemini sync CronJobs. Secrets (S3 keys,
+  Immich/Gemini API keys) are referenced by name and must be created
+  separately.
+type: application
+home: https://github.com/stkr22/inky-image-display
+sources:
+  - https://github.com/stkr22/inky-image-display
+# Placeholders: the release workflow (.github/workflows/helm-release.yml)
+# packages the chart with --version/--app-version pinned to the release tag,
+# so the published chart always deploys the image built from the same tag.
+version: 0.0.0-dev
+appVersion: "5.6.0"

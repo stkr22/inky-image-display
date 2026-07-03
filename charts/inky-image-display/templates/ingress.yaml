@@ -1,0 +1,48 @@
+{{- if .Values.ingress.enabled }}
+{{- $hosts := .Values.ingress.hosts }}
+{{- if not $hosts }}
+{{- fail "ingress.hosts must list at least one hostname when ingress.enabled" }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "inky-image-display.fullname" . }}
+  labels:
+    {{- include "inky-image-display.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ include "inky-image-display.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        {{- range $hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      {{- with .Values.ingress.tls.secretName }}
+      secretName: {{ . }}
+      {{- end }}
+  {{- end }}
+  # The API serves the entire web surface: the React SPA (with an index.html
+  # fallback for deep links), the REST API under /api/* and the image proxy
+  # under /media/*. Every host routes everything to it.
+  rules:
+    {{- range $hosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "inky-image-display.fullname" $ }}-api
+                port:
+                  name: http
+    {{- end }}
+{{- end }}

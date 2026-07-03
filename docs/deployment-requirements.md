@@ -1,5 +1,13 @@
 # Deployment Requirements
 
+## Helm chart
+
+The recommended Kubernetes deployment is the Helm chart in
+[`charts/inky-image-display`](../charts/inky-image-display/README.md),
+published to `oci://ghcr.io/stkr22/charts/inky-image-display` on every
+release and version-locked to the container images from the same tag. The
+raw-manifest examples below remain as a reference for non-Helm setups.
+
 ## External dependencies
 
 - **SQLite** — embedded database; file path set via `API_DATABASE_PATH`. Mount a persistent volume in containerised deployments. The sync service accesses the database only through the API — it does not need a direct database path.

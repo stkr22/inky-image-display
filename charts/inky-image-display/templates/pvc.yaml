@@ -1,0 +1,21 @@
+{{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "inky-image-display.fullname" . }}-data
+  labels:
+    {{- include "inky-image-display.selectorLabels" (dict "ctx" . "component" "data") | nindent 4 }}
+    {{- include "inky-image-display.labels" . | nindent 4 }}
+  annotations:
+    # The SQLite database lives here — keep it when the release is deleted.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    {{- toYaml .Values.persistence.accessModes | nindent 4 }}
+  {{- with .Values.persistence.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+{{- end }}

@@ -1,0 +1,25 @@
+inky-image-display {{ .Chart.AppVersion }} deployed.
+
+{{- if .Values.ingress.enabled }}
+
+Web UI / API:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls.enabled }}s{{ end }}://{{ . }}/
+{{- end }}
+{{- else }}
+
+No ingress — reach the API via the service:
+  kubectl port-forward svc/{{ include "inky-image-display.fullname" . }}-api 8000:{{ .Values.service.port }}
+{{- end }}
+
+This chart creates no Secrets. Make sure these exist in {{ .Release.Namespace }}:
+  {{ .Values.existingSecrets.s3Writer }} / {{ .Values.existingSecrets.s3Reader }} (keys: access-key-id, secret-access-key)
+{{- if or .Values.config.immich.baseUrl .Values.sync.immich.enabled }}
+  {{ .Values.existingSecrets.immich }} (key: apiKey)
+{{- end }}
+{{- if .Values.existingSecrets.gemini }}
+  {{ .Values.existingSecrets.gemini }} (key: gemini-api-key) — optional; powers GenAI generation and MOTD
+{{- end }}
+
+MOTD scheduling runs inside the API pod (no CronJob needed); configure it in
+the web UI under GenAI → "Message of the day".

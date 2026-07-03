@@ -1,0 +1,169 @@
+# Default values for inky-image-display.
+#
+# This chart creates no Secrets. Create them separately in the release
+# namespace and reference them under `existingSecrets`. Expected keys:
+#   s3Writer / s3Reader:  access-key-id, secret-access-key
+#   immich:               apiKey
+#   gemini:               gemini-api-key
+
+nameOverride: ""
+fullnameOverride: ""
+
+config:
+  # SQLite file on the persistent volume (mounted at /data).
+  databasePath: /data/inky-display.db
+  # Seconds a device shows an image before rotation moves on.
+  defaultDisplayDuration: 3600
+
+  # S3-compatible object storage (Garage, MinIO, AWS S3). The API uses the
+  # writer credentials for uploads and hands the reader credentials to
+  # controllers at registration; the sync CronJobs use the writer credentials.
+  s3:
+    endpoint: ""  # required, e.g. s3.example.com
+    bucket: inky-images
+    secure: true
+    region: ""  # optional
+
+  # Broker connection of the API process itself — usually the in-cluster
+  # service, plain TCP. Username/password or TLS options for this connection
+  # can be added via api.extraEnv (API_MQTT_* variables).
+  mqtt:
+    host: ""  # required, e.g. mosquitto.mqtt.svc.cluster.local
+    port: 1883
+
+  # Broker address advertised to controllers in the registration response —
+  # usually the public/ingress hostname (e.g. WSS through an HTTPS ingress).
+  deviceMqtt:
+    host: ""  # required, e.g. mqtt.example.com
+    port: 1883
+    tls: false
+    transport: tcp  # tcp | websockets
+    websocketPath: /mqtt
+
+  # Immich server. Enables the API's read-only browse proxy (name-based
+  # pickers in the web UI) and is required by the Immich sync CronJob.
+  # Leave empty to disable both; the UI falls back to raw-ID inputs.
+  immich:
+    baseUrl: ""  # e.g. https://immich.example.com
+
+# Names of pre-existing Secrets in the release namespace.
+existingSecrets:
+  # Required (keys: access-key-id, secret-access-key).
+  s3Writer: ""
+  s3Reader: ""
+  # Required when config.immich.baseUrl is set or sync.immich.enabled
+  # (key: apiKey).
+  immich: ""
+  # Optional (key: gemini-api-key): enables GenAI image generation and the
+  # message-of-the-day feature (both call the Gemini API from the API pod).
+  # When empty the endpoints return 503 and the rest of the API is
+  # unaffected; when set the Secret may still be absent (the env var is
+  # marked optional).
+  gemini: ""
+
+api:
+  image:
+    repository: ghcr.io/stkr22/inky-image-display-api
+    # Defaults to the chart appVersion, which the release workflow pins to
+    # the release tag — chart and image stay in lockstep.
+    tag: ""
+    pullPolicy: IfNotPresent
+
+  # Extra environment variables for the API container (e.g. API_MQTT_USERNAME
+  # or a secretKeyRef for API_MQTT_PASSWORD).
+  extraEnv: []
+
+  resources:
+    requests:
+      cpu: 11m
+      # The API streams images and generates thumbnails with Pillow on first
+      # request (one full-image decode at a time, in a threadpool); MOTD
+      # rendering adds per-panel screen composition. 1Gi limit is ample.
+      memory: 256M
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: ""  # empty = cluster default IngressClass
+  annotations: {}
+  # Every host routes / to the API: it serves the SPA (with index.html
+  # fallback), the REST API under /api/* and the media proxy under /media/*.
+  hosts: []
+  #  - inky-display.example.com
+  #  - inky-display-api.example.com
+  tls:
+    enabled: true
+    # Empty uses the ingress controller's default certificate.
+    secretName: ""
+
+# Volume backing the SQLite database. The claim is kept on uninstall
+# (helm.sh/resource-policy: keep) so the database survives chart removal.
+persistence:
+  enabled: true
+  # Use a pre-existing PVC instead of creating one.
+  existingClaim: ""
+  storageClassName: ""  # empty = cluster default
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+
+sync:
+  image:
+    repository: ghcr.io/stkr22/inky-image-display-sync
+    tag: ""  # defaults to the chart appVersion
+    pullPolicy: IfNotPresent
+
+  # How the sync jobs reach the API. Empty defaults to the in-cluster
+  # service (http://<fullname>-api:<service.port>); set the public URL to go
+  # through the ingress instead (e.g. when network policies only allow
+  # egress via the ingress).
+  apiBaseUrl: ""
+
+  # Pulls recent Immich assets into the S3 bucket and registers them with
+  # the API. Needs config.immich.baseUrl and existingSecrets.immich.
+  immich:
+    enabled: true
+    schedule: "0 */4 * * *"
+    maxImages: 50
+
+  # Opt-in: scheduled batch AI image generation. Gemini is billed per
+  # generated image — pick the cadence deliberately. Needs
+  # existingSecrets.gemini. (Distinct from MOTD, which the API schedules
+  # internally.)
+  gemini:
+    enabled: false
+    schedule: "0 6 * * *"
+
+  resources:
+    requests:
+      cpu: 11m
+      memory: 256M
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+# Matches the non-root user baked into the container images (uid/gid 1001).
+# fsGroup keeps the data volume writable even when existing files are owned
+# by another uid.
+podSecurityContext:
+  fsGroup: 1001
+  fsGroupChangePolicy: OnRootMismatch
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  privileged: false
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
