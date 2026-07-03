@@ -581,6 +581,10 @@ input[type='range']::-moz-range-thumb {
 
 .ink-empty { font-style: italic; color: var(--ink-muted); font-size: 14px; }
 
+/* MOTD screens section: keep the per-device part dropdown a steady width so
+   the device rows align instead of jumping with each label length. */
+.motd-part-select { min-width: 220px; }
+
 .ink-res-badge {
   font-size: 11px; padding: 2px 6px; border-radius: 4px;
   background: rgba(11, 18, 32, 0.06); white-space: nowrap;

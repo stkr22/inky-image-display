@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from inky_image_display_shared.models import Device, MotdConfig, MotdDeviceAssignment, MotdMessage, MotdScreen
@@ -21,7 +21,7 @@ from inky_image_display_shared.schemas.responses import (
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from inky_image_display_api.schemas import ImageGenerateResponse, MotdConfigUpdate
+from inky_image_display_api.schemas import ImageGenerateResponse, MotdConfigUpdate, MotdDisplayRequest
 from inky_image_display_api.services import motd_service
 from inky_image_display_api.services.generation_tasks import GenerationTaskRegistry
 from inky_image_display_api.services.motd_service import MotdStartError
@@ -82,9 +82,16 @@ async def get_config(request: Request) -> MotdConfigResponse:
 
 @router.put("/config")
 async def update_config(request: Request, body: MotdConfigUpdate) -> MotdConfigResponse:
-    """Apply a partial config update; ``assignments`` replaces the full list."""
+    """Apply a partial config update; ``assignments`` replaces the full list.
+
+    Assignment edits made while a session is active are applied to the
+    running session immediately (missing screens rendered, changed devices
+    re-pushed) — without this, edits silently do nothing until the next
+    display start.
+    """
     async with AsyncSession(request.app.state.engine) as session:
         config = await motd_service.get_or_create_config(session)
+        previous_parts: dict[UUID, list[str]] = {}
 
         for field_name in (
             "content_prompt",
@@ -117,6 +124,7 @@ async def update_config(request: Request, body: MotdConfigUpdate) -> MotdConfigR
                 if missing:
                     raise HTTPException(status_code=404, detail=f"Unknown devices: {sorted(map(str, missing))}")
             existing = await motd_service.list_assignments(session, config.id)
+            previous_parts = {a.device_id: motd_service.parse_parts(a) for a in existing}
             for assignment in existing:
                 await session.delete(assignment)
             for entry in body.assignments:
@@ -130,6 +138,16 @@ async def update_config(request: Request, body: MotdConfigUpdate) -> MotdConfigR
 
         await session.commit()
         await session.refresh(config)
+        if body.assignments is not None and config.active_message_id is not None:
+            await motd_service.resync_active_session(
+                session,
+                request.app.state.mqtt,
+                request.app.state.settings,
+                request.app.state.s3_service,
+                config,
+                previous_parts,
+            )
+            await session.refresh(config)
         assignments = await motd_service.list_assignments(session, config.id)
         return _config_response(config, assignments)
 
@@ -157,13 +175,19 @@ async def generate_now(request: Request, background_tasks: BackgroundTasks) -> I
 
 
 @router.post("/display")
-async def display_now(request: Request) -> MotdDisplayResult:
-    """Start a display session with the latest ready message."""
+async def display_now(request: Request, body: MotdDisplayRequest | None = None) -> MotdDisplayResult:
+    """Start a display session with the latest ready message.
+
+    Passing ``message_id`` redisplays that retained message instead —
+    the history list in the UI uses this.
+    """
     try:
         result = await motd_service.start_session(
             request.app.state.engine,
             request.app.state.mqtt,
             request.app.state.settings,
+            request.app.state.s3_service,
+            message_id=body.message_id if body else None,
         )
     except MotdStartError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -252,7 +276,11 @@ async def latest_message(request: Request) -> MotdMessageResponse | None:
 
 @router.get("/messages")
 async def list_messages(request: Request, limit: int = 10) -> list[MotdMessageResponse]:
-    """Return recent messages, newest first (without screens for brevity)."""
+    """Return recent messages with screens, newest first.
+
+    Screens are included so the history list can expand any retained
+    message into a full preview; retention keeps the list small.
+    """
     async with AsyncSession(request.app.state.engine) as session:
         config = await motd_service.get_or_create_config(session)
         result = await session.exec(
@@ -261,4 +289,9 @@ async def list_messages(request: Request, limit: int = 10) -> list[MotdMessageRe
             .order_by(col(MotdMessage.created_at).desc())
             .limit(max(1, min(limit, 50)))
         )
-        return [_message_response(message, []) for message in result.all()]
+        messages = list(result.all())
+        responses = []
+        for message in messages:
+            screens_result = await session.exec(select(MotdScreen).where(col(MotdScreen.message_id) == message.id))
+            responses.append(_message_response(message, list(screens_result.all())))
+        return responses

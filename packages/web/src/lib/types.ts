@@ -231,6 +231,7 @@ export interface MotdMessage {
   source_url: string | null
   source_title: string | null
   source_mode: string
+  displayed_at: string | null
   created_at: string
   screens: MotdScreen[]
 }

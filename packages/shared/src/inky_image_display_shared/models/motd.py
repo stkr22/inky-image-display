@@ -111,6 +111,9 @@ class MotdMessage(SQLModel, table=True):
     source_url: str | None = Field(default=None)
     source_title: str | None = Field(default=None)
     source_mode: str = Field(default="grounded")
+    # When this message was last put on the displays (manual or scheduled).
+    # Surfaced in the history list so operators can avoid repeats.
+    displayed_at: datetime | None = Field(default=None)
 
     created_at: datetime = Field(default_factory=utcnow)
 

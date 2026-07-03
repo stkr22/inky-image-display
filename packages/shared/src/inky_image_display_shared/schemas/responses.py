@@ -354,6 +354,7 @@ class MotdMessageResponse(BaseModel):
     source_url: str | None
     source_title: str | None
     source_mode: str
+    displayed_at: UtcDatetime | None
     created_at: UtcDatetime
     screens: list[MotdScreenResponse] = []
 
