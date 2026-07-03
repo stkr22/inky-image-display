@@ -164,6 +164,10 @@ async def _rotate_single_grid(app: FastAPI, grid_id: object) -> None:
             logger.debug("No images assigned to grid %s", db_grid.id)
             return
         crop_paths = await grid_service.render_and_upload(session, db_grid, image, app.state.s3_service)
+        # Capture ids before claim_devices_and_push commits: the commit
+        # expires both instances and re-reading them here would lazy-load
+        # outside the async greenlet (MissingGreenlet).
+        rotated_image_id = image.id
         await grid_service.claim_devices_and_push(
             session,
             db_grid,
@@ -172,4 +176,4 @@ async def _rotate_single_grid(app: FastAPI, grid_id: object) -> None:
             app.state.mqtt,
             app.state.settings,
         )
-        logger.info("Rotated grid %s to image %s", db_grid.id, image.id)
+        logger.info("Rotated grid %s to image %s", grid_id, rotated_image_id)
