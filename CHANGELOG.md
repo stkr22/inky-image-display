@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.7.0](https://github.com/stkr22/inky-image-display/compare/v5.6.0...v5.7.0) (2026-07-03)
+
+
+### Features
+
+* add Helm chart published to GHCR on release ([e2548dc](https://github.com/stkr22/inky-image-display/commit/e2548dcf7da338883aff29c8c7194fefff76d7f9))
+
 ## [5.6.0](https://github.com/stkr22/inky-image-display/compare/v5.5.0...v5.6.0) (2026-07-03)
 
 
