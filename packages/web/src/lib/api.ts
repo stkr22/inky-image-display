@@ -191,10 +191,15 @@ export const api = {
   updateMotdConfig: (body: Record<string, unknown>) =>
     request<MotdConfig>('/api/motd/config', { method: 'PUT', body }),
   motdGenerate: () => request<{ task_id: string; status: string }>('/api/motd/generate', { method: 'POST' }),
-  motdDisplay: () => request<MotdDisplayResult>('/api/motd/display', { method: 'POST' }),
+  motdDisplay: (messageId?: string) =>
+    request<MotdDisplayResult>('/api/motd/display', {
+      method: 'POST',
+      body: messageId ? { message_id: messageId } : {},
+    }),
   motdRelease: () => request<{ status: string }>('/api/motd/release', { method: 'POST' }),
   getMotdStatus: () => request<MotdStatus>('/api/motd/status'),
   getLatestMotdMessage: () => request<MotdMessage | null>('/api/motd/messages/latest'),
+  listMotdMessages: (limit = 10) => request<MotdMessage[]>('/api/motd/messages', { params: { limit } }),
 
   // --- Immich browse proxy (503 when not configured server-side) ---
   listImmichAlbums: () => request<ImmichRef[]>('/api/immich/albums'),

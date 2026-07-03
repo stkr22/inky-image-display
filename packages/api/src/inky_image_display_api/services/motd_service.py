@@ -56,9 +56,11 @@ logger = logging.getLogger(__name__)
 # Seeded preset (migration 0017) that new MOTD configs default to.
 MOTD_SCENE_PRESET_NAME = "e_ink_scene"
 
-# Generated messages kept per config; older ones (and their S3 screens)
-# are pruned after each successful generation.
-_RETENTION_MESSAGES = 7
+# Generated messages are kept for this many days so operators can redisplay
+# a recent story; older ones (and their S3 screens) are pruned after each
+# successful generation. The active and the newest ready message survive
+# regardless of age so "Display now" keeps working after a generation gap.
+_RETENTION_DAYS = 7
 
 # A "generating" row older than this is treated as crashed (e.g. the API
 # restarted mid-generation) and no longer blocks the daily auto-generation.
@@ -332,13 +334,19 @@ async def generate_message(  # noqa: PLR0912, PLR0915 — sequential pipeline, s
 
 async def _prune_old_messages(engine: AsyncEngine, s3: S3Service, config_id: UUID) -> None:
     """Delete messages beyond the retention window, including S3 screens."""
+    cutoff = utcnow() - timedelta(days=_RETENTION_DAYS)
     async with AsyncSession(engine) as session:
+        config_result = await session.exec(select(MotdConfig).where(col(MotdConfig.id) == config_id))
+        config = config_result.first()
+        active_id = config.active_message_id if config else None
         result = await session.exec(
             select(MotdMessage)
             .where(col(MotdMessage.config_id) == config_id)
             .order_by(col(MotdMessage.created_at).desc())
         )
-        stale = list(result.all())[_RETENTION_MESSAGES:]
+        messages = list(result.all())
+        latest_ready_id = next((m.id for m in messages if m.status == "ready"), None)
+        stale = [m for m in messages if m.created_at < cutoff and m.id not in (active_id, latest_ready_id)]
         for message in stale:
             screens = await session.exec(select(MotdScreen).where(col(MotdScreen.message_id) == message.id))
             for screen in screens.all():
@@ -386,28 +394,160 @@ async def effective_parts(
     return ordered
 
 
-async def start_session(  # noqa: PLR0915 — per-device claim loop is one linear flow
+def _illustration_source(
+    s3: S3Service,
+    screens: dict[tuple[str, int, int], MotdScreen],
+    is_portrait: bool,
+) -> bytes | None:
+    """Recover illustration bytes from an already-rendered image screen.
+
+    The raw AI illustration is not persisted, so a panel size that needs the
+    image part after generation re-fits an existing screen — same
+    orientation first, to keep the cover-fit crop minimal.
+    """
+    candidates = sorted(
+        (screen for screen in screens.values() if screen.part == "image"),
+        key=lambda screen: screen.is_portrait != is_portrait,
+    )
+    for screen in candidates:
+        try:
+            return s3.get_object_bytes(screen.storage_path)
+        except Exception:
+            logger.warning("Could not fetch MOTD image screen %s for re-rendering", screen.storage_path)
+    return None
+
+
+async def ensure_screens(
+    session: AsyncSession,
+    s3: S3Service,
+    message: MotdMessage,
+    assignments: list[MotdDeviceAssignment],
+) -> dict[tuple[str, int, int], MotdScreen]:
+    """Return the message's screens, rendering any the assignments now need.
+
+    Screens are pre-rendered at generation time from the assignments as they
+    were then, so assignments edited afterwards can demand (part, panel size)
+    combinations that have no screen — without this, those devices are
+    silently skipped. Text and QR parts re-render from the stored story; the
+    image part re-fits an existing rendered screen. Parts that still cannot
+    render (image with no prior screen, QR without a source URL) stay
+    missing, matching generation-time behaviour. New rows are added to the
+    session and ride on the caller's commit.
+    """
+    screens = await screens_by_part(session, message.id)
+    for part, width, height, is_portrait in sorted(await _render_targets(session, assignments)):
+        if (part, width, height) in screens:
+            continue
+        ai_bytes = _illustration_source(s3, screens, is_portrait) if part == "image" else None
+        screen_bytes = motd_renderer.render_part(part, message, ai_bytes, width, height)
+        if screen_bytes is None:
+            logger.info("MOTD part %r not renderable on demand at %dx%d, skipped", part, width, height)
+            continue
+        path = screen_storage_path(message.id, part, width, height)
+        s3.upload_image(path, screen_bytes, "image/jpeg")
+        screen = MotdScreen(
+            message_id=message.id,
+            part=part,
+            width=width,
+            height=height,
+            is_portrait=is_portrait,
+            storage_path=path,
+        )
+        session.add(screen)
+        screens[(part, width, height)] = screen
+    return screens
+
+
+async def _claim_and_push(  # noqa: PLR0913 — claim state spans config, schedule, and transport
+    session: AsyncSession,
+    mqtt: MQTTService,
+    device: Device,
+    assignment: MotdDeviceAssignment,
+    effective: list[MotdScreen],
+    *,
+    config_id: UUID,
+    headline: str | None,
+    expires_at: datetime | None,
+    default_seconds: int,
+    now: datetime,
+) -> bool:
+    """Claim the device, schedule its rotation, and push its first part.
+
+    Returns True when the push reached the device; False when it is offline
+    or the send failed (the claim stands either way — the rotation tick
+    picks the device up once it reconnects).
+    """
+    device.claimed_by_motd_config_id = config_id
+    device.displayed_since = now
+    assignment.rotation_index = 0
+    if len(effective) > 1:
+        device.scheduled_next_at = next_refresh_at(device, default_seconds, now)
+    else:
+        # A single part never rotates — park the schedule so the
+        # tick doesn't waste e-ink refreshes re-pushing it.
+        device.scheduled_next_at = expires_at or now + _FAR_FUTURE
+    device.updated_at = now
+    session.add(device)
+    session.add(assignment)
+
+    screen = effective[0]
+    if not mqtt.is_connected(device.device_id):
+        logger.info("Device %s offline; MOTD claim set, push deferred", device.device_id)
+        return False
+    command = DisplayCommand(
+        action="display",
+        image_path=screen.storage_path,
+        image_id=str(screen.id),
+        title=headline,
+    )
+    try:
+        await mqtt.send_command(device.device_id, command)
+    except Exception:
+        logger.exception("Failed to push MOTD to %s", device.device_id)
+        return False
+    return True
+
+
+async def start_session(
     engine: AsyncEngine,
     mqtt: MQTTService,
     settings: Settings,
+    s3: S3Service,
+    message_id: UUID | None = None,
 ) -> StartResult:
     """Claim assigned devices and push each one's first part.
 
-    Devices already claimed by a grid are skipped (existing claims win).
-    Offline devices are claimed but receive their first push from the
-    rotation tick once they reconnect.
+    Displays the latest ready message, or — for a redisplay from the history
+    list — the explicitly requested one. Screens the current assignments
+    need but the message lacks (assignments edited after generation) are
+    rendered on demand first. Devices already claimed by a grid are skipped
+    (existing claims win). Offline devices are claimed but receive their
+    first push from the rotation tick once they reconnect.
     """
     now = utcnow()
     async with AsyncSession(engine) as session:
         config = await get_or_create_config(session)
-        message = await _latest_ready_message(session, config.id)
-        if message is None:
-            raise MotdStartError("No generated message is ready — generate one first")
+        if message_id is not None:
+            message_result = await session.exec(
+                select(MotdMessage).where(
+                    col(MotdMessage.id) == message_id,
+                    col(MotdMessage.config_id) == config.id,
+                )
+            )
+            message = message_result.first()
+            if message is None:
+                raise MotdStartError("The requested message no longer exists")
+            if message.status != "ready":
+                raise MotdStartError("The requested message is not ready to display")
+        else:
+            message = await _latest_ready_message(session, config.id)
+            if message is None:
+                raise MotdStartError("No generated message is ready — generate one first")
         assignments = await list_assignments(session, config.id)
         if not assignments:
             raise MotdStartError("No devices are assigned to the message of the day")
 
-        screens = await screens_by_part(session, message.id)
+        screens = await ensure_screens(session, s3, message, assignments)
         expires_at = (
             now + timedelta(seconds=config.display_duration_seconds) if config.display_duration_seconds else None
         )
@@ -428,37 +568,20 @@ async def start_session(  # noqa: PLR0915 — per-device claim loop is one linea
                 result.skipped_no_content.append(device.device_id)
                 continue
 
-            device.claimed_by_motd_config_id = config.id
-            device.displayed_since = now
-            assignment.rotation_index = 0
-            if len(effective) > 1:
-                device.scheduled_next_at = next_refresh_at(device, default_seconds, now)
-            else:
-                # A single part never rotates — park the schedule so the
-                # tick doesn't waste e-ink refreshes re-pushing it.
-                device.scheduled_next_at = expires_at or now + _FAR_FUTURE
-            device.updated_at = now
-            session.add(device)
-            session.add(assignment)
             claimed_any = True
-
-            screen = effective[0]
-            if mqtt.is_connected(device.device_id):
-                command = DisplayCommand(
-                    action="display",
-                    image_path=screen.storage_path,
-                    image_id=str(screen.id),
-                    title=message.headline,
-                )
-                try:
-                    await mqtt.send_command(device.device_id, command)
-                    result.displayed.append(device.device_id)
-                except Exception:
-                    logger.exception("Failed to push MOTD to %s", device.device_id)
-                    result.offline.append(device.device_id)
-            else:
-                logger.info("Device %s offline; MOTD claim set, push deferred", device.device_id)
-                result.offline.append(device.device_id)
+            pushed = await _claim_and_push(
+                session,
+                mqtt,
+                device,
+                assignment,
+                effective,
+                config_id=config.id,
+                headline=message.headline,
+                expires_at=expires_at,
+                default_seconds=default_seconds,
+                now=now,
+            )
+            (result.displayed if pushed else result.offline).append(device.device_id)
 
         if not claimed_any:
             await session.rollback()
@@ -469,6 +592,8 @@ async def start_session(  # noqa: PLR0915 — per-device claim loop is one linea
         config.active_expires_at = expires_at
         config.last_displayed_on = _local_today(config, now)
         session.add(config)
+        message.displayed_at = now
+        session.add(message)
         await session.commit()
         return result
 
@@ -489,6 +614,76 @@ async def release_session(session: AsyncSession, config: MotdConfig) -> None:
     config.active_since = None
     config.active_expires_at = None
     session.add(config)
+    await session.commit()
+
+
+async def resync_active_session(  # noqa: PLR0913 — session resync spans config, transport, and storage
+    session: AsyncSession,
+    mqtt: MQTTService,
+    settings: Settings,
+    s3: S3Service,
+    config: MotdConfig,
+    previous_parts: dict[UUID, list[str]],
+) -> None:
+    """Apply assignment edits to a running session; commits.
+
+    Devices whose part list is unchanged keep their screen and schedule (no
+    wasted e-ink refreshes). Changed or newly added devices get any missing
+    screens rendered on demand and their first part pushed; devices removed
+    from the assignments — or left with nothing renderable — are released
+    back to normal rotation instead of freezing on stale content.
+    """
+    if config.active_message_id is None:
+        return
+    message_result = await session.exec(select(MotdMessage).where(col(MotdMessage.id) == config.active_message_id))
+    message = message_result.first()
+    if message is None:
+        return
+
+    now = utcnow()
+    assignments = await list_assignments(session, config.id)
+    screens = await ensure_screens(session, s3, message, assignments)
+    default_seconds = await get_default_refresh_seconds(session, settings)
+    config_id = config.id
+    expires_at = config.active_expires_at
+    headline = message.headline
+
+    def release(device: Device) -> None:
+        device.claimed_by_motd_config_id = None
+        device.scheduled_next_at = now
+        device.updated_at = now
+        session.add(device)
+
+    assigned_ids = {assignment.device_id for assignment in assignments}
+    claimed_result = await session.exec(select(Device).where(col(Device.claimed_by_motd_config_id) == config_id))
+    for device in claimed_result.all():
+        if device.id not in assigned_ids:
+            release(device)
+
+    for assignment in assignments:
+        if previous_parts.get(assignment.device_id) == parse_parts(assignment):
+            continue
+        device_result = await session.exec(select(Device).where(col(Device.id) == assignment.device_id))
+        device = device_result.first()
+        if device is None or device.claimed_by_grid_id is not None:
+            continue
+        effective = await effective_parts(session, assignment, screens)
+        if not effective:
+            if device.claimed_by_motd_config_id == config_id:
+                release(device)
+            continue
+        await _claim_and_push(
+            session,
+            mqtt,
+            device,
+            assignment,
+            effective,
+            config_id=config_id,
+            headline=headline,
+            expires_at=expires_at,
+            default_seconds=default_seconds,
+            now=now,
+        )
     await session.commit()
 
 
@@ -606,7 +801,7 @@ async def tick(app: FastAPI) -> None:
 
     if should_display:
         try:
-            await start_session(app.state.engine, app.state.mqtt, app.state.settings)
+            await start_session(app.state.engine, app.state.mqtt, app.state.settings, app.state.s3_service)
             logger.info("MOTD scheduled display started")
         except MotdStartError as exc:
             logger.warning("MOTD scheduled display could not start: %s", exc)

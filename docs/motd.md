@@ -22,6 +22,11 @@ Text parts can be combined two-per-screen with compound keys such as
 `what+when` — useful when there are fewer displays than parts. The QR
 screen is skipped automatically when the story has no source URL.
 
+The operator UI assigns exactly **one** part (single or compound) per
+display. The API still accepts an ordered multi-part list per device — a
+device with several parts cycles through them at its refresh interval —
+but that mode is no longer offered in the UI.
+
 ## Story sources
 
 Configured per config (`source_mode`):
@@ -52,6 +57,16 @@ claim exists first wins, the other pauses/409s).
 - **Part rotation**: a device with several assigned parts cycles through
   them at its normal refresh interval, driven by the rotation loop's MOTD
   tick. Single-part devices are parked (no wasteful e-ink refreshes).
+- **Assignment edits**: screens are pre-rendered at generation time from
+  the assignments as they were then, so edits can demand part × panel-size
+  combinations with no screen. Those are rendered on demand — at session
+  start, and immediately when assignments are saved while a session is
+  active (changed devices get their new first part pushed, added devices
+  join, removed devices are released; unchanged devices are not refreshed).
+  Text and QR parts re-render from the stored story; the illustration is
+  re-fit from an existing image screen (raw AI bytes are not persisted), so
+  a message generated with no `image` assignment at all cannot gain one
+  without regenerating.
 - **End**: after `display_duration_seconds`, or — when that is null — only
   via manual release (`POST /api/motd/release`). Released devices rejoin
   normal rotation immediately.
@@ -61,8 +76,15 @@ Generation runs ahead of display time (`generation_lead_minutes`, default
 "Generate now" button does the same on demand. Rendered screens are plain
 exact-size JPEGs under `motd/{message_id}/` in the bucket, pushed through
 the ordinary MQTT `DisplayCommand` flow — controllers need no MOTD
-awareness. The newest 7 messages are retained; older rows and their S3
-objects are pruned after each generation.
+awareness.
+
+Messages from the **last 7 days** are retained (plus, regardless of age,
+the active message and the newest ready one, so a manual display always
+has something to show); older rows and their S3 objects are pruned after
+each generation. Any retained message can be redisplayed via
+`POST /display {"message_id": …}` — each session start stamps the
+message's `displayed_at`, shown in the UI history so operators can see
+which stories were already on the panels.
 
 ## Data model
 
@@ -86,22 +108,26 @@ All under `/api/motd`:
 | `GET /config` | Config incl. assignments (lazily creates the singleton) |
 | `PUT /config` | Partial update; `assignments` replaces the whole list |
 | `POST /generate` | 202 + task id (shared GenAI task registry) |
-| `POST /display` | Start session; 409 without a ready message |
+| `POST /display` | Start session; optional `{"message_id"}` body redisplays a retained message; 409 without a ready message |
 | `POST /release` | End session |
 | `GET /status` | Active state + per-device current part |
 | `GET /messages/latest` | Latest message with screens (`null` when none) |
-| `GET /messages` | Recent messages, newest first |
+| `GET /messages` | Retained messages with screens, newest first |
 
 ## Operator UI
 
 The "Message of the day" tab on the GenAI page (`/genai?tab=motd`): actions
-bar (Generate now / Display now / Release + live status), the story prompt
-with reset-to-default, source mode and image preset pickers, per-device
-part assignment chips (selection order = rotation order), daily schedule
-(time, timezone, weekdays, generation lead) and duration ("show until
-released" or minutes), plus a preview of the latest generated message with
-rendered screen thumbnails. It shares the prompt presets (the "Prompt
-library" tab) and the "Recent generations" task list with the Images tab.
+bar (Generate now / Display now / Release + live status, times in 24h),
+content and schedule side by side (story prompt with reset-to-default,
+source mode and image preset pickers; 24h display time, timezone,
+weekdays, generation lead, duration or "show until released"), a screens
+section with one part dropdown per participating display, and a "Last 7
+days" story history: each retained message expands into a full preview
+(text parts, source link, screen thumbnails), shows when it was generated
+and last shown, marks a running generation with a progress spinner, and
+has a per-story Display button for redisplaying it. It shares the prompt
+presets (the "Prompt library" tab) and the "Recent generations" task list
+with the Images tab.
 
 ## Requirements
 

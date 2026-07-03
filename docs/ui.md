@@ -15,7 +15,7 @@ The top nav has five sections:
 | `/displays` | Upcoming refresh schedule, online device wall with per-device controls (next, schedule, clear), and grid management |
 | `/grids/{id}` | Grid detail: proportional canvas preview of how an image is cover-cropped onto each placed device, placement editing, per-grid image pool with resolution traffic-light badges |
 | `/jobs` | Tabbed list of Immich and Gemini sync jobs (`?tab=gemini`). Create/edit forms live at `/sync-jobs/*` and `/gemini-jobs/*`. Immich filters use name-based pickers backed by the API's `/api/immich/*` browse proxy when configured |
-| `/genai` | Tabbed GenAI hub (`?tab=motd\|prompts`). *Images*: on-demand generation form and a "Recent generations" status list (backed by `GET /api/genai/tasks`, shared with MOTD generations). *Message of the day*: story prompt + source mode, per-device content-part assignment, daily schedule and duration, generate/display/release actions, latest-message preview (see [motd.md](motd.md)). *Prompt library*: the block/preset library both other tabs build image prompts from |
+| `/genai` | Tabbed GenAI hub (`?tab=motd\|prompts`). *Images*: on-demand generation form and a "Recent generations" status list (backed by `GET /api/genai/tasks`, shared with MOTD generations). *Message of the day*: story prompt + source mode, one content part per display, daily schedule and duration, generate/display/release actions, and a 7-day story history with per-story preview and redisplay (see [motd.md](motd.md)). *Prompt library*: the block/preset library both other tabs build image prompts from |
 | `/settings` | Global default refresh interval |
 
 Legacy deep links (`/generate`, `/prompts`, bare `/sync-jobs`,

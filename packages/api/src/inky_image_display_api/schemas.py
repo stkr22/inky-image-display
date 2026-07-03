@@ -60,6 +60,7 @@ __all__ = [
     "ImmichBrowseItem",
     "MotdAssignmentUpdate",
     "MotdConfigUpdate",
+    "MotdDisplayRequest",
     "NextImageResponse",
     "PromptBlockCreate",
     "PromptBlockResponse",
@@ -433,6 +434,16 @@ class MotdAssignmentUpdate(BaseModel):
         if len(set(value)) != len(value):
             raise ValueError("Content parts must not repeat")
         return value
+
+
+class MotdDisplayRequest(BaseModel):
+    """Optional body for ``POST /api/motd/display``.
+
+    ``message_id`` redisplays a specific retained message from the history
+    list; omitted (or an empty body) displays the latest ready one.
+    """
+
+    message_id: UUID | None = None
 
 
 class MotdConfigUpdate(BaseModel):
