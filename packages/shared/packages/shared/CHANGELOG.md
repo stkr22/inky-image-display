@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.4.0](https://github.com/stkr22/inky-image-display/compare/shared-v4.3.0...shared-v4.4.0) (2026-07-03)
+
+
+### Features
+
+* add message-of-the-day story takeover across displays ([6ad2020](https://github.com/stkr22/inky-image-display/commit/6ad20204fec338761d88b4a46e017a0feb216264))
+
 ## [4.3.0](https://github.com/stkr22/inky-image-display/compare/shared-v4.2.0...shared-v4.3.0) (2026-06-28)
 
 
