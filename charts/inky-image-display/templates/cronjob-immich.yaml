@@ -1,0 +1,46 @@
+{{- if .Values.sync.immich.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "inky-image-display.fullname" . }}-sync
+  labels:
+    {{- include "inky-image-display.selectorLabels" (dict "ctx" . "component" "sync") | nindent 4 }}
+    {{- include "inky-image-display.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.sync.immich.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "inky-image-display.selectorLabels" (dict "ctx" . "component" "sync") | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: sync
+              image: {{ include "inky-image-display.syncImage" . }}
+              imagePullPolicy: {{ .Values.sync.image.pullPolicy }}
+              args: ["immich"]
+              env:
+                - name: DISPLAY_API_BASE_URL
+                  value: {{ include "inky-image-display.syncApiBaseUrl" . | quote }}
+                - name: IMMICH_BASE_URL
+                  value: {{ required "config.immich.baseUrl is required when sync.immich.enabled" .Values.config.immich.baseUrl | quote }}
+                - name: IMMICH_MAX_IMAGES
+                  value: {{ .Values.sync.immich.maxImages | quote }}
+                - name: IMMICH_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ required "existingSecrets.immich is required when sync.immich.enabled" .Values.existingSecrets.immich }}
+                      key: apiKey
+                {{- include "inky-image-display.syncS3Env" . | nindent 16 }}
+              securityContext:
+                {{- toYaml .Values.containerSecurityContext | nindent 16 }}
+              resources:
+                {{- toYaml .Values.sync.resources | nindent 16 }}
+{{- end }}
