@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.5.0](https://github.com/stkr22/inky-image-display/compare/shared-v4.4.0...shared-v4.5.0) (2026-07-03)
+
+
+### Features
+
+* **motd:** render screens on demand, add 7-day story history with redisplay ([de79277](https://github.com/stkr22/inky-image-display/commit/de79277d35ce632150637e5b74b457b6160b6567))
+* **motd:** render screens on demand, add 7-day story history with redisplay ([b933127](https://github.com/stkr22/inky-image-display/commit/b93312712a3fdb7d3ff64cb6f9ed720312b7c8b4))
+
 ## [4.4.0](https://github.com/stkr22/inky-image-display/compare/shared-v4.3.0...shared-v4.4.0) (2026-07-03)
 
 
