@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.8.1](https://github.com/stkr22/inky-image-display/compare/v5.8.0...v5.8.1) (2026-07-04)
+
+
+### Bug Fixes
+
+* **motd:** make story parts carry distinct information ([b4e545e](https://github.com/stkr22/inky-image-display/commit/b4e545eaae551992f2a07eca47ed71f7111996dc))
+* **motd:** make story parts carry distinct information ([b97c1b2](https://github.com/stkr22/inky-image-display/commit/b97c1b2c3f2b1db71116cbad748da8a9489d110a))
+
 ## [5.8.0](https://github.com/stkr22/inky-image-display/compare/v5.7.0...v5.8.0) (2026-07-03)
 
 
