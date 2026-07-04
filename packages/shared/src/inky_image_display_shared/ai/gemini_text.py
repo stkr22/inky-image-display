@@ -41,23 +41,41 @@ class MotdStory(BaseModel):
 # Appended in code (not part of the operator-editable prompt) so prompt
 # edits can steer topic and tone but cannot break the parsing contract.
 _STRUCTURE_INSTRUCTIONS = """\
-Decompose the story into these fields:
+Decompose the story into these fields. Each field is shown on its own small \
+screen and readers see them one after another, so every field must carry \
+information the others do not — never restate another field in different \
+words. Be concrete: prefer specific numbers, names, and mechanisms over \
+general claims, and avoid filler praise such as "major breakthrough", \
+"offers hope", or "game changer".
 - headline: the story in at most 8 words.
-- what: what happened — 1-2 short, plain-language sentences.
-- why: why it matters — 1-2 short sentences.
-- when_text: when it happened — one short phrase or sentence.
-- takeaway: the takeaway message for the reader — one short sentence.
+- what: what happened and how it works — 2-4 short, plain-language \
+sentences covering only the new work itself: what was actually done and the \
+concrete approach or mechanism. Leave the problem it solves and what came \
+before to "why".
+- why: the context that makes this matter — 2-3 short sentences: what \
+problem or obstacle existed, why earlier attempts fell short or why this \
+only became possible now, and what it makes possible next. Do not repeat \
+details already given in "what".
+- when_text: when it happened and the timeline behind it — 1-2 short \
+sentences (e.g. when the work began and how long it took).
+- takeaway: one surprising or human detail behind the story — a setback \
+overcome, an unlikely origin, a person's persistence — in 1-2 short \
+sentences. It must not summarise the story or repeat "why".
 - image_subject: one sentence describing a concrete visual scene an image \
 model can paint to accompany the story. Describe only the scene; it must \
 not contain any text or lettering.
 - source_title: the name of the publication or source if known, else null.
-The text is shown on small e-ink screens, so keep every field short."""
+The text is shown on small e-ink screens, so keep every sentence short."""
 
 _GROUNDED_RESEARCH_SUFFIX = """\
 
 Use Google Search to find one such TRUE story from roughly the last seven \
-days. Retell it faithfully — what happened, why it matters, and when — and \
-name the publication it came from. Do not invent or embellish facts."""
+days. Dig into the specifics: what exactly was done and the concrete \
+mechanism behind it, why the problem was hard or why a solution only became \
+possible now, the timeline of the work, and any surprising or human \
+backstory (a setback overcome, an unlikely origin, someone's persistence). \
+Retell it faithfully and name the publication it came from. Do not invent \
+or embellish facts."""
 
 _KNOWLEDGE_SUFFIX = """\
 

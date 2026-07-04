@@ -11,12 +11,17 @@ screen at every participating panel's exact resolution:
 
 | Part | Screen |
 |------|--------|
-| `what` | What happened (1-2 short sentences) |
-| `why` | Why it matters |
-| `when` | When it happened |
+| `what` | What happened and how it works — the new work and its concrete mechanism |
+| `why` | Why it matters — the problem it solves, why it was hard, what it enables next |
+| `when` | When it happened and the timeline behind it |
 | `image` | AI illustration of the story (uses the GenAI prompt presets; new configs default to the seeded `e_ink_scene` preset, whose composition handles scenes and abstract subjects — the operator can pick any other preset) |
 | `qr` | QR code linking to the source article ("More details") |
-| `takeaway` | The takeaway message |
+| `takeaway` | A surprising or human detail behind the story (a setback, an unlikely origin, someone's persistence) |
+
+The fields are prompted so each carries information the others do not — the
+`what`/`why`/`when`/`takeaway` split maps to distinct facets (mechanism,
+context, timeline, human angle) rather than four paraphrases of the same
+point.
 
 Text parts can be combined two-per-screen with compound keys such as
 `what+when` — useful when there are fewer displays than parts. The QR
