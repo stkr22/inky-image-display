@@ -34,6 +34,7 @@ spec:
                     secretKeyRef:
                       name: {{ required "existingSecrets.gemini is required when sync.gemini.enabled" .Values.existingSecrets.gemini }}
                       key: gemini-api-key
+                {{- include "inky-image-display.syncApiTokenEnv" . | nindent 16 }}
                 {{- include "inky-image-display.syncS3Env" . | nindent 16 }}
               securityContext:
                 {{- toYaml .Values.containerSecurityContext | nindent 16 }}

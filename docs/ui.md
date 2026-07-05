@@ -37,7 +37,12 @@ Browser ──HTTP──► API container ──S3──► MinIO / Garage (writ
   `?w=240|480|960` serves a downscaled JPEG generated lazily on first request
   and cached in the bucket under `thumbs/w{width}/…`. Gallery and device-card
   views request `?w=480`; detail views load originals.
-- No authentication — trusted LAN only (same model as before).
+- Auth is optional (see [auth.md](auth.md)): unconfigured, the app is open
+  (trusted LAN); with OIDC configured the SPA shows a sign-in gate, learns
+  its role from `GET /api/auth/me`, and renders a reduced UI (Images +
+  GenAI) for guests arriving via invite links. The browser never holds
+  tokens — only an HttpOnly session cookie, which also authenticates
+  `/media/*` image loads.
 
 ## Development
 

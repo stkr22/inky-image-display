@@ -50,6 +50,9 @@ npm run test:e2e                  # or WEB_E2E_BASE_URL=... to target elsewhere
   verifies the panel preset yields exact pixel dimensions via the API, the
   thumbnail endpoint serves a variant, then deletes the image so reruns stay
   clean. Also seeds and searches an image through the gallery search box.
+- `guest.spec.ts` — mints a guest invite on the Settings page, opens it in a
+  fresh browser context, and verifies the restricted guest UI plus sign-out;
+  also checks that a bogus invite token is rejected.
 
 The tests are data-independent: they pass against an empty or populated
 library and clean up everything they create.

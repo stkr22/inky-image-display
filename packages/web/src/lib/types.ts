@@ -151,6 +151,19 @@ export interface ScheduleEntry {
   effective_interval_seconds: number
 }
 
+export interface AuthMe {
+  auth_enabled: boolean
+  authenticated: boolean
+  role: 'admin' | 'guest' | null
+  name: string | null
+}
+
+export interface GuestInvite {
+  url: string
+  expires_at: string
+  qr_png_base64: string
+}
+
 export interface AppSettings {
   default_refresh_seconds: number
 }

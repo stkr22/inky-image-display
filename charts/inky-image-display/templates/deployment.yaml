@@ -117,6 +117,46 @@ spec:
                   name: {{ required "existingSecrets.immich is required when config.immich.baseUrl is set" .Values.existingSecrets.immich }}
                   key: apiKey
             {{- end }}
+            {{- if .Values.config.auth.oidcIssuer }}
+            # Setting the issuer + client id turns auth enforcement on:
+            # humans sign in via OIDC, machine callers need the tokens from
+            # existingSecrets.auth. See docs/auth.md.
+            - name: API_OIDC_ISSUER
+              value: {{ .Values.config.auth.oidcIssuer | quote }}
+            - name: API_OIDC_CLIENT_ID
+              value: {{ required "config.auth.oidcClientId is required when config.auth.oidcIssuer is set" .Values.config.auth.oidcClientId | quote }}
+            - name: API_PUBLIC_BASE_URL
+              value: {{ required "config.auth.publicBaseUrl is required when config.auth.oidcIssuer is set" .Values.config.auth.publicBaseUrl | quote }}
+            {{- end }}
+            {{- if .Values.existingSecrets.auth }}
+            # All keys optional in the Secret: a missing session-secret means
+            # sessions/invites do not survive restarts, missing tokens leave
+            # the corresponding machine caller locked out while auth is on.
+            - name: API_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecrets.auth }}
+                  key: session-secret
+                  optional: true
+            - name: API_SYNC_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecrets.auth }}
+                  key: sync-token
+                  optional: true
+            - name: API_DEVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecrets.auth }}
+                  key: device-token
+                  optional: true
+            - name: API_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecrets.auth }}
+                  key: oidc-client-secret
+                  optional: true
+            {{- end }}
             {{- with .Values.api.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

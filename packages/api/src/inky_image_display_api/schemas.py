@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field, field_validator
 __all__ = [
     "AppSettingsResponse",
     "AppSettingsUpdate",
+    "AuthMeResponse",
     "DeviceProfileResponse",
     "DeviceProfileUpdate",
     "DeviceResponse",
@@ -49,6 +50,7 @@ __all__ = [
     "GridDisplayRequest",
     "GridResponse",
     "GridUpdate",
+    "GuestInviteResponse",
     "ImageCreate",
     "ImageGenerateRequest",
     "ImageGenerateResponse",
@@ -478,3 +480,29 @@ class MotdConfigUpdate(BaseModel):
             except (KeyError, ValueError) as exc:
                 raise ValueError(f"Unknown IANA timezone: {value}") from exc
         return value
+
+
+class AuthMeResponse(BaseModel):
+    """Session info for the SPA: drives the sign-in gate and guest UI.
+
+    ``role`` is the *effective* role — anonymous requests report ``admin``
+    while auth is disabled (trusted-LAN mode) and ``None`` once it is
+    enforced, so the frontend needs no separate mode probing.
+    """
+
+    auth_enabled: bool
+    authenticated: bool
+    role: Literal["admin", "guest"] | None
+    name: str | None = None
+
+
+class GuestInviteResponse(BaseModel):
+    """A freshly minted guest invite link with its QR rendering inlined.
+
+    The QR ships as base64 PNG in the JSON body instead of a separate image
+    endpoint so no extra authenticated URL surface is needed for <img> tags.
+    """
+
+    url: str
+    expires_at: UtcDatetime
+    qr_png_base64: str

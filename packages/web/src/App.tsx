@@ -1,5 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
+import { Spinner } from './components/ui'
+import { useAuth } from './lib/auth'
 import { Displays } from './pages/Displays'
 import { GeminiJobForm } from './pages/GeminiJobForm'
 import { GenAI } from './pages/GenAI'
@@ -10,9 +12,36 @@ import { ImageUpload } from './pages/ImageUpload'
 import { Jobs } from './pages/Jobs'
 import { Landing } from './pages/Landing'
 import { Settings } from './pages/Settings'
+import { SignIn } from './pages/SignIn'
 import { SyncJobForm } from './pages/SyncJobForm'
 
 export function App() {
+  const auth = useAuth()
+
+  if (auth.loading) {
+    return (
+      <main className="ink-page" style={{ display: 'grid', placeItems: 'center', minHeight: '80vh' }}>
+        <Spinner />
+      </main>
+    )
+  }
+  if (auth.authEnabled && !auth.authenticated) return <SignIn />
+
+  // Guests only get the pages their API allowlist supports (browse images,
+  // generate); everything else routes to GenAI instead of surfacing 403s.
+  if (auth.role === 'guest') {
+    return (
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/images" element={<Images />} />
+          <Route path="/images/:imageId" element={<ImageDetail />} />
+          <Route path="/genai" element={<GenAI />} />
+          <Route path="*" element={<Navigate to="/genai" replace />} />
+        </Route>
+      </Routes>
+    )
+  }
+
   return (
     <Routes>
       <Route element={<Layout />}>

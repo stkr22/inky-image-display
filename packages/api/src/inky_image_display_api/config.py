@@ -79,3 +79,55 @@ class Settings(BaseSettings):
     immich_base_url: str | None = None
     immich_api_key: SecretStr | None = None
     immich_timeout_seconds: float = 20.0
+
+    # --- Authentication (docs/auth.md) ---
+    # Human auth is OIDC (authorization code + PKCE) handled server-side:
+    # the API is the OIDC client and the browser only ever holds a signed
+    # HttpOnly session cookie. Auth enforcement is off until both
+    # ``oidc_issuer`` and ``oidc_client_id`` are set, preserving the
+    # historical trusted-LAN behaviour for existing deployments.
+    oidc_issuer: str | None = None
+    oidc_client_id: str | None = None
+    # Optional: leave unset for a public client (PKCE only), which is the
+    # recommended Zitadel app type for this deployment.
+    oidc_client_secret: SecretStr | None = None
+    oidc_scopes: str = "openid profile email"
+
+    # External base URL of the deployment (e.g. https://inky.example.com).
+    # Needed to build the OIDC redirect URI and guest-invite links; required
+    # when OIDC is enabled.
+    public_base_url: str | None = None
+
+    # Signs session cookies and guest-invite tokens. When unset a random
+    # per-process secret is used, which invalidates sessions and pending
+    # invites on every restart — fine for trying things out, set it in
+    # production.
+    session_secret: SecretStr | None = None
+    # Secure flag on the session cookie. Unset: inferred from
+    # ``public_base_url`` (https → secure) so plain-HTTP LAN setups keep
+    # working without configuration.
+    session_cookie_secure: bool | None = None
+    admin_session_ttl_minutes: int = 43200  # 30 days
+    guest_session_ttl_minutes: int = 1440  # 24 hours
+    guest_invite_ttl_minutes: int = 720  # 12 hours
+
+    # Internal machine tokens (x-api-key header). Deliberately not Zitadel
+    # service users: both callers are cluster-internal and a static secret
+    # keeps them free of token refresh and clock concerns. Two separate
+    # tokens so they can be rotated independently and scoped — the sync
+    # token gets full API access, the device token only unlocks
+    # POST /api/devices/register. Only enforced while OIDC auth is enabled.
+    sync_api_token: SecretStr | None = None
+    device_api_token: SecretStr | None = None
+
+    @property
+    def auth_enabled(self) -> bool:
+        """Whether request authentication is enforced."""
+        return bool(self.oidc_issuer and self.oidc_client_id)
+
+    @property
+    def cookie_secure(self) -> bool:
+        """Effective Secure flag for the session cookie."""
+        if self.session_cookie_secure is not None:
+            return self.session_cookie_secure
+        return bool(self.public_base_url and self.public_base_url.startswith("https://"))

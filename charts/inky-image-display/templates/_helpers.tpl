@@ -88,3 +88,19 @@ S3 writer environment for the sync containers (shared by both CronJobs).
       name: {{ required "existingSecrets.s3Writer is required" .Values.existingSecrets.s3Writer }}
       key: secret-access-key
 {{- end }}
+
+{{/*
+Machine token the sync CronJobs present to the API (x-api-key). Optional in
+the Secret: without it the jobs run unauthenticated, which only works while
+OIDC auth is disabled on the API.
+*/}}
+{{- define "inky-image-display.syncApiTokenEnv" -}}
+{{- if .Values.existingSecrets.auth }}
+- name: DISPLAY_API_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.existingSecrets.auth }}
+      key: sync-token
+      optional: true
+{{- end }}
+{{- end }}

@@ -4,7 +4,7 @@ Connection settings are loaded from environment variables.
 Sync job configuration is stored in the database (ImmichSyncJob model).
 """
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,12 +14,15 @@ class APIClientConfig(BaseSettings):
     Environment variables:
         DISPLAY_API_BASE_URL: Base URL for the Display API service
         DISPLAY_API_TIMEOUT_SECONDS: Request timeout in seconds (default: 30)
+        DISPLAY_API_TOKEN: Machine token (x-api-key) — the API's
+            API_SYNC_TOKEN. Required once the API enforces auth.
     """
 
     model_config = SettingsConfigDict(env_prefix="DISPLAY_API_")
 
     base_url: HttpUrl = Field(description="Base URL for the Display API service")
     timeout_seconds: int = Field(default=30, description="HTTP request timeout")
+    token: SecretStr | None = Field(default=None, description="Machine token sent as x-api-key header")
 
 
 class ImmichConnectionConfig(BaseSettings):

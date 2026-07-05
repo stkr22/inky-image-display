@@ -4,12 +4,14 @@
 
 import type {
   AppSettings,
+  AuthMe,
   Device,
   DeviceProfile,
   GeminiJob,
   GenerationTask,
   Grid,
   GridPlacement,
+  GuestInvite,
   Image,
   ImageStats,
   ImmichRef,
@@ -58,6 +60,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
   const response = await fetch(url, init)
   if (!response.ok) {
+    // Session expired mid-use (or auth was just enabled): let the auth
+    // provider re-check /api/auth/me so the sign-in gate takes over.
+    if (response.status === 401) window.dispatchEvent(new Event('inky:unauthorized'))
     const detail = await extractDetail(response)
     if (options.deviceCommand && response.status === 404 && detail === DEVICE_NOT_CONNECTED_DETAIL) {
       throw new DeviceNotConnectedError(response.status, detail)
@@ -91,6 +96,11 @@ export interface ImageListFilters {
 }
 
 export const api = {
+  // --- Auth / sessions ---
+  getAuthMe: () => request<AuthMe>('/api/auth/me'),
+  logout: () => request<void>('/auth/logout', { method: 'POST' }),
+  createGuestInvite: () => request<GuestInvite>('/api/auth/guest-invites', { method: 'POST' }),
+
   // --- Images ---
   listImages: (filters: ImageListFilters = {}) =>
     request<Image[]>('/api/images', { params: { limit: 100, ...filters } }),

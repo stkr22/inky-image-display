@@ -3,8 +3,10 @@
 
 import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
+import { useAuth } from '../lib/auth'
 import { useTheme } from '../lib/theme'
 import { Icon } from './fields'
+import { Badge } from './ui'
 
 const NAV_PAGES = [
   { path: '/images', label: 'Images', icon: 'image' },
@@ -13,6 +15,9 @@ const NAV_PAGES = [
   { path: '/genai', label: 'GenAI', icon: 'auto_awesome' },
   { path: '/settings', label: 'Settings', icon: 'settings' },
 ]
+
+// Mirrors the API's guest allowlist — guests only see pages they can use.
+const GUEST_NAV_PATHS = new Set(['/images', '/genai'])
 
 // Deep-linked detail routes highlight their parent section in the nav.
 const SECTION_BY_PREFIX: Array<[string, string]> = [
@@ -32,6 +37,8 @@ export function Layout() {
   const location = useLocation()
   const [sheetOpen, setSheetOpen] = useState(false)
   const [theme, toggleTheme] = useTheme()
+  const auth = useAuth()
+  const navPages = auth.role === 'guest' ? NAV_PAGES.filter((page) => GUEST_NAV_PATHS.has(page.path)) : NAV_PAGES
   const activeSection = SECTION_BY_PREFIX.find(([prefix]) => location.pathname.startsWith(prefix))?.[1]
 
   useEffect(() => setSheetOpen(false), [location.pathname])
@@ -48,7 +55,7 @@ export function Layout() {
         </Link>
         <div className="flex-1" />
         <nav className="ink-nav-links">
-          {NAV_PAGES.map((page) => (
+          {navPages.map((page) => (
             <NavLink
               key={page.path}
               to={page.path}
@@ -58,6 +65,17 @@ export function Layout() {
             </NavLink>
           ))}
         </nav>
+        {auth.role === 'guest' && <Badge tone="accent">Guest</Badge>}
+        {auth.authenticated && (
+          <button
+            className="ink-btn ink-btn-flat ink-btn-icon"
+            aria-label="Sign out"
+            title={auth.name ? `Sign out (${auth.name})` : 'Sign out'}
+            onClick={() => void auth.signOut()}
+          >
+            <Icon name="logout" />
+          </button>
+        )}
         <button
           className="ink-btn ink-btn-flat ink-btn-icon"
           aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
@@ -85,7 +103,7 @@ export function Layout() {
                 <Icon name="close" />
               </button>
             </div>
-            {NAV_PAGES.map((page) => (
+            {navPages.map((page) => (
               <NavLink
                 key={page.path}
                 to={page.path}

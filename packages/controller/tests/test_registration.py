@@ -8,6 +8,7 @@ from inky_image_display_shared.schemas import (
     DeviceRegistration,
     RegistrationResponse,
 )
+from pydantic import SecretStr
 
 
 @pytest.mark.asyncio
@@ -27,6 +28,7 @@ async def test_register_posts_payload_and_parses_response(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         captured["url"] = str(request.url)
         captured["content"] = request.content
+        captured["api_key"] = request.headers.get("x-api-key")
         return httpx.Response(200, content=response_body)
 
     transport = httpx.MockTransport(handler)
@@ -50,5 +52,11 @@ async def test_register_posts_payload_and_parses_response(monkeypatch):
 
     assert captured["url"] == "http://api.test/api/devices/register"
     assert captured["content"] == payload.model_dump_json().encode()
+    assert captured["api_key"] is None
     assert result.status == "registered"
     assert result.s3_access_key == "ak"
+
+    # With a machine token configured the registration call authenticates
+    # via the x-api-key header (the API's API_DEVICE_TOKEN).
+    await register(APIConfig(url="http://api.test", token=SecretStr("device-key")), payload)
+    assert captured["api_key"] == "device-key"
