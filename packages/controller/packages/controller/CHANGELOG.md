@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.5.0](https://github.com/stkr22/inky-image-display/compare/controller-v4.4.1...controller-v4.5.0) (2026-07-05)
+
+
+### Features
+
+* **auth:** optional OIDC auth, guest invite links, machine tokens ([d9efe13](https://github.com/stkr22/inky-image-display/commit/d9efe13edf8bd8545e2ee4b76856d22f51a33ecc))
+* **auth:** optional OIDC auth, guest invite links, machine tokens ([4086244](https://github.com/stkr22/inky-image-display/commit/4086244b9be7332480d2b1142f3764bf9b367a9d))
+
 ## [4.4.1](https://github.com/stkr22/inky-image-display/compare/controller-v4.4.0...controller-v4.4.1) (2026-06-14)
 
 
