@@ -12,8 +12,10 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from inky_image_display_api.auth import AuthRuntime, SessionAuthMiddleware
 from inky_image_display_api.routes import (
     app_settings,
+    auth,
     device_profiles,
     devices,
     gemini_sync_jobs,
@@ -133,11 +135,33 @@ def mock_mqtt() -> MagicMock:
 
 
 @pytest.fixture
+def auth_runtime() -> AuthRuntime:
+    """Auth disabled (trusted-LAN mode), mirroring existing deployments.
+
+    Auth-specific tests replace ``app.state.auth`` with enabled variants —
+    the middleware reads it per request, so mutation after app creation
+    works.
+    """
+    return AuthRuntime(
+        enabled=False,
+        session_secret="test-secret",
+        cookie_secure=False,
+        admin_session_ttl_seconds=3600,
+        guest_session_ttl_seconds=1800,
+        guest_invite_ttl_seconds=600,
+        sync_token=None,
+        device_token=None,
+        public_base_url=None,
+    )
+
+
+@pytest.fixture
 def test_app(
     async_engine: AsyncEngine,
     mock_settings: MagicMock,
     mock_s3_service: MagicMock,
     mock_mqtt: MagicMock,
+    auth_runtime: AuthRuntime,
 ) -> FastAPI:
     """Create a FastAPI test app with mocked state."""
 
@@ -147,12 +171,15 @@ def test_app(
         await async_engine.dispose()
 
     app = FastAPI(lifespan=lifespan)
+    app.add_middleware(SessionAuthMiddleware)
     app.state.engine = async_engine
     app.state.settings = mock_settings
     app.state.s3_service = mock_s3_service
     app.state.mqtt = mock_mqtt
+    app.state.auth = auth_runtime
 
     app.include_router(health_router)
+    app.include_router(auth.router)
     app.include_router(images.router)
     app.include_router(images_process.router)
     app.include_router(devices.router)

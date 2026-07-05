@@ -18,11 +18,14 @@ logger = logging.getLogger(__name__)
 async def register(api_config: APIConfig, registration: DeviceRegistration) -> RegistrationResponse:
     """POST the registration payload and return the parsed response."""
     url = f"{api_config.url.rstrip('/')}/api/devices/register"
+    headers = {"Content-Type": "application/json"}
+    if api_config.token is not None:
+        headers["x-api-key"] = api_config.token.get_secret_value()
     async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
         resp = await client.post(
             url,
             content=registration.model_dump_json(),
-            headers={"Content-Type": "application/json"},
+            headers=headers,
         )
         resp.raise_for_status()
         result = RegistrationResponse.model_validate_json(resp.text)

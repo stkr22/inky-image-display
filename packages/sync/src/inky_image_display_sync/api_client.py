@@ -124,9 +124,13 @@ class DisplayAPIClient:
         """Initialise the client."""
         self._base_url = str(config.base_url).rstrip("/")
         self._logger = logger
+        # Machine auth mirrors the Immich client's x-api-key idiom; the API
+        # ignores the header while auth is disabled.
+        headers = {"x-api-key": config.token.get_secret_value()} if config.token else {}
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             timeout=httpx.Timeout(config.timeout_seconds),
+            headers=headers,
         )
 
     async def aclose(self) -> None:

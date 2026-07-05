@@ -12,11 +12,14 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from inky_image_display_shared.logging import setup_logging
 
+from inky_image_display_api.auth import AuthRuntime, SessionAuthMiddleware
+from inky_image_display_api.auth.oidc import build_oauth
 from inky_image_display_api.config import Settings
 from inky_image_display_api.database import create_engine, create_tables
 from inky_image_display_api.mqtt import MQTTService
 from inky_image_display_api.routes import (
     app_settings,
+    auth,
     device_profiles,
     devices,
     gemini_sync_jobs,
@@ -61,6 +64,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.mqtt = mqtt
     app.state.generation_tasks = GenerationTaskRegistry()
 
+    # Auth: resolved config for the middleware; the OIDC client only exists
+    # when an issuer is configured (auth disabled otherwise).
+    app.state.auth = AuthRuntime.from_settings(settings)
+    if settings.auth_enabled:
+        app.state.oauth = build_oauth(settings)
+
     rotation_task = asyncio.create_task(rotation_loop(app))
     mqtt_task = asyncio.create_task(mqtt.run())
 
@@ -77,7 +86,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Inky Image Display API", lifespan=lifespan)
+# Sessions + auth enforcement for every request (config comes from
+# app.state.auth at request time, so importing this module stays
+# environment-free).
+app.add_middleware(SessionAuthMiddleware)
 app.include_router(health_router)
+app.include_router(auth.router)
 app.include_router(images.router)
 app.include_router(images_process.router)
 app.include_router(devices.router)

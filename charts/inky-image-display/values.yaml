@@ -5,6 +5,8 @@
 #   s3Writer / s3Reader:  access-key-id, secret-access-key
 #   immich:               apiKey
 #   gemini:               gemini-api-key
+#   auth:                 session-secret, sync-token, device-token,
+#                         oidc-client-secret (all optional; see docs/auth.md)
 
 nameOverride: ""
 fullnameOverride: ""
@@ -46,6 +48,17 @@ config:
   immich:
     baseUrl: ""  # e.g. https://immich.example.com
 
+  # OIDC authentication (docs/auth.md). Leave issuer/clientId empty for the
+  # historical open trusted-LAN behaviour. When set, humans sign in via the
+  # IdP (authorization code + PKCE), machine callers need the tokens from
+  # existingSecrets.auth, and guests use invite links minted in the UI.
+  auth:
+    oidcIssuer: ""     # e.g. https://zitadel.example.com
+    oidcClientId: ""
+    # External URL of this deployment (the ingress host); builds the OIDC
+    # redirect URI and guest-invite links. Required when OIDC is enabled.
+    publicBaseUrl: ""  # e.g. https://inky-display.example.com
+
 # Names of pre-existing Secrets in the release namespace.
 existingSecrets:
   # Required (keys: access-key-id, secret-access-key).
@@ -60,6 +73,15 @@ existingSecrets:
   # unaffected; when set the Secret may still be absent (the env var is
   # marked optional).
   gemini: ""
+  # Recommended with config.auth. Keys (each optional in the Secret):
+  #   session-secret      signs session cookies + guest invites; without it
+  #                       every API restart logs everyone out
+  #   sync-token          machine token for the sync CronJobs (API_SYNC_TOKEN,
+  #                       also injected into the CronJobs as DISPLAY_API_TOKEN)
+  #   device-token        machine token controllers use to register
+  #   oidc-client-secret  only for a confidential OIDC client; omit for a
+  #                       public PKCE client (recommended)
+  auth: ""
 
 api:
   image:

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,6 +30,10 @@ class APIConfig(BaseSettings):
     """
 
     url: str = Field(default="http://localhost:8000", description="API base URL (http:// or https://)")
+    # The API's API_DEVICE_TOKEN, sent as x-api-key. Only needed once the
+    # API enforces auth — /register hands out real S3/MQTT credentials, so
+    # it must not stay open in an authenticated deployment.
+    token: SecretStr | None = Field(default=None, description="Machine token for the registration call")
 
 
 class DisplayConfig(BaseSettings):

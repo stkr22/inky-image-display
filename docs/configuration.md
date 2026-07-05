@@ -41,6 +41,18 @@ All variables are prefixed with `API_`.
 | `API_IMMICH_TIMEOUT_SECONDS` | No | `20.0` | Timeout for Immich browse-proxy requests (seconds). |
 | `API_MEDIA_CACHE_MAX_AGE` | No | `86400` | `Cache-Control: max-age` for `/media` responses (originals and thumbnails). |
 | `API_WEB_DIST_PATH` | No | — | Directory containing the built React frontend (`packages/web/dist`). When set, the API serves it with an SPA fallback; when unset the API is headless. |
+| `API_OIDC_ISSUER` | No | — | OIDC issuer URL (e.g. your Zitadel instance). Setting this together with `API_OIDC_CLIENT_ID` **turns auth enforcement on**; unset, the app keeps the historical open trusted-LAN behaviour. See [auth.md](auth.md). |
+| `API_OIDC_CLIENT_ID` | No | — | OIDC client id of the app registered at the issuer. |
+| `API_OIDC_CLIENT_SECRET` | No | — | Only for a confidential OIDC client. Omit for a public client with PKCE (recommended). |
+| `API_OIDC_SCOPES` | No | `openid profile email` | Scopes requested during sign-in. |
+| `API_PUBLIC_BASE_URL` | When OIDC enabled | — | External base URL of the deployment (e.g. `https://inky.example.com`). Builds the OIDC redirect URI and guest-invite links. |
+| `API_SESSION_SECRET` | No | random per process | Signs session cookies and guest-invite tokens. Set it in production — the ephemeral fallback invalidates sessions and pending invites on every restart. |
+| `API_SESSION_COOKIE_SECURE` | No | inferred | `Secure` flag on the session cookie. Unset: `true` when `API_PUBLIC_BASE_URL` is https, else `false`. |
+| `API_ADMIN_SESSION_TTL_MINUTES` | No | `43200` (30 d) | Lifetime of an OIDC (admin) session. |
+| `API_GUEST_SESSION_TTL_MINUTES` | No | `1440` (24 h) | Lifetime of a guest session minted via an invite link. |
+| `API_GUEST_INVITE_TTL_MINUTES` | No | `720` (12 h) | How long a guest invite link/QR stays redeemable. |
+| `API_SYNC_TOKEN` | No | — | Machine token (`x-api-key`) granting the sync CronJobs full API access. Only enforced while OIDC auth is enabled. |
+| `API_DEVICE_TOKEN` | No | — | Machine token (`x-api-key`) granting controllers access to `POST /api/devices/register` only. Only enforced while OIDC auth is enabled. |
 
 ### MQTT transport / TLS combinations
 
@@ -100,6 +112,7 @@ display:
 | `CONTROLLER_DEVICE__ID` | `inky-display` | Device identifier |
 | `CONTROLLER_DEVICE__ROOM` | — | Room label |
 | `CONTROLLER_API__URL` | `http://localhost:8000` | API base URL (HTTP registration only) |
+| `CONTROLLER_API__TOKEN` | — | The API's `API_DEVICE_TOKEN`, sent as `x-api-key` on registration. Required once the API enforces auth. |
 | `CONTROLLER_DISPLAY__ORIENTATION` | `landscape` | `landscape` or `portrait` |
 | `CONTROLLER_DISPLAY__SATURATION` | `0.6` | Color saturation for Spectra 6 (0.0–1.0). The Inky library applies this when dithering the image to the panel's six primaries; ~0.6 reads more vivid than the library's 0.5 default without banding. |
 | `CONTROLLER_DISPLAY__MOCK` | `false` | Use mock display (no hardware) |
@@ -114,6 +127,7 @@ display:
 |----------|----------|---------|-------------|
 | `DISPLAY_API_BASE_URL` | Yes | — | Base URL of the Display API, e.g. `http://api.svc:8000` |
 | `DISPLAY_API_TIMEOUT_SECONDS` | No | `30` | HTTP request timeout |
+| `DISPLAY_API_TOKEN` | No | — | The API's `API_SYNC_TOKEN`, sent as `x-api-key` on every request. Required once the API enforces auth. |
 
 ### Immich connection
 

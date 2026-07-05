@@ -33,7 +33,7 @@ Reconnects automatically with exponential backoff if MQTT drops.
 
 ### Web frontend (`packages/web`)
 
-React single-page app (Vite + TypeScript) served as static files by the API (`API_WEB_DIST_PATH`). Lets an operator browse, upload, and edit images, command devices (display next, pick a specific image, clear), manage grids and sync jobs, and trigger on-demand AI generation. Images reach the browser via the API's `/media/{object_key:path}` proxy (with lazy `?w=` thumbnails cached in S3), so the browser never talks to S3 directly. No authentication — trusted LAN only. See [ui.md](ui.md).
+React single-page app (Vite + TypeScript) served as static files by the API (`API_WEB_DIST_PATH`). Lets an operator browse, upload, and edit images, command devices (display next, pick a specific image, clear), manage grids and sync jobs, and trigger on-demand AI generation. Images reach the browser via the API's `/media/{object_key:path}` proxy (with lazy `?w=` thumbnails cached in S3), so the browser never talks to S3 directly. Authentication is optional: with an OIDC issuer configured the API enforces sign-in for humans, machine tokens for the sync jobs and controllers, and signed invite links for guests; unconfigured it stays open (trusted LAN only). See [auth.md](auth.md) and [ui.md](ui.md).
 
 ### Sync (`inky-image-display-sync`)
 
