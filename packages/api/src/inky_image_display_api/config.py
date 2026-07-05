@@ -117,8 +117,10 @@ class Settings(BaseSettings):
     # tokens so they can be rotated independently and scoped — the sync
     # token gets full API access, the device token only unlocks
     # POST /api/devices/register. Only enforced while OIDC auth is enabled.
-    sync_api_token: SecretStr | None = None
-    device_api_token: SecretStr | None = None
+    # (Field names combine with env_prefix to API_SYNC_TOKEN /
+    # API_DEVICE_TOKEN — keep them in sync with docs and the Helm chart.)
+    sync_token: SecretStr | None = None
+    device_token: SecretStr | None = None
 
     @property
     def auth_enabled(self) -> bool:

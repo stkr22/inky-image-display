@@ -58,7 +58,7 @@ class AuthRuntime:
             admin_session_ttl_seconds=settings.admin_session_ttl_minutes * 60,
             guest_session_ttl_seconds=settings.guest_session_ttl_minutes * 60,
             guest_invite_ttl_seconds=settings.guest_invite_ttl_minutes * 60,
-            sync_token=settings.sync_api_token.get_secret_value() if settings.sync_api_token else None,
-            device_token=settings.device_api_token.get_secret_value() if settings.device_api_token else None,
+            sync_token=settings.sync_token.get_secret_value() if settings.sync_token else None,
+            device_token=settings.device_token.get_secret_value() if settings.device_token else None,
             public_base_url=settings.public_base_url.rstrip("/") if settings.public_base_url else None,
         )
