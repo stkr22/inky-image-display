@@ -19,6 +19,7 @@ from inky_image_display_api.auth import (
 )
 from inky_image_display_api.auth.policy import origin_rejected
 from inky_image_display_api.auth.sessions import SESSION_COOKIE
+from inky_image_display_api.config import Settings
 from inky_image_display_shared.models import DeviceProfile
 from inky_image_display_shared.schemas import DeviceRegistration
 
@@ -38,6 +39,45 @@ def make_runtime(**overrides) -> AuthRuntime:
         public_base_url="https://inky.example.com",
     )
     return replace(base, **overrides)
+
+
+class TestSettingsEnvMapping:
+    """Guard the env-var names documented in docs/auth.md and the Helm chart.
+
+    AuthRuntime is normally constructed directly in tests, so a drift
+    between Settings field names and the documented API_* variables would
+    otherwise only surface in production (it did once: API_DEVICE_TOKEN vs
+    a device_api_token field).
+    """
+
+    def test_documented_auth_env_vars_are_loaded(self, monkeypatch: pytest.MonkeyPatch):
+        required = {
+            "API_DATABASE_PATH": "/tmp/test.db",
+            "API_S3_ENDPOINT": "s3.test",
+            "API_S3_WRITER_ACCESS_KEY": "w",
+            "API_S3_WRITER_SECRET_KEY": "w",
+            "API_S3_READER_ACCESS_KEY": "r",
+            "API_S3_READER_SECRET_KEY": "r",
+            "API_MQTT_HOST": "mq",
+            "API_DEVICE_MQTT_HOST": "mq",
+        }
+        auth_vars = {
+            "API_OIDC_ISSUER": "https://idp.test",
+            "API_OIDC_CLIENT_ID": "client-1",
+            "API_PUBLIC_BASE_URL": "https://inky.test",
+            "API_SESSION_SECRET": "env-session-secret",
+            "API_SYNC_TOKEN": "env-sync-token",
+            "API_DEVICE_TOKEN": "env-device-token",
+        }
+        for key, value in {**required, **auth_vars}.items():
+            monkeypatch.setenv(key, value)
+
+        runtime = AuthRuntime.from_settings(Settings())  # ty: ignore[missing-argument]
+        assert runtime.enabled
+        assert runtime.public_base_url == "https://inky.test"
+        assert runtime.session_secret == "env-session-secret"
+        assert runtime.sync_token == "env-sync-token"
+        assert runtime.device_token == "env-device-token"
 
 
 class TestSessions:
