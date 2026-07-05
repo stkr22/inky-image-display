@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.9.1](https://github.com/stkr22/inky-image-display/compare/v5.9.0...v5.9.1) (2026-07-05)
+
+
+### Bug Fixes
+
+* **auth:** machine token settings ignored documented env var names ([379a3ac](https://github.com/stkr22/inky-image-display/commit/379a3ac1a99445b5ef01685b9dcd57344cd016fa))
+* **auth:** machine token settings ignored documented env var names ([828f577](https://github.com/stkr22/inky-image-display/commit/828f5778dbf1b72d885268a47af479bcf45585bd))
+
 ## [5.9.0](https://github.com/stkr22/inky-image-display/compare/v5.8.1...v5.9.0) (2026-07-05)
 
 
