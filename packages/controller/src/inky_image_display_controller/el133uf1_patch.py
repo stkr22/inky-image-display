@@ -30,6 +30,7 @@ would need this module retired.
 import logging
 import time
 import warnings
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,9 @@ def apply_busy_wait_fix() -> bool:
         logger.debug("EL133UF1 driver not importable; busy-wait fix not applied")
         return False
 
-    cls = el133.Inky
+    # Typed as Any: monkeypatching adds/replaces methods on the driver class,
+    # which a type checker rightly rejects on the concrete Inky type.
+    cls: Any = el133.Inky
     if getattr(cls, "_refresh_wait", None) is not None:
         return True
 
