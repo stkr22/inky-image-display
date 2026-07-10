@@ -69,15 +69,16 @@ class _FakeBusyValue:
 class _FakeGpio:
     """Stand-in for the EL133UF1 driver's gpiod request handle.
 
-    Reports the BUSY line off the panel's ``busy_active`` flag: the Inky driver
-    treats ``ACTIVE`` (high) as mid-refresh and ``INACTIVE`` (low) as idle.
+    Reports the BUSY line off the panel's ``busy_active`` flag. BUSY is
+    active-low on this panel (measured on hardware): ``INACTIVE`` (low) while
+    the refresh runs, ``ACTIVE`` (high) when ready.
     """
 
     def __init__(self, panel: "_FakeInkyPanel") -> None:
         self._panel = panel
 
     def get_value(self, pin: int) -> _FakeBusyValue:
-        return _FakeBusyValue("ACTIVE" if self._panel.busy_active else "INACTIVE")
+        return _FakeBusyValue("INACTIVE" if self._panel.busy_active else "ACTIVE")
 
 
 class _FakeInkyPanel:
@@ -86,11 +87,14 @@ class _FakeInkyPanel:
     Reproduces the driver's quirk: a stalled refresh emits a warnings.warn()
     and returns (instead of raising), so show() looks successful. ``timeouts``
     controls how many leading show() calls stall before one succeeds;
-    ``fail_forever`` stalls every call. ``busy_profile`` simulates the silent
-    EL133UF1 case via a gpiod-like BUSY line: ``"asserts"`` drives BUSY active
-    then inactive (healthy), ``"never"`` keeps it inactive (no waveform),
-    ``"stuck"`` leaves it active (stalled mid-update). A busy profile is the only thing that exposes a
-    ``_gpio``/``busy_pin``, so the default fake stays on the warning-only path.
+    ``fail_forever`` stalls every call. ``busy_profile`` simulates the
+    EL133UF1's active-low BUSY line via a gpiod-like handle: ``"asserts"``
+    drives BUSY low then back high (healthy), ``"never"`` keeps it high (no
+    waveform ran, silent under the stock driver), ``"stuck"`` holds it low and
+    warns "timed out" — mirroring the patched driver (el133uf1_patch), whose
+    refresh wait warns when BUSY never clears. A busy profile is the only
+    thing that exposes a ``_gpio``/``busy_pin``, so the default fake stays on
+    the warning-only path.
     """
 
     def __init__(  # noqa: PLR0913 — test stub mirrors the driver's failure modes
@@ -145,6 +149,9 @@ class _FakeInkyPanel:
             if self._gpio_lazy and not hasattr(self, "_gpio"):
                 self._attach_gpio()  # the real driver attaches its handle ~0.7s into show()
             self._simulate_busy()
+        if self._busy_profile == "stuck":
+            # The patched driver's _refresh_wait warns when BUSY never clears.
+            warnings.warn("Busy Wait: Timed out after 65.00s (busy asserted: True)", stacklevel=1)
         if self._fail_forever or self.show_calls <= self._timeouts:
             warnings.warn("Busy Wait: Timed out after 32.00s", stacklevel=1)
 
@@ -219,10 +226,10 @@ class TestBusyInterpretation:
     @pytest.mark.parametrize(
         ("value", "expected"),
         [
-            (_FakeBusyValue("ACTIVE"), True),  # high = busy (driver waits while ACTIVE)
-            (_FakeBusyValue("INACTIVE"), False),  # low = idle
+            (_FakeBusyValue("INACTIVE"), True),  # active-low: low = busy (measured on hardware)
+            (_FakeBusyValue("ACTIVE"), False),  # high = ready
             (_FakeBusyValue("garbage"), None),
-            (1, True),
+            (1, True),  # bare bools/ints are pre-decoded busy flags
             (0, False),
             (True, True),
             (False, False),
@@ -237,24 +244,23 @@ class TestClassifyRefresh:
     """The pure failure-classification logic, decoupled from threads/hardware."""
 
     def test_timeout_warning_is_failure(self) -> None:
-        reason = _classify_refresh(timed_out=True, busy_observed=False, went_busy=False, still_busy=None)
+        reason = _classify_refresh(timed_out=True, busy_observed=False, went_busy=False)
         assert reason is not None and "timeout" in reason
 
     def test_busy_never_asserted_is_failure(self) -> None:
-        reason = _classify_refresh(timed_out=False, busy_observed=True, went_busy=False, still_busy=False)
+        reason = _classify_refresh(timed_out=False, busy_observed=True, went_busy=False)
         assert reason is not None and "never asserted" in reason
 
-    def test_still_busy_after_show_is_failure(self) -> None:
-        reason = _classify_refresh(timed_out=False, busy_observed=True, went_busy=True, still_busy=True)
-        assert reason is not None and "stalled mid-update" in reason
-
     def test_healthy_refresh_returns_none(self) -> None:
-        assert _classify_refresh(timed_out=False, busy_observed=True, went_busy=True, still_busy=False) is None
+        # No "still busy after show()" check exists: a cleanly powered-off
+        # panel rests at the same LOW level as a stuck-busy one, so a stuck
+        # mid-update panel is caught via the driver's timed-out warning.
+        assert _classify_refresh(timed_out=False, busy_observed=True, went_busy=True) is None
 
     def test_unobserved_busy_is_not_invented_as_failure(self) -> None:
         # BUSY could not be read at all (mock / unsupported driver) — fall back
         # to the warning signal alone rather than inventing a stall.
-        assert _classify_refresh(timed_out=False, busy_observed=False, went_busy=False, still_busy=None) is None
+        assert _classify_refresh(timed_out=False, busy_observed=False, went_busy=False) is None
 
 
 class TestBusyPinStallDetection:
@@ -270,8 +276,9 @@ class TestBusyPinStallDetection:
 
     @pytest.mark.asyncio
     async def test_busy_never_asserted_is_detected_as_stall(self) -> None:
-        # show() returns with no warning, but BUSY never went low — the
-        # controller must treat it as failed and exhaust its retries.
+        # show() returns with no warning, but BUSY never went low (the level a
+        # latched panel is pinned at) — the controller must treat it as failed
+        # and exhaust its retries.
         panel = _FakeInkyPanel(busy_profile="never")
         display = InkyDisplay(_display=panel, retry_delay_s=0.0, busy_poll_interval_s=0.005, max_refresh_attempts=2)
         with pytest.raises(DisplayError) as exc_info:
@@ -280,13 +287,16 @@ class TestBusyPinStallDetection:
         assert "never asserted BUSY" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_busy_stuck_low_is_detected_as_stall(self) -> None:
+    async def test_busy_stuck_is_detected_via_driver_timeout(self) -> None:
+        # BUSY asserts but never clears: the patched driver warns "timed out"
+        # (a level check after show() can't distinguish stuck-busy from a
+        # cleanly powered-off panel, so the warning is the signal).
         panel = _FakeInkyPanel(busy_profile="stuck")
         display = InkyDisplay(_display=panel, retry_delay_s=0.0, busy_poll_interval_s=0.005, max_refresh_attempts=2)
         with pytest.raises(DisplayError) as exc_info:
             await display.show_image(_landscape_image())
         assert panel.show_calls == 2
-        assert "stalled mid-update" in str(exc_info.value)
+        assert "busy-wait timeout" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_lazy_gpio_handle_still_detects_stall(self) -> None:

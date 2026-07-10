@@ -2,9 +2,53 @@
 
 Symptom: the panel freezes on one image and further refreshes have no visible
 effect, even though the controller runs without error and every SPI transaction
-completes. This is almost always a **power** fault inside the display's driver
-IC, not a software bug — the controller is faithfully sending commands that the
-IC is silently ignoring.
+completes.
+
+There are two distinct causes. On the 13.3" (EL133UF1) the primary cause is a
+**bug in the Inky driver library** that powers the panel off mid-refresh (next
+section). On the smaller UC8159 panels — and as a secondary factor on the
+13.3" — it can be a **power** fault inside the display's driver IC (see "The
+driver IC boosts its own high voltages" below); in both cases the controller
+is faithfully sending commands that the IC is silently ignoring.
+
+## Root cause on the 13.3": the driver's busy-wait never waits
+
+Diagnosed on hardware 2026-07-10 (device inky-controller-1), tracked upstream
+as [pimoroni/inky#254](https://github.com/pimoroni/inky/issues/254).
+
+The panel's BUSY line is **active-low**: measured with a logic probe during a
+refresh, it sits HIGH when ready, drops LOW at power-on (PON) and stays LOW
+through the ~19 s refresh waveform (DRF), returns HIGH when the waveform
+completes, and rests LOW again once power-off (POF) executes. But
+`inky_el133uf1.Inky._busy_wait` in inky 2.4.0 never actually polls the line:
+
+```python
+if self._gpio.get_value(self.busy_pin) == Value.ACTIVE:
+    time.sleep(timeout)   # blind fixed sleep
+    return
+while self._gpio.get_value(self.busy_pin) == Value.ACTIVE:  # already false
+    ...
+```
+
+If the line reads HIGH it blind-sleeps the full timeout; otherwise the loop
+condition is already false and it returns instantly. Since BUSY is already LOW
+when `_busy_wait(32.0)` runs after DRF, the driver **returns immediately and
+sends POF while the refresh waveform is still running — on every refresh**.
+The IC usually ignores commands while busy, so most refreshes still complete,
+but a mistimed POF can latch the panel into a fault state: BUSY pinned HIGH
+and the IC deaf to everything — RST_N resets (including 10 s holds), POF,
+deep-sleep, full re-init. A Pi reboot does not help (the HAT's 5 V rail stays
+up); **only physically removing power recovers a latched panel**.
+
+The controller ships a runtime fix
+([el133uf1_patch.py](../packages/controller/src/inky_image_display_controller/el133uf1_patch.py)),
+applied to the driver class before `inky.auto.auto()` constructs the panel: a
+real refresh wait that polls the assert(LOW)-then-clear(HIGH) cycle after DRF
+(65 s budget — measured refreshes take ~19 s warm, and e-paper slows when
+cold) so POF is only ever sent after the waveform finishes. On a genuine stall
+it emits the same "timed out" warning the UC8159 driver uses, feeding the
+stall detection below. Verified on hardware: `show()` returns right after
+BUSY clears (~29 s total) instead of after a blind 32 s sleep.
 
 ## The driver IC boosts its own high voltages
 
@@ -63,28 +107,32 @@ processing.
 
 ## How the controller handles it
 
-The Inky library does not raise on a stall — and the two panel families fail
-differently, so the controller's `InkyDisplay` wrapper
+The Inky library does not raise on a stall, so the controller's `InkyDisplay`
+wrapper
 ([display.py](../packages/controller/src/inky_image_display_controller/display.py))
-watches for both:
+watches two independent signals:
 
-- **UC8159 (4–7.3")**: its busy-wait emits a Python `warnings.warn("… timed
-  out …")` and returns. The controller captures that warning (it otherwise goes
-  to stderr, never the logs) and treats it as a failed refresh.
-- **EL133UF1 (13.3")**: its busy-wait is *silent* — when BUSY reads high it just
-  `time.sleep()`s a fixed duration and returns, so a refresh that never ran
-  looks identical to a good one. The controller instead **watches the BUSY GPIO
-  directly** (through the driver's own gpiod handle, sampled in a background
-  thread for the duration of `show()`): a healthy refresh drives BUSY low then
-  high; if it never goes low, no waveform ran, and if it's still low afterwards
-  it stalled mid-update.
+- **"timed out" warnings**: the UC8159 (4–7.3") driver emits a Python
+  `warnings.warn("… timed out …")` when BUSY doesn't clear, and the
+  controller's EL133UF1 busy-wait fix (previous section) emits the same. The
+  controller captures the warning (it otherwise goes to stderr, never the
+  logs) and treats it as a failed refresh.
+- **the BUSY GPIO, watched directly** (through the driver's own gpiod handle,
+  sampled in a background thread for the duration of `show()`): a healthy
+  refresh drives BUSY low then back high; if it never goes low, no waveform
+  ran — the signature of a latched panel, which sits pinned HIGH. There is
+  deliberately no "still busy after show()" check: once POF executes, a
+  cleanly powered-off panel rests at the same LOW level as a stuck-busy one,
+  so a stuck-mid-update panel is caught by the timed-out warning instead.
 
 On either signal the refresh is treated as failed. Recovery reuses the driver's
 own reset: re-running `show()` calls `setup()`, which pulses RST_N, so each retry
 restarts the waveform from a clean state. It retries up to three times with a
 short delay; if every attempt still fails it raises instead of acking, and the
 API records the failure so the UI surfaces the stuck device rather than
-reporting a refresh that never physically happened.
+reporting a refresh that never physically happened. A panel that latched hard
+(see the root-cause section) is beyond these retries — it needs its power
+physically removed.
 
 One failure the host *cannot* see: a **partial refresh**, where the 13.3 updates
 only one of its two SPI-driven halves. BUSY cycles normally and both chip-selects
