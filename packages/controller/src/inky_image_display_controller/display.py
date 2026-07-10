@@ -14,19 +14,25 @@ from inky_image_display_controller.exceptions import DisplayError
 
 logger = logging.getLogger(__name__)
 
-# A stalled refresh never raises from the Inky driver, and the two supported
-# panel families fail differently — so the controller watches for both:
+# A stalled refresh never raises from the Inky driver, so the controller
+# watches two independent signals:
 #
-#  * UC8159 (4-7.3"): _busy_wait() emits warnings.warn("... timed out ...") and
-#    returns once BUSY fails to clear within its timeout. We capture that
+#  * "timed out" warnings: the UC8159 (4-7.3") driver emits
+#    warnings.warn("... timed out ...") when BUSY fails to clear, and our
+#    runtime fix for the EL133UF1 (13.3") driver (el133uf1_patch, applied at
+#    init) emits the same — the stock EL133UF1 _busy_wait never polls at all
+#    (pimoroni/inky#254) and used to power-off the panel mid-refresh, which is
+#    what latched panels into an unrecoverable stuck state. We capture the
 #    warning (it otherwise goes to stderr, never reaching the logs).
-#  * EL133UF1 (13.3"): _busy_wait() is SILENT — it time.sleep()s a fixed
-#    duration and returns, so a refresh that never ran is indistinguishable from
-#    a good one by warnings alone. We instead watch the BUSY GPIO directly (see
-#    _run_show_once): per the Inky driver's own _busy_wait (which loops while the
-#    line reads Value.ACTIVE), BUSY is ACTIVE (high) while the panel refreshes
-#    and INACTIVE (low) when idle. A healthy refresh drives BUSY active then
-#    inactive; if it never goes active the panel executed no waveform.
+#  * the BUSY GPIO, watched directly during show() (see _run_show_once). BUSY
+#    is active-LOW — measured on EL133UF1 hardware 2026-07-10: LOW from
+#    power-on until the waveform completes (~19 s), HIGH when ready. A healthy
+#    refresh drives BUSY low then back high; if it never goes low the panel
+#    executed no waveform. (An earlier comment here claimed the opposite
+#    polarity — that observation was an artifact of the broken stock driver
+#    returning from show() while the panel was still refreshing.) There is no
+#    "still busy after show()" check: after the power-off command the line
+#    rests LOW again, indistinguishable by level from stuck-busy.
 #
 # Either way show() returns as if it succeeded, so without these checks the
 # controller would ack a refresh that never physically happened
@@ -34,7 +40,9 @@ logger = logging.getLogger(__name__)
 # show() -> _update() -> setup(), and setup() issues a full RST_N hardware reset
 # on EVERY call (the reset is outside its _gpio_setup guard). So simply
 # re-running show() resets the panel and retries the waveform from a clean
-# state — no private-state poking needed.
+# state — no private-state poking needed. A panel that latched hard (BUSY
+# pinned HIGH, deaf to reset) is beyond software recovery and needs its power
+# physically removed.
 DEFAULT_MAX_REFRESH_ATTEMPTS = 3
 DEFAULT_RETRY_DELAY_S = 2.0
 # How often to sample the BUSY GPIO while a refresh runs. A real refresh holds
@@ -46,23 +54,22 @@ def _busy_is_asserted(value: object) -> bool | None:
     """Interpret a gpiod line value for the panel's BUSY pin.
 
     Returns True when the panel is asserting BUSY (refresh running), False when
-    idle/ready, or None when the value can't be interpreted. The Inky 2.x
-    drivers define the polarity: ``_busy_wait`` loops *while*
-    ``get_value() == Value.ACTIVE``, so **ACTIVE (high) = busy** and
-    **INACTIVE (low) = idle**. Verified on EL133UF1 hardware — the line reads
-    ACTIVE for the duration of ``show()`` and INACTIVE once the refresh
-    completes. (An earlier active-low assumption here inverted this and made
-    every healthy refresh look stalled.) We match the gpiod ``Value`` enum by
-    ``name`` so this module need not import gpiod (it isn't installed off-device)
-    and tests can pass a stand-in; plain bools/ints follow the same mapping
-    (True/1/high = busy).
+    ready, or None when the value can't be interpreted. BUSY is **active-low**:
+    **INACTIVE (low) = busy**, **ACTIVE (high) = ready** — measured on EL133UF1
+    hardware 2026-07-10 (LOW from power-on through the ~19 s waveform, HIGH once
+    complete), matching the e673 driver's polarity and pimoroni/inky#254. An
+    earlier active-high mapping here was calibrated against the broken stock
+    driver, whose show() returned while the panel was still refreshing. We match
+    the gpiod ``Value`` enum by ``name`` so this module need not import gpiod
+    (it isn't installed off-device) and tests can pass a stand-in; plain
+    bools/ints are treated as already-decoded busy flags (True/1 = busy).
     """
     name = getattr(value, "name", None)
     if isinstance(name, str):
         upper = name.upper()
-        if upper in {"ACTIVE", "HIGH"}:
-            return True
         if upper in {"INACTIVE", "LOW"}:
+            return True
+        if upper in {"ACTIVE", "HIGH"}:
             return False
         return None
     if isinstance(value, bool):
@@ -72,12 +79,17 @@ def _busy_is_asserted(value: object) -> bool | None:
     return None
 
 
-def _classify_refresh(*, timed_out: bool, busy_observed: bool, went_busy: bool, still_busy: bool | None) -> str | None:
+def _classify_refresh(*, timed_out: bool, busy_observed: bool, went_busy: bool) -> str | None:
     """Decide whether one refresh attempt failed, returning a reason or None.
 
     Pure (no I/O) so the stall logic can be unit-tested without hardware.
     ``None`` means the refresh looks healthy; a string is the operator-facing
     failure reason carried into the retry loop and the device-health ack.
+
+    A stuck-mid-update panel is caught by the timed-out signal (the patched
+    EL133UF1 driver and the stock UC8159 driver both warn when BUSY doesn't
+    clear); the line's level *after* show() proves nothing, because a cleanly
+    powered-off panel rests at the same LOW level as a stuck-busy one.
 
     This cannot detect a *partial* refresh (e.g. the 13.3 updating only one of
     its two halves): BUSY cycles normally in that case and the fault is
@@ -87,8 +99,6 @@ def _classify_refresh(*, timed_out: bool, busy_observed: bool, went_busy: bool, 
         return "e-paper BUSY signal never cleared (driver reported a busy-wait timeout)"
     if busy_observed and not went_busy:
         return "panel never asserted BUSY during the refresh — no waveform ran"
-    if still_busy is True:
-        return "BUSY still asserted after show() returned — refresh stalled mid-update"
     return None
 
 
@@ -187,6 +197,12 @@ class InkyDisplay:
             if _display is None:
                 from inky.auto import auto  # noqa: PLC0415  # ty: ignore[unresolved-import]
 
+                from inky_image_display_controller.el133uf1_patch import apply_busy_wait_fix  # noqa: PLC0415
+
+                # Must run before auto() builds the panel object: the stock
+                # EL133UF1 busy-wait powers the panel off mid-refresh, which
+                # is what latched panels into needing a physical power cycle.
+                apply_busy_wait_fix()
                 _display = auto()
             self._display: Any = _display
             self._width: int = self._display.width
@@ -302,16 +318,15 @@ class InkyDisplay:
     def _run_show_once(self) -> str | None:
         """Drive one refresh; return a failure reason, or None if it completed.
 
-        Two independent stall signals, because neither panel family exposes a
-        single reliable one (see the module-level comment):
+        Two independent stall signals (see the module-level comment):
 
-        * the driver's ``warnings.warn("... timed out ...")`` (UC8159), and
-        * direct BUSY-pin watching (EL133UF1, which never warns): BUSY is
-          sampled in a background thread for the duration of ``show()``. A
-          healthy refresh drives it active (high) then inactive (low);
-          never-active means no waveform ran, still-active afterwards means it
-          stalled mid-update. When BUSY can't be read we fall back to the
-          warning signal alone.
+        * the driver's ``warnings.warn("... timed out ...")`` — emitted by the
+          stock UC8159 driver and by our EL133UF1 busy-wait fix
+          (el133uf1_patch) when BUSY never completes its cycle, and
+        * direct BUSY-pin watching: BUSY is sampled in a background thread for
+          the duration of ``show()``. A healthy refresh drives it low (busy)
+          then back high; never-low means no waveform ran. When BUSY can't be
+          read we fall back to the warning signal alone.
 
         Returns:
             None if the refresh completed, otherwise a human-readable reason the
@@ -375,7 +390,6 @@ class InkyDisplay:
             timed_out=any("timed out" in str(w.message).lower() for w in caught),
             busy_observed=busy_observed,
             went_busy=went_busy,
-            still_busy=self._busy_state(),
         )
         if reason is not None:
             logger.warning("Display refresh did not complete: %s", reason)
