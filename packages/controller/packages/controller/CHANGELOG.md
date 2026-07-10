@@ -1,5 +1,14 @@
 # Changelog
 
+## [4.5.1](https://github.com/stkr22/inky-image-display/compare/controller-v4.5.0...controller-v4.5.1) (2026-07-10)
+
+
+### Bug Fixes
+
+* **controller:** stop powering off EL133UF1 mid-refresh ([82a0b65](https://github.com/stkr22/inky-image-display/commit/82a0b65790cf4ebbf2a780e6ef1376dba2c211f1))
+* **controller:** stop powering off EL133UF1 mid-refresh ([ff0ab74](https://github.com/stkr22/inky-image-display/commit/ff0ab74c475f14485adb05511dff5d3255d62d37))
+* **controller:** type patched driver class as Any for ty ([d6b2283](https://github.com/stkr22/inky-image-display/commit/d6b2283824ff8d9e361623ffdb607003fce9d060))
+
 ## [4.5.0](https://github.com/stkr22/inky-image-display/compare/controller-v4.4.1...controller-v4.5.0) (2026-07-05)
 
 
