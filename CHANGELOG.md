@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.9.3](https://github.com/stkr22/inky-image-display/compare/v5.9.2...v5.9.3) (2026-07-11)
+
+
+### Bug Fixes
+
+* stop failed-refresh halt from outliving the controller retry ([33a537d](https://github.com/stkr22/inky-image-display/commit/33a537d26112658a7f15f3ee8302cc09a81d78ac))
+
 ## [5.9.2](https://github.com/stkr22/inky-image-display/compare/v5.9.1...v5.9.2) (2026-07-10)
 
 
