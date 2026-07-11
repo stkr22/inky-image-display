@@ -1,5 +1,19 @@
 # Changelog
 
+## [5.10.0](https://github.com/stkr22/inky-image-display/compare/v5.9.3...v5.10.0) (2026-07-11)
+
+
+### Features
+
+* **api:** curation, quiet hours, refresh-health states, run tracking, e-ink preview ([3d14cbf](https://github.com/stkr22/inky-image-display/commit/3d14cbf315974813cb362d5c0cba6a51e1b5bebf))
+* **sync:** report run outcomes and support UI-triggered runs ([3b57dbf](https://github.com/stkr22/inky-image-display/commit/3b57dbfd0d3206f1b1f799af068401b2e813b86e))
+* **web:** surface fleet health, curation, run history and e-ink previews ([767a093](https://github.com/stkr22/inky-image-display/commit/767a093333e33eb25ab74dab7e8143f0ad3b0695))
+
+
+### Documentation
+
+* cover quiet hours, run reporting, health states and e-ink previews ([f84c880](https://github.com/stkr22/inky-image-display/commit/f84c880c4dfa8cb54ce8c47160349adc578a0834))
+
 ## [5.9.3](https://github.com/stkr22/inky-image-display/compare/v5.9.2...v5.9.3) (2026-07-11)
 
 
