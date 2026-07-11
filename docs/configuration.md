@@ -41,6 +41,7 @@ All variables are prefixed with `API_`.
 | `API_IMMICH_API_KEY` | No | — | Immich API key for the browse proxy. Use the same values the sync service is configured with. |
 | `API_IMMICH_TIMEOUT_SECONDS` | No | `20.0` | Timeout for Immich browse-proxy requests (seconds). |
 | `API_MEDIA_CACHE_MAX_AGE` | No | `86400` | `Cache-Control: max-age` for `/media` responses (originals and thumbnails). |
+| `API_NOTIFY_URL` | No | — | Push-notification endpoint for refresh-health transitions (a panel entering/leaving the failed state). The URL is POSTed a plain-text body with a `Title` header — the [ntfy.sh](https://ntfy.sh) convention (e.g. `https://ntfy.sh/my-inky-topic`), which most generic webhook receivers also accept. Best-effort: delivery failures are logged, never block ack processing. Unset disables pushes. |
 | `API_WEB_DIST_PATH` | No | — | Directory containing the built React frontend (`packages/web/dist`). When set, the API serves it with an SPA fallback; when unset the API is headless. |
 | `API_OIDC_ISSUER` | No | — | OIDC issuer URL (e.g. your Zitadel instance). Setting this together with `API_OIDC_CLIENT_ID` **turns auth enforcement on**; unset, the app keeps the historical open trusted-LAN behaviour. See [auth.md](auth.md). |
 | `API_OIDC_CLIENT_ID` | No | — | OIDC client id of the app registered at the issuer. |
@@ -121,6 +122,19 @@ display:
 | `DEVICE_ID` | — | Overrides `CONTROLLER_DEVICE__ID` (also accepted as `--device-id` CLI flag) |
 
 ## Sync (`inky-image-display-sync`)
+
+Both subcommands (`immich`, `gemini`) support two cron modes:
+
+- **Scheduled runs** (no flag): process every active job — the classic cron,
+  typically hourly or daily.
+- **`--requested-only`**: process only jobs flagged by the UI's "Run now"
+  button, active or not. Run this on a frequent cron (every minute or two)
+  next to the scheduled one; it exits immediately when nothing is flagged
+  and skips the retention cleanup, so it stays cheap.
+
+Every completed job run POSTs a summary to `POST /api/sync-runs`
+(images added/skipped/deleted, status, errors); the UI shows it as each
+job's "Last run" line and it is what clears the run-now flag.
 
 ### Display API connection
 

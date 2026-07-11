@@ -165,6 +165,19 @@ that halt, in order of preference:
 Manual pushes from the UI ("next", direct display) bypass the halt entirely
 and their success ack clears the failure state immediately.
 
+### What the operator sees
+
+The API classifies the failure age into a `refresh_state` the UI words
+differently: while the failure is younger than the backoff the device shows
+"Refresh failed — retrying" (amber; the controller's loop should self-heal),
+and once it outlives the backoff without a success ack it escalates to
+"Refresh failing — check power" (red; retries have evidently not recovered
+the panel and the fix is physical). Failing devices also appear as alerts on
+the landing page. When `API_NOTIFY_URL` is configured, the ok→failed and
+failed→ok *transitions* additionally push a notification (ntfy-style plain
+text POST) — transitions only, so a stuck panel retrying every few minutes
+doesn't send one message per attempt.
+
 One failure the host *cannot* see: a **partial refresh**, where the 13.3 updates
 only one of its two SPI-driven halves. BUSY cycles normally and both chip-selects
 toggle, so the fault is downstream of any signal the Pi can observe — it shows as
