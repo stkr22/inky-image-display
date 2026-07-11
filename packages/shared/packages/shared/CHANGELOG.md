@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.6.0](https://github.com/stkr22/inky-image-display/compare/shared-v4.5.1...shared-v4.6.0) (2026-07-11)
+
+
+### Features
+
+* **api:** curation, quiet hours, refresh-health states, run tracking, e-ink preview ([3d14cbf](https://github.com/stkr22/inky-image-display/commit/3d14cbf315974813cb362d5c0cba6a51e1b5bebf))
+
 ## [4.5.1](https://github.com/stkr22/inky-image-display/compare/shared-v4.5.0...shared-v4.5.1) (2026-07-04)
 
 
