@@ -79,8 +79,10 @@ class ImageRegisterPayload(BaseModel):
     original_width: int | None = None
     original_height: int | None = None
     is_portrait: bool = False
-    display_duration_seconds: int = 600
-    priority: int = 5
+    # None defers to the device/global rotation interval. The API now
+    # honours this field as a per-image hold, so the old always-600 default
+    # would silently pin every synced image to a 10-minute cadence.
+    display_duration_seconds: int | None = None
     expires_at: datetime | None = None
 
 
@@ -95,6 +97,22 @@ class ImageUpdatePayload(BaseModel):
     original_height: int | None = None
     is_portrait: bool | None = None
     expires_at: datetime | None = None
+
+
+class SyncRunReportPayload(BaseModel):
+    """Payload for POST /api/sync-runs — one completed job run summary."""
+
+    job_type: str
+    job_id: UUID
+    job_name: str
+    status: str
+    started_at: datetime
+    finished_at: datetime
+    images_added: int = 0
+    images_skipped: int = 0
+    images_deleted: int = 0
+    detail: str | None = None
+    error: str | None = None
 
 
 class DisplayAPIError(Exception):
@@ -214,6 +232,19 @@ class DisplayAPIClient:
             raise ImageTooSmallError(f"image too small for {width}x{height}")
         response.raise_for_status()
         return response.content
+
+    # --- Run reporting ---
+
+    async def report_sync_run(self, payload: SyncRunReportPayload) -> None:
+        """Record a completed job run so the UI can show last-run status.
+
+        Best-effort: reporting failures are logged and swallowed — a broken
+        reporting path must never turn a successful sync into a failure.
+        """
+        try:
+            await self._request("POST", "/api/sync-runs", json=payload.model_dump(mode="json"))
+        except Exception:
+            self._logger.warning("Failed to report run for job %s", payload.job_name, exc_info=True)
 
     # --- Devices ---
 

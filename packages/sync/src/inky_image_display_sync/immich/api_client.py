@@ -57,6 +57,11 @@ class ImmichDisplayAPIClient(DisplayAPIClient):
         response = await self._request("GET", "/api/sync-jobs", params={"is_active": "true"})
         return [SyncJobItem.model_validate(j) for j in response.json()]
 
+    async def get_requested_sync_jobs(self) -> list[SyncJobItem]:
+        """Fetch jobs flagged by "Run now" (regardless of is_active)."""
+        response = await self._request("GET", "/api/sync-jobs", params={"requested": "true"})
+        return [SyncJobItem.model_validate(j) for j in response.json()]
+
 
 __all__ = [
     "DisplayAPIError",

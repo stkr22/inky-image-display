@@ -12,6 +12,7 @@ from inky_image_display_sync.immich.sync_service import (
     CleanupResult,
     ImmichSyncService,
     ProcessResult,
+    SyncResult,
 )
 from pydantic import ValidationError
 
@@ -96,7 +97,7 @@ class TestCleanupExpiredImages:
         api_client.list_images.return_value = []
         service = _make_service(api_client=api_client)
 
-        result = await service._cleanup_expired_images()
+        result, _deleted_by_job = await service._cleanup_expired_images()
 
         assert result.expired == 0
         assert result.deleted == 0
@@ -109,7 +110,7 @@ class TestCleanupExpiredImages:
         api_client.get_devices.return_value = []
         service = _make_service(api_client=api_client)
 
-        result = await service._cleanup_expired_images()
+        result, _deleted_by_job = await service._cleanup_expired_images()
 
         assert result.expired == 1
         assert result.deleted == 1
@@ -125,7 +126,7 @@ class TestCleanupExpiredImages:
         api_client.get_devices.return_value = [_make_device_item(current_image_id=expired_image.id)]
         service = _make_service(api_client=api_client)
 
-        result = await service._cleanup_expired_images()
+        result, _deleted_by_job = await service._cleanup_expired_images()
 
         assert result.expired == 1
         assert result.deleted == 0
@@ -141,7 +142,7 @@ class TestCleanupExpiredImages:
         api_client.delete_image.side_effect = Exception("API connection failed")
         service = _make_service(api_client=api_client)
 
-        result = await service._cleanup_expired_images()
+        result, _deleted_by_job = await service._cleanup_expired_images()
 
         assert result.deleted == 0
         assert result.storage_errors == 1
@@ -153,7 +154,7 @@ class TestCleanupExpiredImages:
         api_client.list_images.return_value = []
         service = _make_service(api_client=api_client)
 
-        result = await service._cleanup_expired_images()
+        result, _deleted_by_job = await service._cleanup_expired_images()
 
         assert result.expired == 0
         api_client.list_images.assert_called_once()
@@ -178,6 +179,7 @@ class TestCleanupInSyncFlow:
         api_client = AsyncMock(spec=ImmichDisplayAPIClient)
         # Return one job so cleanup is triggered, then return empty image list
         job = MagicMock(spec=SyncJobItem)
+        job.id = uuid4()
         job.name = "test-job"
         job.max_images = 10
         api_client.get_active_sync_jobs.return_value = [job]
@@ -185,7 +187,7 @@ class TestCleanupInSyncFlow:
         service = _make_service(api_client=api_client, retention_days=7)
 
         with patch.object(service, "_cleanup_expired_images", new_callable=AsyncMock) as mock_cleanup:
-            mock_cleanup.return_value = CleanupResult()
+            mock_cleanup.return_value = (CleanupResult(), {})
             with patch.object(service, "_count_job_images", new_callable=AsyncMock, return_value=10):
                 await service.sync_all_active_jobs()
 
@@ -197,15 +199,16 @@ async def test_cleanup_called_before_capacity_check() -> None:
     """Verify cleanup runs before a job's per-job capacity check."""
     api_client = AsyncMock(spec=ImmichDisplayAPIClient)
     job = MagicMock(spec=SyncJobItem)
+    job.id = uuid4()
     job.name = "test-job"
     job.max_images = 5
     api_client.get_active_sync_jobs.return_value = [job]
 
     call_order: list[str] = []
 
-    async def mock_cleanup() -> CleanupResult:
+    async def mock_cleanup() -> tuple[CleanupResult, dict[str, int]]:
         call_order.append("cleanup")
-        return CleanupResult(expired=3, deleted=3)
+        return CleanupResult(expired=3, deleted=3), {}
 
     async def mock_count(_job_name: str) -> int:
         call_order.append("count")
@@ -661,3 +664,62 @@ class TestSyncJobRandomFlow:
 
         fetch_pool_mock.assert_not_called()
         service.immich.search_smart.assert_awaited_once()
+
+
+class TestRunReporting:
+    """Every job outcome must POST a run report — the UI's only feedback."""
+
+    @pytest.mark.asyncio
+    async def test_successful_job_reports_counts(self) -> None:
+        api_client = AsyncMock(spec=ImmichDisplayAPIClient)
+        job = MagicMock(spec=SyncJobItem)
+        job.id = uuid4()
+        job.name = "test-job"
+        job.max_images = 0  # no cap check
+        service = _make_service(api_client=api_client)
+
+        sync_result = SyncResult(fetched=10, filtered=6, downloaded=4, skipped_existing=1, skipped_undersized=1)
+        with patch.object(service, "_sync_job", new_callable=AsyncMock, return_value=sync_result):
+            await service._run_and_report_job(job, images_deleted=2)
+
+        api_client.report_sync_run.assert_awaited_once()
+        payload = api_client.report_sync_run.await_args.args[0]
+        assert payload.job_type == "immich"
+        assert payload.job_id == job.id
+        assert payload.status == "success"
+        assert payload.images_added == 4
+        assert payload.images_skipped == 2
+        assert payload.images_deleted == 2
+
+    @pytest.mark.asyncio
+    async def test_failed_job_reports_error_status(self) -> None:
+        api_client = AsyncMock(spec=ImmichDisplayAPIClient)
+        job = MagicMock(spec=SyncJobItem)
+        job.id = uuid4()
+        job.name = "test-job"
+        job.max_images = 0
+        service = _make_service(api_client=api_client)
+
+        with patch.object(service, "_sync_job", new_callable=AsyncMock, side_effect=RuntimeError("immich down")):
+            await service._run_and_report_job(job, images_deleted=0)
+
+        payload = api_client.report_sync_run.await_args.args[0]
+        assert payload.status == "error"
+        assert "immich down" in payload.error
+
+    @pytest.mark.asyncio
+    async def test_at_cap_skip_still_reports(self) -> None:
+        api_client = AsyncMock(spec=ImmichDisplayAPIClient)
+        job = MagicMock(spec=SyncJobItem)
+        job.id = uuid4()
+        job.name = "test-job"
+        job.max_images = 5
+        service = _make_service(api_client=api_client)
+
+        with patch.object(service, "_count_job_images", new_callable=AsyncMock, return_value=5):
+            await service._run_and_report_job(job, images_deleted=0)
+
+        payload = api_client.report_sync_run.await_args.args[0]
+        assert payload.status == "success"
+        assert payload.images_added == 0
+        assert "max_images cap" in payload.detail

@@ -61,6 +61,11 @@ class GeminiDisplayAPIClient(DisplayAPIClient):
         response = await self._request("GET", "/api/genai/jobs", params={"is_active": "true"})
         return [GeminiSyncJobItem.model_validate(j) for j in response.json()]
 
+    async def get_requested_gemini_jobs(self) -> list[GeminiSyncJobItem]:
+        """Fetch jobs flagged by "Run now" (regardless of is_active)."""
+        response = await self._request("GET", "/api/genai/jobs", params={"requested": "true"})
+        return [GeminiSyncJobItem.model_validate(j) for j in response.json()]
+
     async def get_prompt_preset(self, preset_id: UUID) -> PromptPresetItem:
         """Fetch a single prompt preset by id."""
         response = await self._request("GET", f"/api/genai/presets/{preset_id}")

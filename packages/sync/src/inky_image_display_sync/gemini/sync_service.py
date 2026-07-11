@@ -17,8 +17,9 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from inky_image_display_shared.ai import RenderedPrompt, generate_image_bytes
+from inky_image_display_shared.time import utcnow
 
-from inky_image_display_sync.api_client import ImageRegisterPayload
+from inky_image_display_sync.api_client import ImageRegisterPayload, SyncRunReportPayload
 from inky_image_display_sync.gemini.config import GeminiConnectionConfig, GeminiSyncConfig
 from inky_image_display_sync.immich.config import S3WriterConfig
 from inky_image_display_sync.immich.storage import S3StorageClient
@@ -65,12 +66,20 @@ class GeminiSyncService:
             logger=logger,
         )
 
-    async def sync_all_active_jobs(self) -> list[GeminiSyncResult]:
-        """Fetch active Gemini jobs and run each one in sequence."""
+    async def sync_all_active_jobs(self, requested_only: bool = False) -> list[GeminiSyncResult]:
+        """Fetch Gemini jobs and run each one in sequence, reporting each run.
+
+        ``requested_only`` is the fast-cron mode behind the UI's "Run now"
+        button: only jobs flagged via ``run_requested_at`` are executed,
+        active or not.
+        """
         self.storage.ensure_bucket_exists()
-        jobs = await self.api_client.get_active_gemini_jobs()
+        if requested_only:
+            jobs = await self.api_client.get_requested_gemini_jobs()
+        else:
+            jobs = await self.api_client.get_active_gemini_jobs()
         if not jobs:
-            self.logger.info("No active Gemini sync jobs")
+            self.logger.info("No %s Gemini sync jobs", "requested" if requested_only else "active")
             return []
 
         # Cache blocks so we only fetch them once per run.
@@ -78,11 +87,14 @@ class GeminiSyncService:
 
         results: list[GeminiSyncResult] = []
         for job in jobs:
+            started_at = utcnow()
             try:
                 preset = await self.api_client.get_prompt_preset(job.prompt_preset_id)
             except Exception as exc:
                 self.logger.error("Failed to load preset for job %s: %s", job.name, exc)
-                results.append(GeminiSyncResult(job_name=job.name, failed=1, errors=[str(exc)]))
+                result = GeminiSyncResult(job_name=job.name, failed=1, errors=[str(exc)])
+                results.append(result)
+                await self._report_run(job, result, started_at)
                 continue
 
             result = await self._run_job(job, preset, blocks_by_id)
@@ -93,7 +105,24 @@ class GeminiSyncService:
                 result.generated,
                 result.failed,
             )
+            await self._report_run(job, result, started_at)
         return results
+
+    async def _report_run(self, job: GeminiSyncJobItem, result: GeminiSyncResult, started_at: datetime) -> None:
+        """POST the run outcome so the UI can show last-run status per job."""
+        await self.api_client.report_sync_run(
+            SyncRunReportPayload(
+                job_type="gemini",
+                job_id=job.id,
+                job_name=job.name,
+                status="error" if result.errors else "success",
+                started_at=started_at,
+                finished_at=utcnow(),
+                images_added=result.generated,
+                detail=f"generated={result.generated} failed={result.failed}",
+                error="; ".join(result.errors[:3]) if result.errors else None,
+            )
+        )
 
     async def _run_job(
         self,

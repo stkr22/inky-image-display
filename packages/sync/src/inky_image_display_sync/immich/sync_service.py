@@ -7,7 +7,9 @@ from datetime import datetime, timedelta
 from enum import Enum, auto
 from uuid import UUID
 
-from inky_image_display_sync.api_client import ImageTooSmallError
+from inky_image_display_shared.time import utcnow
+
+from inky_image_display_sync.api_client import ImageTooSmallError, SyncRunReportPayload
 from inky_image_display_sync.immich.api_client import (
     ImageItem,
     ImageRegisterPayload,
@@ -123,65 +125,112 @@ class ImmichSyncService:
             logger=logger,
         )
 
-    async def sync_all_active_jobs(self) -> None:
-        """Execute all active sync jobs via the Display API.
+    async def sync_all_active_jobs(self, requested_only: bool = False) -> None:
+        """Execute sync jobs via the Display API, reporting each run.
 
         Each job's ``max_images`` cap is counted against only the images that
         job uploaded (``images.sync_job_name``), so one job can never spend
         another's budget.
+
+        ``requested_only`` is the fast-cron mode behind the UI's "Run now"
+        button: it executes only flagged jobs (active or not) and skips the
+        global retention cleanup, so it stays cheap enough to run every
+        minute or two.
         """
-        jobs = await self.api_client.get_active_sync_jobs()
+        if requested_only:
+            jobs = await self.api_client.get_requested_sync_jobs()
+            if not jobs:
+                self.logger.debug("No requested sync jobs")
+                return
+        else:
+            jobs = await self.api_client.get_active_sync_jobs()
+            if not jobs:
+                self.logger.warning("No active sync jobs found")
+                return
 
-        if not jobs:
-            self.logger.warning("No active sync jobs found")
-            return
-
-        self.logger.info("Found %d active sync jobs", len(jobs))
+        self.logger.info("Found %d sync job(s) to process", len(jobs))
 
         # Cleanup first so expired images free up each job's budget before counting.
-        if self.sync_config.retention_days > 0:
-            await self._cleanup_expired_images()
+        deleted_by_job: dict[str, int] = {}
+        if not requested_only and self.sync_config.retention_days > 0:
+            _, deleted_by_job = await self._cleanup_expired_images()
 
         self.storage.ensure_bucket_exists()
 
         async with self.immich.connect():
             for job in jobs:
-                max_uploads_remaining: int | None = None
-                if job.max_images > 0:
-                    existing = await self._count_job_images(job.name)
-                    max_uploads_remaining = job.max_images - existing
-                    self.logger.info(
-                        "Job '%s': %d/%d images already synced, can upload %d",
-                        job.name,
-                        existing,
-                        job.max_images,
-                        max(0, max_uploads_remaining),
-                    )
-                    if max_uploads_remaining <= 0:
-                        self.logger.info(
-                            "Skipping job '%s': reached its image limit (%d)",
-                            job.name,
-                            job.max_images,
-                        )
-                        continue
+                await self._run_and_report_job(job, images_deleted=deleted_by_job.get(job.name, 0))
 
+    async def _run_and_report_job(self, job: SyncJobItem, images_deleted: int) -> None:
+        """Run one job and POST its outcome to /api/sync-runs.
+
+        The report is what the UI shows and what clears the job's "Run now"
+        flag, so it is sent for every outcome — including the at-cap skip
+        (a real answer to "why did nothing new appear?") and hard failures.
+        """
+        started_at = utcnow()
+        result: SyncResult | None = None
+        detail: str | None = None
+        error: str | None = None
+
+        try:
+            max_uploads_remaining: int | None = None
+            skip_at_cap = False
+            if job.max_images > 0:
+                existing = await self._count_job_images(job.name)
+                max_uploads_remaining = job.max_images - existing
+                self.logger.info(
+                    "Job '%s': %d/%d images already synced, can upload %d",
+                    job.name,
+                    existing,
+                    job.max_images,
+                    max(0, max_uploads_remaining),
+                )
+                if max_uploads_remaining <= 0:
+                    self.logger.info("Skipping job '%s': reached its image limit (%d)", job.name, job.max_images)
+                    detail = f"Nothing to do: job holds {existing}/{job.max_images} images (max_images cap)"
+                    skip_at_cap = True
+
+            if not skip_at_cap:
                 self.logger.info("Processing sync job: %s", job.name)
-                try:
-                    result = await self._sync_job(job, max_uploads_remaining=max_uploads_remaining)
-                    self.logger.info("Job '%s' completed: %s", job.name, result)
-                except Exception:
-                    self.logger.exception("Job '%s' failed", job.name)
+                result = await self._sync_job(job, max_uploads_remaining=max_uploads_remaining)
+                self.logger.info("Job '%s' completed: %s", job.name, result)
+                detail = str(result)
+                if result.errors:
+                    error = "; ".join(result.errors[:3])
+        except Exception as exc:
+            self.logger.exception("Job '%s' failed", job.name)
+            error = str(exc)
 
-    async def _cleanup_expired_images(self) -> CleanupResult:
+        await self.api_client.report_sync_run(
+            SyncRunReportPayload(
+                job_type="immich",
+                job_id=job.id,
+                job_name=job.name,
+                status="error" if error else "success",
+                started_at=started_at,
+                finished_at=utcnow(),
+                images_added=result.downloaded if result else 0,
+                images_skipped=(result.skipped_existing + result.skipped_undersized) if result else 0,
+                images_deleted=images_deleted,
+                detail=detail,
+                error=error,
+            )
+        )
+
+    async def _cleanup_expired_images(self) -> tuple[CleanupResult, dict[str, int]]:
         """Remove expired Immich images via the Display API.
 
         Protects images currently displayed on any device.
 
         Returns:
-            CleanupResult with counts and any errors
+            CleanupResult with counts, plus deletions grouped by
+            ``sync_job_name`` so each job's run report can show what
+            retention removed on its behalf.
 
         """
         result = CleanupResult()
+        deleted_by_job: dict[str, int] = {}
         now = datetime.now()
 
         expired_images = await self.api_client.list_images(
@@ -192,7 +241,7 @@ class ImmichSyncService:
 
         if not expired_images:
             self.logger.info("No expired images to clean up")
-            return result
+            return result, deleted_by_job
 
         devices = await self.api_client.get_devices()
         protected_ids: set[UUID] = {d.current_image_id for d in devices if d.current_image_id is not None}
@@ -212,12 +261,14 @@ class ImmichSyncService:
             try:
                 await self.api_client.delete_image(image.id)
                 result.deleted += 1
+                if image.sync_job_name:
+                    deleted_by_job[image.sync_job_name] = deleted_by_job.get(image.sync_job_name, 0) + 1
             except Exception as e:
                 result.storage_errors += 1
                 self.logger.warning("Failed to delete image %s: %s", image.id, e)
 
         self.logger.info("Cleanup completed: %s", result)
-        return result
+        return result, deleted_by_job
 
     async def _sync_job(self, job: SyncJobItem, max_uploads_remaining: int | None = None) -> SyncResult:
         """Execute a single sync job.
