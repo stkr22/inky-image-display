@@ -22,6 +22,7 @@ from inky_image_display_api.routes import (
     auth,
     device_profiles,
     devices,
+    eink_preview,
     gemini_sync_jobs,
     genai_generate,
     grids,
@@ -34,9 +35,10 @@ from inky_image_display_api.routes import (
     prompt_presets,
     schedule,
     sync_jobs,
+    sync_runs,
 )
 from inky_image_display_api.routes.health import router as health_router
-from inky_image_display_api.services.generation_tasks import GenerationTaskRegistry
+from inky_image_display_api.services.generation_tasks import GenerationTaskStore
 from inky_image_display_api.services.rotation import rotation_loop
 from inky_image_display_api.services.s3_service import S3Service
 
@@ -62,7 +64,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.engine = engine
     app.state.s3_service = s3_service
     app.state.mqtt = mqtt
-    app.state.generation_tasks = GenerationTaskRegistry()
+    app.state.generation_tasks = GenerationTaskStore(engine)
 
     # Auth: resolved config for the middleware; the OIDC client only exists
     # when an issuer is configured (auth disabled otherwise).
@@ -94,11 +96,15 @@ app.include_router(health_router)
 app.include_router(auth.router)
 app.include_router(images.router)
 app.include_router(images_process.router)
+# eink_preview shares the /api/images prefix; registered after images so
+# its literal /eink-preview POST still wins over any dynamic sibling.
+app.include_router(eink_preview.router)
 app.include_router(devices.router)
 app.include_router(device_profiles.router)
 app.include_router(grids.router)
 app.include_router(schedule.router)
 app.include_router(sync_jobs.router)
+app.include_router(sync_runs.router)
 app.include_router(prompt_blocks.router)
 app.include_router(prompt_presets.router)
 app.include_router(gemini_sync_jobs.router)

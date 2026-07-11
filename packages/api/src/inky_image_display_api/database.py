@@ -8,6 +8,7 @@ from alembic.config import Config
 from inky_image_display_shared.models import (
     Device,
     GeminiSyncJob,
+    GenerationTask,
     Grid,
     GridDevice,
     Image,
@@ -18,6 +19,7 @@ from inky_image_display_shared.models import (
     MotdScreen,
     PromptBlock,
     PromptPreset,
+    SyncJobRun,
 )
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
@@ -72,6 +74,8 @@ async def create_tables(engine: AsyncEngine) -> None:
             MotdDeviceAssignment.__table__,  # ty: ignore[unresolved-attribute]
             MotdMessage.__table__,  # ty: ignore[unresolved-attribute]
             MotdScreen.__table__,  # ty: ignore[unresolved-attribute]
+            SyncJobRun.__table__,  # ty: ignore[unresolved-attribute]
+            GenerationTask.__table__,  # ty: ignore[unresolved-attribute]
         ]
         for table in tables:
             await conn.run_sync(table.create, checkfirst=True)

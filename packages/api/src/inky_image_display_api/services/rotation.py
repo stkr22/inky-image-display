@@ -11,6 +11,7 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.services import grid_service, motd_service
+from inky_image_display_api.services.app_settings_service import get_quiet_hours, is_quiet_now
 from inky_image_display_api.services.image_service import (
     build_display_command,
     get_next_image_for_device,
@@ -39,6 +40,15 @@ async def rotation_loop(app: FastAPI) -> None:
             await motd_service.tick(app)
         except Exception:
             logger.exception("Error in MOTD tick")
+        # Quiet hours pause only the interval-driven rotation below. The
+        # MOTD tick above stays live because its schedule is an explicit
+        # operator choice; manual pushes bypass this loop entirely. Devices
+        # left overdue simply rotate on the first tick after the window.
+        try:
+            if await _in_quiet_hours(app):
+                continue
+        except Exception:
+            logger.exception("Error evaluating quiet hours; rotating anyway")
         try:
             await _rotate_due_grids(app)
         except Exception:
@@ -47,6 +57,13 @@ async def rotation_loop(app: FastAPI) -> None:
             await _rotate_due_devices(app)
         except Exception:
             logger.exception("Error in rotation loop")
+
+
+async def _in_quiet_hours(app: FastAPI) -> bool:
+    """Whether the operator-configured quiet window is active right now."""
+    async with AsyncSession(app.state.engine) as session:
+        quiet_hours = await get_quiet_hours(session)
+    return is_quiet_now(quiet_hours, utcnow())
 
 
 async def _rotate_due_devices(app: FastAPI) -> None:
@@ -69,6 +86,7 @@ async def _rotate_due_devices(app: FastAPI) -> None:
             select(Device).where(
                 Device.is_online == True,  # noqa: E712 — SQLModel comparison
                 Device.scheduled_next_at <= now,
+                col(Device.is_pinned).is_(False),
                 col(Device.claimed_by_grid_id).is_(None),
                 col(Device.claimed_by_motd_config_id).is_(None),
                 dispatch_allowed_clause(now, app.state.settings.refresh_error_backoff_seconds),

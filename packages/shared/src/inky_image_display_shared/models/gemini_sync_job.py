@@ -48,5 +48,10 @@ class GeminiSyncJob(SQLModel, table=True):
         description="If set, generated images expire after this many days.",
     )
 
+    # Set by the "Run now" endpoint; the worker's --requested-only mode
+    # (run on a frequent cron) picks up flagged jobs and the run report
+    # clears the flag. Regular scheduled runs ignore it.
+    run_requested_at: datetime | None = Field(default=None)
+
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

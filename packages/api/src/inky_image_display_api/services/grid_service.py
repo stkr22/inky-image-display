@@ -362,7 +362,13 @@ async def get_next_grid_image(session: AsyncSession, grid: Grid) -> Image | None
     """
     query = (
         select(Image)
-        .where(col(Image.target_grid_id) == grid.id)
+        .where(
+            col(Image.target_grid_id) == grid.id,
+            # The operator veto applies to grid pools like it does to solo
+            # rotation — "don't show again" must stick even when the image
+            # was curated into a grid.
+            col(Image.excluded_from_rotation).is_(False),
+        )
         .order_by(col(Image.last_displayed_at).asc().nullsfirst())
         .limit(1)
     )

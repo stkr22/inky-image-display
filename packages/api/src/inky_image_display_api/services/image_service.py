@@ -1,5 +1,6 @@
 """FIFO image selection for display devices."""
 
+import random
 from datetime import datetime, timedelta
 
 from inky_image_display_shared.models import Device, DeviceProfile, Grid, Image
@@ -24,13 +25,23 @@ def next_refresh_at(entity: Device | Grid, default_seconds: int, now: datetime) 
     return now + timedelta(seconds=seconds)
 
 
+# How many least-recently-shown candidates the picker samples from. Strict
+# oldest-first replays the pool in an identical order every cycle, which
+# reads as repetitive even though nothing repeats early; a small random
+# window breaks the sequence while keeping the LRU fairness guarantee (a
+# just-shown image can't return until the pool has largely cycled).
+_PICK_WINDOW = 5
+
+
 async def get_next_image_for_device(session: AsyncSession, device: Device) -> Image | None:
-    """Select the next image using FIFO with device compatibility filtering.
+    """Select the next image: random pick among the least-recently shown.
 
     Selection criteria:
     1. Images never displayed (``last_displayed_at IS NULL``) first.
     2. Then by least recently displayed (``last_displayed_at ASC``).
-    3. Filtered by exact device-natural dimension match and orientation.
+    3. Filtered by exact device-natural dimension match and orientation,
+       excluding grid-pool images and operator-excluded images.
+    4. A random choice among the top ``_PICK_WINDOW`` candidates.
 
     Args:
         session: Active async database session.
@@ -60,13 +71,17 @@ async def get_next_image_for_device(session: AsyncSession, device: Device) -> Im
             col(Image.original_height) == expected_height,
             Image.is_portrait == is_portrait,
             col(Image.target_grid_id).is_(None),
+            col(Image.excluded_from_rotation).is_(False),
         )
         .order_by(col(Image.last_displayed_at).asc().nullsfirst())
-        .limit(1)
+        .limit(_PICK_WINDOW)
     )
 
     result = await session.exec(query)
-    return result.first()
+    candidates = list(result.all())
+    if not candidates:
+        return None
+    return random.choice(candidates)
 
 
 def build_display_command(image: Image) -> DisplayCommand:
@@ -108,10 +123,15 @@ async def update_display_state(
     # Mark image as displayed
     image.last_displayed_at = now
 
-    # Update device state
+    # Update device state. A per-image hold time beats the device/global
+    # interval so an operator can let a favourite linger without touching
+    # the device's cadence.
     device.current_image_id = image.id
     device.displayed_since = now
-    device.scheduled_next_at = next_refresh_at(device, default_seconds, now)
+    if image.display_duration_seconds is not None:
+        device.scheduled_next_at = now + timedelta(seconds=image.display_duration_seconds)
+    else:
+        device.scheduled_next_at = next_refresh_at(device, default_seconds, now)
     device.updated_at = now
 
     session.add(image)

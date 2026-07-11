@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
     from inky_image_display_api.config import Settings
     from inky_image_display_api.mqtt import MQTTService
-    from inky_image_display_api.services.generation_tasks import GenerationTaskRegistry
+    from inky_image_display_api.services.generation_tasks import GenerationTaskStore
     from inky_image_display_api.services.s3_service import S3Service
 
 logger = logging.getLogger(__name__)
@@ -208,7 +208,7 @@ async def generate_message(  # noqa: PLR0912, PLR0915 — sequential pipeline, s
     s3: S3Service,
     *,
     task_id: UUID,
-    tasks: GenerationTaskRegistry | None = None,
+    tasks: GenerationTaskStore | None = None,
 ) -> None:
     """Generate a full MOTD message: story, illustration, rendered screens.
 
@@ -219,12 +219,12 @@ async def generate_message(  # noqa: PLR0912, PLR0915 — sequential pipeline, s
     if settings.gemini_api_key is None:
         logger.error("MOTD generation %s aborted: GEMINI_API_KEY is not configured", task_id)
         if tasks is not None:
-            tasks.mark_failed(task_id, "GEMINI_API_KEY is not configured")
+            await tasks.mark_failed(task_id, "GEMINI_API_KEY is not configured")
         return
     api_key = settings.gemini_api_key.get_secret_value()
 
     if tasks is not None:
-        tasks.mark_running(task_id)
+        await tasks.mark_running(task_id)
 
     message_id: UUID | None = None
     try:
@@ -316,7 +316,7 @@ async def generate_message(  # noqa: PLR0912, PLR0915 — sequential pipeline, s
         await _prune_old_messages(engine, s3, config_id)
         logger.info("MOTD generation %s: message %s ready (%d screens)", task_id, message_id, rendered)
         if tasks is not None:
-            tasks.mark_completed(task_id, detail=f"Message ready with {rendered} screens")
+            await tasks.mark_completed(task_id, detail=f"Message ready with {rendered} screens")
     except Exception as exc:
         logger.exception("MOTD generation %s failed", task_id)
         error = str(exc) or exc.__class__.__name__
@@ -330,7 +330,7 @@ async def generate_message(  # noqa: PLR0912, PLR0915 — sequential pipeline, s
                     session.add(message)
                     await session.commit()
         if tasks is not None:
-            tasks.mark_failed(task_id, error)
+            await tasks.mark_failed(task_id, error)
 
 
 async def _prune_old_messages(engine: AsyncEngine, s3: S3Service, config_id: UUID) -> None:
@@ -835,7 +835,7 @@ async def _run_scheduled_generation(app: FastAPI, task_id: UUID) -> None:
     try:
         tasks = getattr(app.state, "generation_tasks", None)
         if tasks is not None:
-            tasks.create(task_id, "message of the day")
+            await tasks.create(task_id, "message of the day")
         await generate_message(
             app.state.engine,
             app.state.settings,

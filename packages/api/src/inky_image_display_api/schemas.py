@@ -24,8 +24,10 @@ from inky_image_display_shared.schemas.responses import (
     NextImageResponse,
     PromptBlockResponse,
     PromptPresetResponse,
+    QuietHoursSettings,
     ScheduleUpcomingEntry,
     SyncJobResponse,
+    SyncJobRunResponse,
     UtcDatetime,
 )
 from pydantic import BaseModel, Field, field_validator
@@ -70,9 +72,12 @@ __all__ = [
     "PromptPresetCreate",
     "PromptPresetResponse",
     "PromptPresetUpdate",
+    "QuietHoursSettings",
     "ScheduleUpcomingEntry",
     "SyncJobCreate",
     "SyncJobResponse",
+    "SyncJobRunReport",
+    "SyncJobRunResponse",
     "SyncJobUpdate",
     "UtcDatetime",
 ]
@@ -95,8 +100,9 @@ class ImageCreate(BaseModel):
     title: str | None = None
     description: str | None = None
     author: str | None = None
-    display_duration_seconds: int = 600
-    priority: int = 5
+    # None = rotate on the device/global interval. A value pins the image
+    # on screen for that long once shown (see image_service scheduling).
+    display_duration_seconds: RefreshIntervalSeconds | None = None
     tags: str | None = None
     is_portrait: bool | None = None
     target_grid_id: UUID | None = None
@@ -117,13 +123,17 @@ class ImageRegister(BaseModel):
     original_width: int | None = None
     original_height: int | None = None
     is_portrait: bool = False
-    display_duration_seconds: int = 600
-    priority: int = 5
+    display_duration_seconds: RefreshIntervalSeconds | None = None
     expires_at: datetime | None = None
 
 
 class ImageUpdate(BaseModel):
-    """Patch fields on an existing image (all optional)."""
+    """Patch fields on an existing image (all optional).
+
+    ``display_duration_seconds`` uses ``exclude_unset`` semantics like every
+    other field, so sending an explicit ``null`` clears the per-image hold
+    back to the device interval.
+    """
 
     source_name: str | None = None
     title: str | None = None
@@ -133,10 +143,12 @@ class ImageUpdate(BaseModel):
     original_width: int | None = None
     original_height: int | None = None
     is_portrait: bool | None = None
-    display_duration_seconds: int | None = None
-    priority: int | None = None
+    display_duration_seconds: RefreshIntervalSeconds | None = None
     expires_at: datetime | None = None
     target_grid_id: UUID | None = None
+    # Operator veto: True removes the image from all automatic rotation
+    # (solo and grid) without deleting it; manual pushes still work.
+    excluded_from_rotation: bool | None = None
 
 
 # --- Devices ---
@@ -162,12 +174,22 @@ class DeviceUpdate(BaseModel):
     # "explicitly null" on a regular ``int | None`` field — the UI uses
     # this to clear the override back to the default.
     clear_refresh_interval: bool = False
+    # Pin/unpin: a pinned device keeps its current image until unpinned;
+    # manual pushes still work and implicitly leave the image pinned.
+    is_pinned: bool | None = None
 
 
 class DisplayCommandRequest(BaseModel):
-    """Request body for sending a specific image to a device."""
+    """Request body for sending a specific image to a device.
+
+    ``fit="auto"`` lets the API cover-crop a copy to the panel's exact
+    dimensions when they don't match; ``"exact"`` (default) instead
+    rejects mismatches with 409 — the controller cannot resize and would
+    otherwise ack a failure, flagging a healthy device as stuck.
+    """
 
     image_id: UUID
+    fit: Literal["exact", "auto"] = "exact"
 
 
 # --- Sync Jobs ---
@@ -221,6 +243,22 @@ class SyncJobUpdate(BaseModel):
     taken_after: datetime | None = None
     taken_before: datetime | None = None
     rating: int | None = None
+
+
+class SyncJobRunReport(BaseModel):
+    """Worker-posted summary of one completed sync job run."""
+
+    job_type: Literal["immich", "gemini"]
+    job_id: UUID
+    job_name: str
+    status: Literal["success", "error"]
+    started_at: datetime
+    finished_at: datetime
+    images_added: int = 0
+    images_skipped: int = 0
+    images_deleted: int = 0
+    detail: str | None = None
+    error: str | None = None
 
 
 # --- Prompt blocks & presets ---
@@ -413,9 +451,14 @@ class GridDisplayRequest(BaseModel):
 
 
 class AppSettingsUpdate(BaseModel):
-    """Body for ``PUT /api/app-settings``."""
+    """Body for ``PUT /api/app-settings``.
 
-    default_refresh_seconds: RefreshIntervalSeconds
+    Both sections are optional so the UI can save one card at a time
+    without re-submitting (and re-validating) the other.
+    """
+
+    default_refresh_seconds: RefreshIntervalSeconds | None = None
+    quiet_hours: QuietHoursSettings | None = None
 
 
 # --- Message of the day ---

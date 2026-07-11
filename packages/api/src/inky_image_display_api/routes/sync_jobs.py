@@ -19,12 +19,21 @@ logger = logging.getLogger(__name__)
 async def list_sync_jobs(
     request: Request,
     is_active: bool | None = None,
+    requested: bool | None = None,
 ) -> list[ImmichSyncJob]:
-    """List sync jobs with optional active filter."""
+    """List sync jobs with optional filters.
+
+    ``requested=true`` returns only jobs flagged by "Run now" — the query
+    the worker's ``--requested-only`` mode polls with.
+    """
     async with AsyncSession(request.app.state.engine) as session:
         stmt = select(ImmichSyncJob)
         if is_active is not None:
             stmt = stmt.where(ImmichSyncJob.is_active == is_active)
+        if requested is True:
+            stmt = stmt.where(col(ImmichSyncJob.run_requested_at).is_not(None))
+        elif requested is False:
+            stmt = stmt.where(col(ImmichSyncJob.run_requested_at).is_(None))
         result = await session.exec(stmt)
         return list(result.all())
 
@@ -71,6 +80,27 @@ async def update_sync_job(request: Request, job_id: UUID, body: SyncJobUpdate) -
         await session.refresh(job)
 
     logger.info("Updated sync job %s", job_id)
+    return job
+
+
+@router.post("/{job_id}/run-now", response_model=SyncJobResponse)
+async def request_sync_job_run(request: Request, job_id: UUID) -> ImmichSyncJob:
+    """Flag a job for an out-of-band worker run.
+
+    The worker's frequent ``--requested-only`` cron executes flagged jobs
+    (active or not — running a paused job on demand is the point of the
+    button) and the posted run report clears the flag.
+    """
+    async with AsyncSession(request.app.state.engine) as session:
+        result = await session.exec(select(ImmichSyncJob).where(col(ImmichSyncJob.id) == job_id))
+        job = result.first()
+        if job is None:
+            raise HTTPException(status_code=404, detail="Sync job not found")
+        job.run_requested_at = utcnow()
+        session.add(job)
+        await session.commit()
+        await session.refresh(job)
+    logger.info("Run requested for sync job %s (%s)", job_id, job.name)
     return job
 
 

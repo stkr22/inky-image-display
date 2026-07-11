@@ -18,6 +18,7 @@ from inky_image_display_api.routes import (
     auth,
     device_profiles,
     devices,
+    eink_preview,
     gemini_sync_jobs,
     grids,
     images,
@@ -26,6 +27,7 @@ from inky_image_display_api.routes import (
     prompt_blocks,
     schedule,
     sync_jobs,
+    sync_runs,
 )
 from inky_image_display_api.routes.health import router as health_router
 from inky_image_display_shared.models import (
@@ -33,15 +35,18 @@ from inky_image_display_shared.models import (
     Device,
     DeviceProfile,
     GeminiSyncJob,
+    GenerationTask,
     Grid,
     GridDevice,
     Image,
+    ImmichSyncJob,
     MotdConfig,
     MotdDeviceAssignment,
     MotdMessage,
     MotdScreen,
     PromptBlock,
     PromptPreset,
+    SyncJobRun,
 )
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -69,11 +74,14 @@ async def async_engine() -> AsyncIterator[AsyncEngine]:
             MotdConfig.__table__,  # ty: ignore[unresolved-attribute]
             Device.__table__,  # ty: ignore[unresolved-attribute]
             GridDevice.__table__,  # ty: ignore[unresolved-attribute]
+            ImmichSyncJob.__table__,  # ty: ignore[unresolved-attribute]
             AppSetting.__table__,  # ty: ignore[unresolved-attribute]
             GeminiSyncJob.__table__,  # ty: ignore[unresolved-attribute]
             MotdDeviceAssignment.__table__,  # ty: ignore[unresolved-attribute]
             MotdMessage.__table__,  # ty: ignore[unresolved-attribute]
             MotdScreen.__table__,  # ty: ignore[unresolved-attribute]
+            SyncJobRun.__table__,  # ty: ignore[unresolved-attribute]
+            GenerationTask.__table__,  # ty: ignore[unresolved-attribute]
         ]:
             await conn.run_sync(table.create, checkfirst=True)
     yield engine
@@ -92,6 +100,9 @@ def mock_settings() -> MagicMock:
     settings.s3_reader_secret_key = "reader-secret"
     settings.default_display_duration = 3600
     settings.refresh_error_backoff_seconds = 900
+    # Explicit None: a bare MagicMock attribute would read as "configured"
+    # and make ack handling fire real notification tasks in tests.
+    settings.notify_url = None
     settings.mqtt_host = "broker.test"
     settings.mqtt_port = 1883
     settings.mqtt_username = None
@@ -183,11 +194,13 @@ def test_app(
     app.include_router(auth.router)
     app.include_router(images.router)
     app.include_router(images_process.router)
+    app.include_router(eink_preview.router)
     app.include_router(devices.router)
     app.include_router(device_profiles.router)
     app.include_router(grids.router)
     app.include_router(schedule.router)
     app.include_router(sync_jobs.router)
+    app.include_router(sync_runs.router)
     app.include_router(app_settings.router)
     app.include_router(prompt_blocks.router)
     app.include_router(gemini_sync_jobs.router)

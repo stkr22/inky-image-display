@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     # originals and thumbnails.
     media_cache_max_age: int = 86400
 
+    # Optional push notifications for refresh-health transitions (a panel
+    # entering or leaving the failed state). The URL is POSTed a plain-text
+    # body with a ``Title`` header — the ntfy.sh convention, which also
+    # works for most generic webhook receivers. Unset disables the feature.
+    # Nobody watches the admin UI all day; without a push, a stuck panel is
+    # typically discovered by walking past a stale picture days later.
+    notify_url: str | None = None
+
     # Directory holding the built React frontend (packages/web/dist). When
     # set, the API serves it with an SPA fallback; when unset the API is
     # headless and the frontend must be hosted elsewhere.

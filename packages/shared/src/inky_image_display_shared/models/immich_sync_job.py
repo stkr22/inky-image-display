@@ -109,6 +109,11 @@ class ImmichSyncJob(SQLModel, table=True):
     taken_before: datetime | None = Field(default=None, description="Photos taken before")
     rating: int | None = Field(default=None, ge=0, le=5, description="Minimum rating")
 
+    # Set by the "Run now" endpoint; the worker's --requested-only mode
+    # (run on a frequent cron) picks up flagged jobs and the run report
+    # clears the flag. Regular scheduled runs ignore it.
+    run_requested_at: datetime | None = Field(default=None)
+
     # Timestamps
     created_at: datetime = Field(default_factory=utcnow, description="When created")
     updated_at: datetime = Field(default_factory=utcnow, description="When last updated")

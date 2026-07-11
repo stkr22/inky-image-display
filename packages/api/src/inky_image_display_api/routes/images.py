@@ -7,7 +7,7 @@ from io import BytesIO
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Form, HTTPException, Request, Response, UploadFile
 from inky_image_display_shared.models import Image
 from PIL import Image as PILImage
 from sqlmodel import col, func, or_, select
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 @router.get("", response_model=list[ImageResponse])
 async def list_images(
     request: Request,
+    response: Response,
     source_name: str | None = None,
     source_id: str | None = None,
     sync_job_name: str | None = None,
@@ -31,14 +32,20 @@ async def list_images(
     expires_before: datetime | None = None,
     target_grid_id: UUID | None = None,
     solo_only: bool = False,
+    excluded: bool | None = None,
     search: str | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[Image]:
     """List images with optional filters.
 
+    The total number of matches (ignoring limit/offset) is returned in the
+    ``X-Total-Count`` header so paginated clients can show real page counts
+    instead of guessing from a short final page.
+
     Args:
         request: Incoming HTTP request.
+        response: Outgoing response (carries the total-count header).
         source_name: Filter by source type (e.g. "immich", "manual").
         source_id: Filter by stable source identifier (e.g. an Immich asset UUID).
         sync_job_name: Filter by the sync job that created the image.
@@ -48,44 +55,49 @@ async def list_images(
         expires_before: Return only images expiring before this datetime.
         target_grid_id: Filter to images assigned to a specific grid's pool.
         solo_only: Return only images without a ``target_grid_id`` (the solo pool).
+        excluded: Filter by the exclude-from-rotation flag.
         search: Case-insensitive substring match on title, description or tags.
         limit: Max results to return.
         offset: Number of results to skip.
 
     """
     async with AsyncSession(request.app.state.engine) as session:
-        query = select(Image)
+        conditions = []
         if source_name is not None:
-            query = query.where(Image.source_name == source_name)
+            conditions.append(Image.source_name == source_name)
         if source_id is not None:
-            query = query.where(Image.source_id == source_id)
+            conditions.append(Image.source_id == source_id)
         if sync_job_name is not None:
-            query = query.where(Image.sync_job_name == sync_job_name)
+            conditions.append(Image.sync_job_name == sync_job_name)
         if is_portrait is not None:
-            query = query.where(Image.is_portrait == is_portrait)
+            conditions.append(Image.is_portrait == is_portrait)
         if source_url is not None:
-            query = query.where(Image.source_url == source_url)
+            conditions.append(Image.source_url == source_url)
         if source_url_prefix is not None:
-            query = query.where(col(Image.source_url).like(f"{source_url_prefix}%"))
+            conditions.append(col(Image.source_url).like(f"{source_url_prefix}%"))
         if expires_before is not None:
-            query = query.where(
-                col(Image.expires_at).isnot(None),
-                col(Image.expires_at) < expires_before,
-            )
+            conditions.append(col(Image.expires_at).isnot(None))
+            conditions.append(col(Image.expires_at) < expires_before)
         if target_grid_id is not None:
-            query = query.where(col(Image.target_grid_id) == target_grid_id)
+            conditions.append(col(Image.target_grid_id) == target_grid_id)
         if solo_only:
-            query = query.where(col(Image.target_grid_id).is_(None))
+            conditions.append(col(Image.target_grid_id).is_(None))
+        if excluded is not None:
+            conditions.append(col(Image.excluded_from_rotation).is_(excluded))
         if search:
             pattern = f"%{search}%"
-            query = query.where(
+            conditions.append(
                 or_(
                     col(Image.title).ilike(pattern),
                     col(Image.description).ilike(pattern),
                     col(Image.tags).ilike(pattern),
                 )
             )
-        query = query.offset(offset).limit(limit)
+
+        total_result = await session.exec(select(func.count()).select_from(Image).where(*conditions))
+        response.headers["X-Total-Count"] = str(total_result.one())
+
+        query = select(Image).where(*conditions).offset(offset).limit(limit)
         result = await session.exec(query)
         return list(result.all())
 
@@ -128,7 +140,6 @@ async def register_image(request: Request, body: ImageRegister) -> Image:
         original_height=body.original_height,
         is_portrait=body.is_portrait,
         display_duration_seconds=body.display_duration_seconds,
-        priority=body.priority,
         expires_at=body.expires_at,
     )
     async with AsyncSession(request.app.state.engine) as session:
@@ -187,7 +198,6 @@ async def upload_image(
         description=parsed.description,
         author=parsed.author,
         display_duration_seconds=parsed.display_duration_seconds,
-        priority=parsed.priority,
         original_width=width,
         original_height=height,
         is_portrait=is_portrait,

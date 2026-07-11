@@ -31,6 +31,8 @@ from inky_image_display_shared.time import utcnow
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from inky_image_display_api.services.notifications import notify_in_background
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -110,7 +112,14 @@ async def upsert_device(
     return outcome
 
 
-async def _record_ack(engine: AsyncEngine, device_id: str, *, success: bool, error: str | None) -> None:
+async def _record_ack(
+    engine: AsyncEngine,
+    device_id: str,
+    *,
+    success: bool,
+    error: str | None,
+    settings: Settings | None = None,
+) -> None:
     """Persist a device ack: proof-of-life plus the refresh outcome.
 
     Bumps ``last_seen``/``is_online`` (keeping the freshness-based online
@@ -118,12 +127,17 @@ async def _record_ack(engine: AsyncEngine, device_id: str, *, success: bool, err
     False), and records the display-refresh health so a stuck display is
     distinguishable from a healthy one in the UI. A successful refresh clears
     any previous error; a failure stores the message and timestamp.
+
+    Health *transitions* (ok/unknown → failed, failed → ok) additionally fire
+    a push notification when configured — transitions only, so a stuck panel
+    retrying every few minutes doesn't spam one message per failed attempt.
     """
     try:
         async with AsyncSession(engine) as session:
             result = await session.exec(select(Device).where(Device.device_id == device_id))
             device = result.first()
             if device is not None:
+                previous_ok = device.last_refresh_ok
                 now = utcnow()
                 device.last_seen = now
                 device.is_online = True
@@ -136,8 +150,40 @@ async def _record_ack(engine: AsyncEngine, device_id: str, *, success: bool, err
                     device.last_error_at = now
                 session.add(device)
                 await session.commit()
+                if settings is not None:
+                    _notify_refresh_transition(
+                        settings, device_id, previous_ok=previous_ok, success=success, error=error
+                    )
     except Exception:
         logger.exception("Failed to record ack for device %s", device_id)
+
+
+def _notify_refresh_transition(
+    settings: Settings,
+    device_id: str,
+    *,
+    previous_ok: bool | None,
+    success: bool,
+    error: str | None,
+) -> None:
+    """Push a notification when a device enters or leaves the failed state."""
+    if not success and previous_ok is not False:
+        notify_in_background(
+            settings,
+            f"Display {device_id}: refresh failed",
+            (
+                f"{error or 'The device reported a failed refresh.'}\n"
+                "The controller retries automatically; if this persists the "
+                "panel likely needs its power physically cycled "
+                "(see docs/refresh-issues.md)."
+            ),
+        )
+    elif success and previous_ok is False:
+        notify_in_background(
+            settings,
+            f"Display {device_id}: refresh recovered",
+            "The panel completed a refresh successfully and re-entered rotation.",
+        )
 
 
 async def _set_online_flag(engine: AsyncEngine, device_id: str, *, online: bool) -> None:
@@ -315,4 +361,10 @@ class MQTTService:
             logger.warning("Device %s reported failed refresh (image_id=%s): %s", device_id, ack.image_id, ack.error)
         # Acks count as proof-of-life — keep the device marked online.
         self._online.add(device_id)
-        await _record_ack(self._engine, device_id, success=ack.successful_display_change, error=ack.error)
+        await _record_ack(
+            self._engine,
+            device_id,
+            success=ack.successful_display_change,
+            error=ack.error,
+            settings=self._settings,
+        )

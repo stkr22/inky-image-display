@@ -12,8 +12,9 @@ only the API accepts input, so there is nothing to share on that side.
 from datetime import date, datetime
 from typing import Annotated
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, PlainSerializer
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
 
 from inky_image_display_shared.time import as_utc_aware
 
@@ -44,8 +45,11 @@ class ImageResponse(BaseModel):
     original_width: int | None
     original_height: int | None
     is_portrait: bool
-    display_duration_seconds: int
+    # None = rotate on the device/global interval; a value holds the image
+    # on screen that long. ``priority`` is legacy and never consulted.
+    display_duration_seconds: int | None
     priority: int
+    excluded_from_rotation: bool = False
     last_displayed_at: UtcDatetime | None
     expires_at: UtcDatetime | None
     created_at: UtcDatetime
@@ -120,7 +124,15 @@ class DeviceResponse(BaseModel):
     last_refresh_ok: bool | None = None
     last_error: str | None = None
     last_error_at: UtcDatetime | None = None
+    # Derived refresh health, computed by the device routes from
+    # last_refresh_ok + the failure's age vs the dispatch backoff:
+    # None (no ack yet) / "ok" / "failed_retrying" (controller retry loop
+    # should self-heal) / "failed_stale" (failure outlived the backoff —
+    # likely needs a power cycle). Saves every client re-deriving the
+    # backoff arithmetic and keeps the wording consistent.
+    refresh_state: str | None = None
     refresh_interval_seconds: int | None = None
+    is_pinned: bool = False
     # Populated by the device routes from current_image_id in one batched
     # query, so list consumers don't issue a follow-up request per device.
     current_image: ImageSummary | None = None
@@ -166,8 +178,28 @@ class SyncJobResponse(BaseModel):
     taken_after: datetime | None
     taken_before: datetime | None
     rating: int | None
+    run_requested_at: UtcDatetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class SyncJobRunResponse(BaseModel):
+    """One recorded worker run of a sync job (Immich or Gemini)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    job_type: str
+    job_id: UUID
+    job_name: str
+    status: str
+    started_at: UtcDatetime
+    finished_at: UtcDatetime
+    images_added: int
+    images_skipped: int
+    images_deleted: int
+    detail: str | None
+    error: str | None
 
 
 # --- Prompt blocks / presets ---
@@ -222,6 +254,7 @@ class GeminiSyncJobResponse(BaseModel):
     subjects: list[str]
     images_per_subject: int
     retention_days: int | None
+    run_requested_at: UtcDatetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -277,10 +310,38 @@ class ScheduleUpcomingEntry(BaseModel):
 # --- App settings ---
 
 
+class QuietHoursSettings(BaseModel):
+    """Daily window during which automatic rotation pauses.
+
+    E-paper refreshes flash the panel for ~30 s, which is unwelcome in a
+    bedroom at night. During the window the scheduler skips devices and
+    grids; manual pushes and the MOTD's own explicit schedule are not
+    affected. A window whose start equals its end is treated as disabled.
+
+    Shared between the settings response and the update body so both sides
+    validate the time format and timezone identically.
+    """
+
+    enabled: bool = False
+    start: str = Field(default="22:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    end: str = Field(default="07:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    timezone: str = "UTC"
+
+    @field_validator("timezone")
+    @classmethod
+    def _valid_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (KeyError, ValueError) as exc:
+            raise ValueError(f"Unknown IANA timezone: {value}") from exc
+        return value
+
+
 class AppSettingsResponse(BaseModel):
     """Operator-tunable app settings."""
 
     default_refresh_seconds: int
+    quiet_hours: QuietHoursSettings = QuietHoursSettings()
 
 
 # --- Message of the day ---

@@ -23,18 +23,18 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.schemas import ImageGenerateResponse, MotdConfigUpdate, MotdDisplayRequest
 from inky_image_display_api.services import motd_service
-from inky_image_display_api.services.generation_tasks import GenerationTaskRegistry
+from inky_image_display_api.services.generation_tasks import GenerationTaskStore
 from inky_image_display_api.services.motd_service import MotdStartError
 
 router = APIRouter(prefix="/api/motd", tags=["motd"])
 logger = logging.getLogger(__name__)
 
 
-def _task_registry(request: Request) -> GenerationTaskRegistry:
-    """Return the app-wide task registry, creating it lazily (shared with genai)."""
+def _task_registry(request: Request) -> GenerationTaskStore:
+    """Return the app-wide task store, creating it lazily (shared with genai)."""
     registry = getattr(request.app.state, "generation_tasks", None)
     if registry is None:
-        registry = GenerationTaskRegistry()
+        registry = GenerationTaskStore(request.app.state.engine)
         request.app.state.generation_tasks = registry
     return registry
 
@@ -161,7 +161,7 @@ async def generate_now(request: Request, background_tasks: BackgroundTasks) -> I
 
     task_id = uuid4()
     tasks = _task_registry(request)
-    tasks.create(task_id, "message of the day")
+    await tasks.create(task_id, "message of the day")
     background_tasks.add_task(
         motd_service.generate_message,
         request.app.state.engine,

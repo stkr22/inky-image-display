@@ -23,9 +23,11 @@ async def upcoming(
     """Return the next ``limit`` refreshes across devices and grids.
 
     Solo devices currently claimed by a grid are excluded — the grid
-    drives them and would otherwise appear twice in the queue. Offline
-    devices are kept so users can see they are pending even when the
-    physical panel can't be reached.
+    drives them and would otherwise appear twice in the queue. Pinned
+    devices are excluded too: their scheduled time will not fire, so
+    listing it would promise a refresh that never comes. Offline devices
+    are kept so users can see they are pending even when the physical
+    panel can't be reached.
     """
     settings = request.app.state.settings
 
@@ -33,7 +35,10 @@ async def upcoming(
         default_seconds = await get_default_refresh_seconds(session, settings)
         device_rows = await session.exec(
             select(Device)
-            .where(col(Device.claimed_by_grid_id).is_(None))
+            .where(
+                col(Device.claimed_by_grid_id).is_(None),
+                col(Device.is_pinned).is_(False),
+            )
             .order_by(col(Device.scheduled_next_at).asc())
             .limit(limit)
         )

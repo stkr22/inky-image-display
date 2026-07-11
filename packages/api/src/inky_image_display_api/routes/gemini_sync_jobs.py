@@ -20,12 +20,24 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=list[GeminiSyncJobResponse])
-async def list_gemini_sync_jobs(request: Request, is_active: bool | None = None) -> list[GeminiSyncJob]:
-    """List Gemini sync jobs, optionally filtered by ``is_active``."""
+async def list_gemini_sync_jobs(
+    request: Request,
+    is_active: bool | None = None,
+    requested: bool | None = None,
+) -> list[GeminiSyncJob]:
+    """List Gemini sync jobs with optional filters.
+
+    ``requested=true`` returns only jobs flagged by "Run now" — the query
+    the worker's ``--requested-only`` mode polls with.
+    """
     async with AsyncSession(request.app.state.engine) as session:
         stmt = select(GeminiSyncJob)
         if is_active is not None:
             stmt = stmt.where(GeminiSyncJob.is_active == is_active)
+        if requested is True:
+            stmt = stmt.where(col(GeminiSyncJob.run_requested_at).is_not(None))
+        elif requested is False:
+            stmt = stmt.where(col(GeminiSyncJob.run_requested_at).is_(None))
         result = await session.exec(stmt)
         return list(result.all())
 
@@ -67,6 +79,22 @@ async def update_gemini_sync_job(request: Request, job_id: UUID, body: GeminiSyn
         session.add(job)
         await session.commit()
         await session.refresh(job)
+    return job
+
+
+@router.post("/{job_id}/run-now", response_model=GeminiSyncJobResponse)
+async def request_gemini_job_run(request: Request, job_id: UUID) -> GeminiSyncJob:
+    """Flag a Gemini job for an out-of-band worker run (see sync-jobs twin)."""
+    async with AsyncSession(request.app.state.engine) as session:
+        result = await session.exec(select(GeminiSyncJob).where(col(GeminiSyncJob.id) == job_id))
+        job = result.first()
+        if job is None:
+            raise HTTPException(status_code=404, detail="Gemini sync job not found")
+        job.run_requested_at = utcnow()
+        session.add(job)
+        await session.commit()
+        await session.refresh(job)
+    logger.info("Run requested for gemini sync job %s (%s)", job_id, job.name)
     return job
 
 

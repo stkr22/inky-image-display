@@ -208,7 +208,7 @@ class TestGenAiGate:
         mock_settings.gemini_api_key = MagicMock(get_secret_value=MagicMock(return_value="dummy"))
         mock_settings.default_display_duration = 3600
         mock_mqtt.is_connected = MagicMock(return_value=True)
-        tasks = MagicMock()
+        tasks = AsyncMock()
 
         with (
             patch(
@@ -249,7 +249,7 @@ class TestGenAiGate:
         mock_settings.gemini_api_key = MagicMock(get_secret_value=MagicMock(return_value="dummy"))
         mock_settings.default_display_duration = 3600
         mock_mqtt.is_connected = MagicMock(return_value=True)
-        tasks = MagicMock()
+        tasks = AsyncMock()
 
         with (
             patch(

@@ -4,12 +4,14 @@ from .app_setting import AppSetting
 from .device import Device, DeviceDisplayState
 from .device_profile import DeviceProfile
 from .gemini_sync_job import GeminiSyncJob
+from .generation_task import GenerationTask
 from .grid import Grid, GridDevice
 from .image import Image
 from .immich_sync_job import ImmichSyncJob, SyncStrategy
 from .motd import MotdConfig, MotdDeviceAssignment, MotdMessage, MotdScreen
 from .prompt_block import PromptBlock
 from .prompt_preset import PromptPreset
+from .sync_job_run import SyncJobRun
 
 __all__ = [
     "AppSetting",
@@ -17,6 +19,7 @@ __all__ = [
     "DeviceDisplayState",
     "DeviceProfile",
     "GeminiSyncJob",
+    "GenerationTask",
     "Grid",
     "GridDevice",
     "Image",
@@ -27,5 +30,6 @@ __all__ = [
     "MotdScreen",
     "PromptBlock",
     "PromptPreset",
+    "SyncJobRun",
     "SyncStrategy",
 ]

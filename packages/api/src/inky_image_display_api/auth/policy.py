@@ -27,6 +27,7 @@ _GUEST_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("GET", re.compile(r"^/api/images$")),
     ("GET", re.compile(r"^/api/images/stats$")),
     ("GET", re.compile(r"^/api/images/[0-9a-fA-F-]+$")),
+    ("GET", re.compile(r"^/api/images/[0-9a-fA-F-]+/eink-preview$")),
     ("POST", re.compile(r"^/api/genai/generate$")),
     ("GET", re.compile(r"^/api/genai/tasks$")),
     ("GET", re.compile(r"^/api/genai/blocks$")),

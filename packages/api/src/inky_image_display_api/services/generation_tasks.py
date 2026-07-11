@@ -1,88 +1,99 @@
-"""In-process registry tracking on-demand Gemini generation tasks.
+"""DB-backed registry tracking on-demand Gemini generation tasks.
 
 ``POST /api/genai/generate`` returns a ``task_id`` and runs the actual
-generation as a fire-and-forget background task — without this registry the
-outcome (success, failure, which image) is only visible in server logs.
-The registry keeps a bounded, in-memory history so the UI can answer "did
-my generation work?" for the lifetime of the API process. Durability is
-deliberately out of scope: a restart loses history but not images.
+generation as a fire-and-forget background task — this store is what lets
+the UI answer "did my generation work?". It used to be an in-process dict,
+which meant every API restart wiped the history mid-flight (a fact the UI
+had to apologise for in a caption); rows now live in the ``generation_tasks``
+table and survive restarts. History stays bounded by pruning on insert.
+
+Status writes deliberately swallow "row not found": a pruned task simply
+stops reporting, mirroring the old registry's eviction behaviour.
 """
 
 from __future__ import annotations
 
-from collections import OrderedDict
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
+
+from inky_image_display_shared.models import GenerationTask
+from inky_image_display_shared.time import utcnow
+from sqlmodel import col, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 if TYPE_CHECKING:
     from uuid import UUID
 
-# Bounded so a long-running process can't grow without limit; 100 entries
-# comfortably covers "what happened recently" for a household deployment.
-_MAX_TASKS = 100
+    from sqlalchemy.ext.asyncio import AsyncEngine
 
-TaskStatus = Literal["queued", "running", "completed", "failed"]
-
-
-@dataclass
-class GenerationTask:
-    """Mutable status record for one generation request."""
-
-    task_id: UUID
-    subject: str
-    status: TaskStatus = "queued"
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    finished_at: datetime | None = None
-    image_id: UUID | None = None
-    error: str | None = None
-    # Free-text outcome note, e.g. "pushed to <device>" or "no online device".
-    detail: str | None = None
+# Bounded so a long-running deployment can't grow the table without limit;
+# 200 entries comfortably covers "what happened recently" for a household.
+_MAX_TASKS = 200
 
 
-class GenerationTaskRegistry:
-    """Bounded FIFO registry of recent generation tasks.
+class GenerationTaskStore:
+    """Bounded, persistent history of recent generation tasks."""
 
-    All mutation happens on the event loop (FastAPI background tasks run
-    in-loop for async callables), so no locking is needed.
-    """
-
-    def __init__(self, max_tasks: int = _MAX_TASKS) -> None:
-        """Initialise an empty registry holding at most ``max_tasks`` entries."""
-        self._tasks: OrderedDict[UUID, GenerationTask] = OrderedDict()
+    def __init__(self, engine: AsyncEngine, max_tasks: int = _MAX_TASKS) -> None:
+        """Store the engine; each operation opens its own short session."""
+        self._engine = engine
         self._max_tasks = max_tasks
 
-    def create(self, task_id: UUID, subject: str) -> GenerationTask:
-        """Record a freshly queued task, evicting the oldest entry if full."""
-        task = GenerationTask(task_id=task_id, subject=subject)
-        self._tasks[task_id] = task
-        while len(self._tasks) > self._max_tasks:
-            self._tasks.popitem(last=False)
-        return task
+    async def create(self, task_id: UUID, subject: str) -> None:
+        """Record a freshly queued task, pruning the oldest beyond the cap."""
+        async with AsyncSession(self._engine) as session:
+            session.add(GenerationTask(task_id=task_id, subject=subject))
+            # Autoflush includes the row added above, so the offset keeps
+            # exactly max_tasks rows (newest first) including the new one.
+            stale = await session.exec(
+                select(GenerationTask).order_by(col(GenerationTask.created_at).desc()).offset(self._max_tasks)
+            )
+            for old in stale.all():
+                await session.delete(old)
+            await session.commit()
 
-    def mark_running(self, task_id: UUID) -> None:
-        """Transition a task to ``running`` (no-op if it was evicted)."""
-        task = self._tasks.get(task_id)
-        if task is not None:
-            task.status = "running"
+    async def mark_running(self, task_id: UUID) -> None:
+        """Transition a task to ``running`` (no-op if it was pruned)."""
+        await self._update(task_id, status="running")
 
-    def mark_completed(self, task_id: UUID, *, image_id: UUID | None = None, detail: str | None = None) -> None:
+    async def mark_completed(self, task_id: UUID, *, image_id: UUID | None = None, detail: str | None = None) -> None:
         """Mark a task finished successfully with the produced image."""
-        task = self._tasks.get(task_id)
-        if task is not None:
-            task.status = "completed"
-            task.finished_at = datetime.now(UTC)
-            task.image_id = image_id
-            task.detail = detail
+        await self._update(task_id, status="completed", finished=True, image_id=image_id, detail=detail)
 
-    def mark_failed(self, task_id: UUID, error: str) -> None:
+    async def mark_failed(self, task_id: UUID, error: str) -> None:
         """Mark a task as failed with a human-readable reason."""
-        task = self._tasks.get(task_id)
-        if task is not None:
-            task.status = "failed"
-            task.finished_at = datetime.now(UTC)
-            task.error = error
+        await self._update(task_id, status="failed", finished=True, error=error)
 
-    def list_recent(self, limit: int = 50) -> list[GenerationTask]:
+    async def list_recent(self, limit: int = 50) -> list[GenerationTask]:
         """Return the most recent tasks, newest first."""
-        return list(reversed(list(self._tasks.values())))[:limit]
+        async with AsyncSession(self._engine) as session:
+            result = await session.exec(
+                select(GenerationTask).order_by(col(GenerationTask.created_at).desc()).limit(limit)
+            )
+            return list(result.all())
+
+    async def _update(  # noqa: PLR0913 — keyword-only status fields
+        self,
+        task_id: UUID,
+        *,
+        status: str,
+        finished: bool = False,
+        image_id: UUID | None = None,
+        error: str | None = None,
+        detail: str | None = None,
+    ) -> None:
+        async with AsyncSession(self._engine) as session:
+            result = await session.exec(select(GenerationTask).where(col(GenerationTask.task_id) == task_id))
+            task = result.first()
+            if task is None:
+                return
+            task.status = status
+            if finished:
+                task.finished_at = utcnow()
+            if image_id is not None:
+                task.image_id = image_id
+            if error is not None:
+                task.error = error
+            if detail is not None:
+                task.detail = detail
+            session.add(task)
+            await session.commit()

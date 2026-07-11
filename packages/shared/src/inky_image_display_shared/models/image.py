@@ -25,8 +25,10 @@ class Image(SQLModel, table=True):
         description: Optional description for "what am I seeing?" queries
         author: Optional author/photographer name
         source_url: Optional HTTPS URL back to the original asset on its source
-        display_duration_seconds: How long to show this image (default 3600)
-        priority: Weight for future priority-based selection (default 0)
+        display_duration_seconds: Optional per-image hold time; None uses the
+            device/global refresh interval
+        priority: Legacy weight, never consulted by selection; kept only so
+            old rows load
         original_width: Image width in pixels
         original_height: Image height in pixels
         last_displayed_at: When the image was last shown (for FIFO selection)
@@ -58,9 +60,19 @@ class Image(SQLModel, table=True):
     author: str | None = Field(default=None, description="Author/photographer name")
     source_url: str | None = Field(default=None, description="HTTPS URL to the original asset")
 
-    # Display settings
-    display_duration_seconds: int = Field(default=600, description="Display duration in seconds")
-    priority: int = Field(default=5, description="Priority weight for selection (higher = more likely)")
+    # Display settings. ``display_duration_seconds`` overrides the device's
+    # rotation interval while this image is up; NULL (the default) defers to
+    # the device/global interval. Historic rows carried a dead 600s default
+    # that never influenced scheduling — migration 0017 nulls them out so
+    # wiring the override up doesn't retroactively speed every device to 10
+    # minutes.
+    display_duration_seconds: int | None = Field(default=None, description="Optional per-image hold time in seconds")
+    priority: int = Field(default=5, description="Legacy, unused by selection; kept so old rows load")
+
+    # Operator veto: excluded images never enter automatic rotation but can
+    # still be pushed manually. Cheaper than deletion when the objection is
+    # "not on my wall", not "remove from the library".
+    excluded_from_rotation: bool = Field(default=False, index=True)
 
     # Image dimensions and orientation for device compatibility
     original_width: int | None = Field(default=None, description="Image width in pixels")

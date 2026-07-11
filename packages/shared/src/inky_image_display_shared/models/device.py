@@ -96,3 +96,7 @@ class Device(SQLModel, table=True):
     # ``settings.default_display_duration`` so existing devices keep their
     # current behaviour without a migration backfill.
     refresh_interval_seconds: int | None = Field(default=None)
+    # Operator hold: a pinned device keeps its current image — automatic
+    # rotation skips it while manual pushes still work, mirroring how the
+    # failed-refresh gate behaves.
+    is_pinned: bool = Field(default=False)

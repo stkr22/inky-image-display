@@ -14,21 +14,21 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from inky_image_display_api.schemas import GenerationTaskResponse, ImageGenerateRequest, ImageGenerateResponse
 from inky_image_display_api.services.generation_service import generate_and_publish
-from inky_image_display_api.services.generation_tasks import GenerationTaskRegistry
+from inky_image_display_api.services.generation_tasks import GenerationTaskStore
 
 router = APIRouter(prefix="/api/genai", tags=["genai"])
 logger = logging.getLogger(__name__)
 
 
-def _task_registry(request: Request) -> GenerationTaskRegistry:
-    """Return the app-wide task registry, creating it lazily.
+def _task_registry(request: Request) -> GenerationTaskStore:
+    """Return the app-wide task store, creating it lazily.
 
     Lazy creation keeps test apps (which assemble ``app.state`` by hand)
     working without extra fixtures.
     """
     registry = getattr(request.app.state, "generation_tasks", None)
     if registry is None:
-        registry = GenerationTaskRegistry()
+        registry = GenerationTaskStore(request.app.state.engine)
         request.app.state.generation_tasks = registry
     return registry
 
@@ -55,7 +55,7 @@ async def generate_image(
 
     task_id = uuid4()
     tasks = _task_registry(request)
-    tasks.create(task_id, body.subject)
+    await tasks.create(task_id, body.subject)
     background_tasks.add_task(
         generate_and_publish,
         request.app.state.engine,
@@ -78,8 +78,8 @@ async def generate_image(
 async def list_generation_tasks(request: Request, limit: int = 50) -> list[GenerationTaskResponse]:
     """Return recent generation tasks, newest first.
 
-    History is in-memory and covers the current API process lifetime —
-    intended for "did my generation work?" visibility, not auditing.
+    History is persisted (bounded) in the ``generation_tasks`` table, so
+    it survives API restarts — visibility, not auditing.
     """
     tasks = _task_registry(request)
     return [
@@ -93,5 +93,5 @@ async def list_generation_tasks(request: Request, limit: int = 50) -> list[Gener
             error=t.error,
             detail=t.detail,
         )
-        for t in tasks.list_recent(limit)
+        for t in await tasks.list_recent(limit)
     ]

@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
     from inky_image_display_api.config import Settings
     from inky_image_display_api.mqtt import MQTTService
-    from inky_image_display_api.services.generation_tasks import GenerationTaskRegistry
+    from inky_image_display_api.services.generation_tasks import GenerationTaskStore
     from inky_image_display_api.services.s3_service import S3Service
 
 logger = logging.getLogger(__name__)
@@ -105,7 +105,7 @@ async def generate_and_publish(  # noqa: PLR0912, PLR0913, PLR0915
     preset_id: UUID | None,
     orientation: str,
     push_immediately: bool,
-    tasks: GenerationTaskRegistry | None = None,
+    tasks: GenerationTaskStore | None = None,
 ) -> None:
     """Run a single on-demand generation request end to end.
 
@@ -117,12 +117,12 @@ async def generate_and_publish(  # noqa: PLR0912, PLR0913, PLR0915
     if settings.gemini_api_key is None:
         logger.error("Generation task %s aborted: GEMINI_API_KEY is not configured", task_id)
         if tasks is not None:
-            tasks.mark_failed(task_id, "GEMINI_API_KEY is not configured")
+            await tasks.mark_failed(task_id, "GEMINI_API_KEY is not configured")
         return
 
     is_portrait = orientation == "portrait"
     if tasks is not None:
-        tasks.mark_running(task_id)
+        await tasks.mark_running(task_id)
 
     try:
         async with AsyncSession(engine) as session:
@@ -130,7 +130,7 @@ async def generate_and_publish(  # noqa: PLR0912, PLR0913, PLR0915
             if profile is None:
                 logger.error("Generation task %s: no device profile available", task_id)
                 if tasks is not None:
-                    tasks.mark_failed(task_id, "No device profile available")
+                    await tasks.mark_failed(task_id, "No device profile available")
                 return
             profile_id = profile.id
 
@@ -159,7 +159,7 @@ async def generate_and_publish(  # noqa: PLR0912, PLR0913, PLR0915
         if jpeg_bytes is None:
             logger.error("Generation task %s: ImageProcessor returned None for generated image", task_id)
             if tasks is not None:
-                tasks.mark_failed(task_id, "Image processing failed")
+                await tasks.mark_failed(task_id, "Image processing failed")
             return
 
         image_uuid = uuid4()
@@ -188,7 +188,7 @@ async def generate_and_publish(  # noqa: PLR0912, PLR0913, PLR0915
             if not push_immediately:
                 logger.info("Generation task %s: image %s registered, push skipped", task_id, image_pk)
                 if tasks is not None:
-                    tasks.mark_completed(task_id, image_id=image_pk, detail="Image registered; push skipped")
+                    await tasks.mark_completed(task_id, image_id=image_pk, detail="Image registered; push skipped")
                 return
 
             # Dispatch to a random *online* device that matches profile + orientation.
@@ -219,7 +219,7 @@ async def generate_and_publish(  # noqa: PLR0912, PLR0913, PLR0915
                     orientation,
                 )
                 if tasks is not None:
-                    tasks.mark_completed(
+                    await tasks.mark_completed(
                         task_id, image_id=image_pk, detail="Image registered; no matching online device to push to"
                     )
                 return
@@ -231,8 +231,8 @@ async def generate_and_publish(  # noqa: PLR0912, PLR0913, PLR0915
             await update_display_state(session, device, image, settings)
             logger.info("Generation task %s: pushed image %s to %s", task_id, image_pk, device_mqtt_id)
             if tasks is not None:
-                tasks.mark_completed(task_id, image_id=image_pk, detail=f"Pushed to {device_mqtt_id}")
+                await tasks.mark_completed(task_id, image_id=image_pk, detail=f"Pushed to {device_mqtt_id}")
     except Exception as exc:
         logger.exception("Generation task %s failed", task_id)
         if tasks is not None:
-            tasks.mark_failed(task_id, str(exc) or exc.__class__.__name__)
+            await tasks.mark_failed(task_id, str(exc) or exc.__class__.__name__)
