@@ -39,6 +39,7 @@ from inky_image_display_api.services.app_settings_service import get_default_ref
 from inky_image_display_api.services.generation_service import build_rendered_prompt, resolve_preset
 from inky_image_display_api.services.grid_service import oriented_pixel_dims
 from inky_image_display_api.services.image_service import next_refresh_at
+from inky_image_display_api.services.refresh_health import dispatch_allowed_clause
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -696,7 +697,7 @@ async def advance_due_parts(app: FastAPI) -> None:
                 col(Device.claimed_by_motd_config_id).is_not(None),
                 Device.is_online == True,  # noqa: E712 — SQLModel comparison
                 Device.scheduled_next_at <= now,
-                col(Device.last_refresh_ok).is_not(False),
+                dispatch_allowed_clause(now, app.state.settings.refresh_error_backoff_seconds),
             )
         )
         due = list(result.all())

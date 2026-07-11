@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 
 from inky_image_display_shared.ai import RenderedPrompt, generate_image_bytes
 from inky_image_display_shared.models import Device, DeviceProfile, Image, PromptBlock, PromptPreset
+from inky_image_display_shared.time import utcnow
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -23,6 +24,7 @@ from inky_image_display_api.services.image_service import (
     build_display_command,
     update_display_state,
 )
+from inky_image_display_api.services.refresh_health import is_dispatch_blocked
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -196,12 +198,17 @@ async def generate_and_publish(  # noqa: PLR0912, PLR0913, PLR0915
                     col(Device.display_orientation) == orientation,
                 )
             )
-            # Skip devices with a failed last refresh — a stuck panel can't show
-            # the generated image, and its controller is already retrying the
-            # image it got stuck on. (last_refresh_ok is None for never-acked
-            # devices, which stay eligible.)
+            # Skip devices with a *recent* failed refresh — a stuck panel can't
+            # show the generated image, and its controller is already retrying
+            # the image it got stuck on. The gate expires (see refresh_health)
+            # so a failure flag orphaned by a controller restart doesn't
+            # exclude the device forever; never-acked devices stay eligible.
+            now = utcnow()
+            backoff = settings.refresh_error_backoff_seconds
             candidates = [
-                d for d in cand_result.all() if mqtt.is_connected(d.device_id) and d.last_refresh_ok is not False
+                d
+                for d in cand_result.all()
+                if mqtt.is_connected(d.device_id) and not is_dispatch_blocked(d, now, backoff)
             ]
             if not candidates:
                 logger.info(

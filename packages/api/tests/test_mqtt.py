@@ -6,10 +6,11 @@ from uuid import uuid4
 
 import pytest
 from inky_image_display_api.config import Settings
-from inky_image_display_api.mqtt import MQTTService
+from inky_image_display_api.mqtt import MQTTService, upsert_device
 from inky_image_display_shared.models import Device
 from inky_image_display_shared.schemas import (
     DeviceAcknowledge,
+    DeviceRegistration,
     DeviceStatus,
     DisplayCommand,
 )
@@ -155,6 +156,39 @@ async def test_failed_ack_persists_error_then_success_clears_it(
         result = await session.exec(select(Device).where(Device.device_id == seeded_device.device_id))
         refreshed = result.one()
         assert refreshed.last_refresh_ok is True
+        assert refreshed.last_error is None
+        assert refreshed.last_error_at is None
+
+
+@pytest.mark.asyncio
+async def test_reregistration_clears_stale_refresh_error(
+    async_engine: AsyncEngine, seeded_device: Device, seed_profile
+):
+    """Registration happens once per controller start, so a recorded failure
+    describes a dead controller whose in-memory retry is gone — re-registering
+    must reset refresh health or the device would never re-enter rotation."""
+    async with AsyncSession(async_engine) as session:
+        result = await session.exec(select(Device).where(Device.device_id == seeded_device.device_id))
+        device = result.one()
+        device.last_refresh_ok = False
+        device.last_error = "BUSY never cleared"
+        device.last_error_at = datetime(2026, 7, 10, 12, 0, 0)
+        session.add(device)
+        await session.commit()
+
+    registration = DeviceRegistration(
+        device_id=seeded_device.device_id,
+        device_profile_key=seed_profile.key,
+        orientation="landscape",
+        room=None,
+    )
+    outcome = await upsert_device(async_engine, seeded_device.device_id, registration)
+
+    assert outcome == "updated"
+    async with AsyncSession(async_engine) as session:
+        result = await session.exec(select(Device).where(Device.device_id == seeded_device.device_id))
+        refreshed = result.one()
+        assert refreshed.last_refresh_ok is None
         assert refreshed.last_error is None
         assert refreshed.last_error_at is None
 

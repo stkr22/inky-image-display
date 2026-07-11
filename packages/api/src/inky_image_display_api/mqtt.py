@@ -94,6 +94,15 @@ async def upsert_device(
             device.device_profile_id = profile.id
             device.display_orientation = registration.orientation
             device.last_seen = now
+            # Registration happens exactly once per controller start, and the
+            # controller's failed-refresh retry loop dies with the process. A
+            # restart (e.g. the power cycle that recovers a latched panel)
+            # means any recorded failure describes a controller that no longer
+            # exists — reset to "no ack seen" so automatic dispatch resumes
+            # and the next push settles the device's real state.
+            device.last_refresh_ok = None
+            device.last_error = None
+            device.last_error_at = None
             session.add(device)
             outcome = "updated"
 

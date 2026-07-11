@@ -134,6 +134,37 @@ reporting a refresh that never physically happened. A panel that latched hard
 (see the root-cause section) is beyond these retries — it needs its power
 physically removed.
 
+## Recovery after a failed refresh
+
+Once the controller acks a failure, the API stops all automatic dispatch to
+that device (rotation, grids, MOTD, GenAI) so the scheduler doesn't pile
+images onto a panel that can't show them. Several layers then work to end
+that halt, in order of preference:
+
+1. **The controller's retry loop.** The controller re-attempts the failed
+   image on a fixed cadence (`display.retry_interval_seconds`, default 300 s).
+   The loop only ends once the success ack — the message that clears the
+   failure state server-side — was actually published: if the panel refreshed
+   fine but MQTT was down, the loop keeps re-sending the ack without
+   re-driving the panel (an e-paper refresh is ~30 s of flashing). A new
+   `display`/`clear` command supersedes the loop; a `status` probe does not.
+2. **Re-registration resets the flag.** The controller registers exactly once
+   per process start, so an incoming registration proves any recorded failure
+   belongs to a controller that no longer exists (its in-memory retry died
+   with it). The API resets the device's refresh health to "no ack seen" —
+   this is what makes the *power cycle that recovers a latched panel* also
+   resume rotation automatically.
+3. **The failure flag expires.** As a backstop for every other way the retry
+   can be lost, a recorded failure older than
+   `API_REFRESH_ERROR_BACKOFF_SECONDS` (default 900 s) stops blocking
+   dispatch. The next push settles the device's real state: success clears
+   the flag, failure re-arms the backoff with a fresh timestamp — a genuinely
+   stuck panel is only pinged once per backoff window, not every scheduler
+   tick.
+
+Manual pushes from the UI ("next", direct display) bypass the halt entirely
+and their success ack clears the failure state immediately.
+
 One failure the host *cannot* see: a **partial refresh**, where the 13.3 updates
 only one of its two SPI-driven halves. BUSY cycles normally and both chip-selects
 toggle, so the fault is downstream of any signal the Pi can observe — it shows as
