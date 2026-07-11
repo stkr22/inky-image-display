@@ -36,6 +36,16 @@ class Settings(BaseSettings):
     s3_reader_secret_key: str
     default_display_duration: int = 3600
 
+    # After a device acks a failed refresh, automatic dispatch (rotation,
+    # grids, MOTD, GenAI) skips it so images aren't pushed at a stuck panel.
+    # The controller re-attempts the failed image itself, but that retry
+    # lives only in device memory — a controller restart (e.g. the power
+    # cycle that recovers a latched panel) or a lost success ack would halt
+    # the device forever. This backoff bounds the halt: once the recorded
+    # error is older than this, the device re-enters dispatch and the next
+    # push settles its real state.
+    refresh_error_backoff_seconds: int = 900
+
     # Browser-facing media proxy (/media/*): Cache-Control max-age for
     # originals and thumbnails.
     media_cache_max_age: int = 86400

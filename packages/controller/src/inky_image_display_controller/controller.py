@@ -44,7 +44,7 @@ class DisplayController:
         self._shutdown_event = asyncio.Event()
         # Background task that re-attempts a display command that failed, so a
         # transiently stuck panel recovers on its own. Superseded by any new
-        # command and cancelled on shutdown.
+        # display/clear command and cancelled on shutdown.
         self._retry_task: asyncio.Task[None] | None = None
 
         self._s3 = S3ImageClient()
@@ -157,15 +157,23 @@ class DisplayController:
         """Process incoming display commands."""
         logger.info("Received command: action=%s, image_id=%s", command.action, command.image_id)
 
-        # A fresh command supersedes any in-flight retry of a previously
-        # failed image — including a manual resend the operator triggered.
-        self._cancel_retry()
-
         try:
             match command.action:
                 case "display":
-                    await self._handle_display(command)
+                    # A fresh image supersedes any in-flight retry of a
+                    # previously failed one — including a manual resend the
+                    # operator triggered. Only commands that change what the
+                    # panel shows cancel the retry; a status probe must not
+                    # silently kill the device's self-recovery.
+                    self._cancel_retry()
+                    acked = await self._handle_display(command)
+                    if not acked:
+                        # The panel shows the image but the API never saw the
+                        # success ack that clears its failure state — keep
+                        # re-sending the ack without re-driving the panel.
+                        self._schedule_retry(command, already_displayed=True)
                 case "clear":
+                    self._cancel_retry()
                     await self._handle_clear()
                 case "status":
                     await self._send_acknowledge(success=True)
@@ -203,20 +211,30 @@ class DisplayController:
             self._retry_task.cancel()
         self._retry_task = None
 
-    def _schedule_retry(self, command: DisplayCommand) -> None:
-        """Start a background loop that re-attempts a failed display command."""
-        self._retry_task = asyncio.create_task(self._retry_loop(command), name="display_retry")
+    def _schedule_retry(self, command: DisplayCommand, *, already_displayed: bool = False) -> None:
+        """Start a background loop that re-attempts a failed display command.
 
-    async def _retry_loop(self, command: DisplayCommand) -> None:
+        ``already_displayed`` means the panel already shows the image and only
+        the success ack failed to publish — the loop then re-sends the ack
+        without re-driving the panel.
+        """
+        self._retry_task = asyncio.create_task(
+            self._retry_loop(command, already_displayed=already_displayed), name="display_retry"
+        )
+
+    async def _retry_loop(self, command: DisplayCommand, *, already_displayed: bool = False) -> None:
         """Re-attempt ``command`` on a fixed cadence until it succeeds.
 
-        ``_handle_display`` sends the success ack itself, which is what clears
-        the error server-side and lets the API resume auto-rotation, so a
-        successful attempt simply ends the loop. Each failed attempt re-acks
-        the failure to refresh the error timestamp. The loop is cancelled by a
-        superseding command or by shutdown.
+        The success ack is what clears the error server-side and lets the API
+        resume auto-rotation, so the loop only ends once that ack was actually
+        published — a display that succeeded while MQTT was down flips the
+        loop into ack-only mode instead of ending it (re-refreshing e-paper is
+        ~30 s of flashing, so the panel is not re-driven just to re-ack). Each
+        failed attempt re-acks the failure to refresh the error timestamp. The
+        loop is cancelled by a superseding command or by shutdown.
         """
         interval = self._settings.display.retry_interval_seconds
+        displayed = already_displayed
         while not self._shutdown_event.is_set():
             try:
                 async with asyncio.timeout(interval):
@@ -225,11 +243,22 @@ class DisplayController:
             except TimeoutError:
                 pass
 
-            logger.info("Retrying failed display for image %s", command.image_id)
             try:
-                await self._handle_display(command)
-                logger.info("Display retry succeeded for image %s", command.image_id)
-                return
+                if displayed:
+                    if await self._send_acknowledge(image_id=command.image_id, success=True):
+                        logger.info("Republished success ack for image %s", command.image_id)
+                        return
+                    logger.warning("Success ack for image %s still unpublished; will retry", command.image_id)
+                    continue
+
+                logger.info("Retrying failed display for image %s", command.image_id)
+                if await self._handle_display(command):
+                    logger.info("Display retry succeeded for image %s", command.image_id)
+                    return
+                displayed = True
+                logger.warning(
+                    "Display retry succeeded for image %s but the success ack was not published", command.image_id
+                )
             except (CommunicationError, DisplayError) as e:
                 logger.warning("Display retry failed for image %s: %s", command.image_id, e)
                 await self._send_acknowledge(image_id=command.image_id, success=False, error=str(e))
@@ -237,7 +266,12 @@ class DisplayController:
                 logger.exception("Unexpected error during display retry")
                 await self._send_acknowledge(image_id=command.image_id, success=False, error=f"Unexpected error: {e}")
 
-    async def _handle_display(self, command: DisplayCommand) -> None:
+    async def _handle_display(self, command: DisplayCommand) -> bool:
+        """Fetch, display and ack an image; return whether the ack published.
+
+        A False return means the panel was updated but the API never learned
+        of it — callers must arrange for the success ack to be re-sent.
+        """
         if not command.image_path or not command.image_id:
             raise ValueError("display command requires image_path and image_id")
 
@@ -255,7 +289,7 @@ class DisplayController:
 
         self._current_image_id = command.image_id
 
-        await self._send_acknowledge(
+        return await self._send_acknowledge(
             image_id=command.image_id,
             success=True,
         )
@@ -271,7 +305,8 @@ class DisplayController:
         image_id: str | None = None,
         success: bool = True,
         error: str | None = None,
-    ) -> None:
+    ) -> bool:
+        """Publish an ack, returning whether it actually reached the broker."""
         acknowledge = DeviceAcknowledge(
             device_id=self._settings.device.id,
             image_id=image_id or self._current_image_id,
@@ -281,9 +316,10 @@ class DisplayController:
 
         if self._mqtt is None:
             logger.warning("Cannot publish ack — MQTT client not yet initialised")
-            return
+            return False
 
         try:
-            await self._mqtt.publish_ack(acknowledge)
+            return await self._mqtt.publish_ack(acknowledge)
         except Exception:
             logger.exception("Failed to publish acknowledgment")
+            return False

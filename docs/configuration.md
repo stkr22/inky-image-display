@@ -18,6 +18,7 @@ All variables are prefixed with `API_`.
 | `API_S3_SECURE` | No | `false` | Use HTTPS for S3 |
 | `API_S3_REGION` | No | — | S3 region (omit for MinIO/Garage) |
 | `API_DEFAULT_DISPLAY_DURATION` | No | `3600` | Default image display duration (seconds) |
+| `API_REFRESH_ERROR_BACKOFF_SECONDS` | No | `900` | How long a device's failed-refresh ack blocks automatic dispatch (rotation, grids, MOTD, GenAI). Once the recorded error is older than this, dispatch resumes on its own — bounds the halt when the controller restarted (its in-memory retry is gone) or its success ack was lost. See [refresh-issues.md](refresh-issues.md). |
 | `API_MQTT_HOST` | Yes | — | MQTT broker hostname **used by the API itself** (typically an internal/cluster address) |
 | `API_MQTT_PORT` | No | `1883` | MQTT broker port |
 | `API_MQTT_USERNAME` | No | — | MQTT username |

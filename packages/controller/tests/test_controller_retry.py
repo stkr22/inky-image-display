@@ -99,6 +99,60 @@ async def test_new_command_cancels_pending_retry() -> None:
 
 
 @pytest.mark.asyncio
+async def test_status_command_does_not_cancel_pending_retry() -> None:
+    h = _make_harness(retry_interval=30.0)
+    h.show.side_effect = DisplayError("stuck")
+
+    await h.controller._handle_command(_display_command())
+    pending = h.controller._retry_task
+    assert pending is not None and not pending.done()
+
+    # A status probe is read-only — it must not kill the device's self-recovery.
+    await h.controller._handle_command(DisplayCommand(action="status"))
+
+    assert h.controller._retry_task is pending
+    assert not pending.done()
+    h.controller._cancel_retry()
+
+
+@pytest.mark.asyncio
+async def test_unpublished_success_ack_is_resent_without_redisplaying() -> None:
+    h = _make_harness()
+    # The display works but MQTT is down: the success ack that clears the
+    # failure state server-side never reaches the broker.
+    h.ack.return_value = False
+
+    await h.controller._handle_command(_display_command())
+    task = h.controller._retry_task
+    assert task is not None
+
+    # Broker is back; the loop must re-send the ack but not re-drive the panel.
+    h.ack.return_value = True
+    await asyncio.wait_for(task, timeout=2.0)
+
+    assert h.show.await_count == 1
+    assert h.ack_successes() == [True, True]
+
+
+@pytest.mark.asyncio
+async def test_retry_success_with_lost_ack_flips_to_ack_only_mode() -> None:
+    h = _make_harness()
+    # First attempt stalls; the retry displays fine but its success ack is lost.
+    h.show.side_effect = [DisplayError("stuck"), None]
+    h.ack.side_effect = [True, False, True]
+
+    await h.controller._handle_command(_display_command())
+    task = h.controller._retry_task
+    assert task is not None
+    await asyncio.wait_for(task, timeout=2.0)
+
+    # failure ack, unpublished success ack, republished success ack —
+    # and the panel was only driven twice (initial + one retry).
+    assert h.ack_successes() == [False, True, True]
+    assert h.show.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_shutdown_stops_retry_loop_cleanly() -> None:
     h = _make_harness(retry_interval=30.0)
     h.show.side_effect = DisplayError("stuck")

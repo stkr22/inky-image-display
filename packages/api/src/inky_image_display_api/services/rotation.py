@@ -6,6 +6,7 @@ import logging
 from fastapi import FastAPI
 from inky_image_display_shared.models import Device, Grid
 from inky_image_display_shared.time import utcnow
+from sqlalchemy import not_
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -15,6 +16,7 @@ from inky_image_display_api.services.image_service import (
     get_next_image_for_device,
     update_display_state,
 )
+from inky_image_display_api.services.refresh_health import dispatch_allowed_clause
 
 logger = logging.getLogger(__name__)
 
@@ -51,13 +53,15 @@ async def _rotate_due_devices(app: FastAPI) -> None:
     """Find and rotate all online devices that are due for a new image.
 
     Devices currently claimed by a grid are skipped — the grid scheduler
-    drives them instead. Devices whose last refresh failed
-    (``last_refresh_ok is False``) are also skipped: a stuck panel keeps
-    acking and stays "online", so without this gate the scheduler would
-    keep pushing fresh images at a display that can't show them. The
-    controller retries the stuck image on its own; once it succeeds the
-    ack clears ``last_refresh_ok`` and the device re-enters rotation here.
-    ``IS NOT FALSE`` keeps never-acked devices (NULL) eligible.
+    drives them instead. Devices whose last refresh failed *recently* are
+    also skipped: a stuck panel keeps acking and stays "online", so without
+    this gate the scheduler would keep pushing fresh images at a display
+    that can't show them. The controller retries the stuck image on its
+    own; once it succeeds the ack clears ``last_refresh_ok`` and the device
+    re-enters rotation here. The gate expires (``dispatch_allowed_clause``)
+    because that retry lives only in controller memory — after a controller
+    restart or a lost success ack the failure flag would otherwise halt the
+    device forever.
     """
     now = utcnow()
     async with AsyncSession(app.state.engine) as session:
@@ -67,7 +71,7 @@ async def _rotate_due_devices(app: FastAPI) -> None:
                 Device.scheduled_next_at <= now,
                 col(Device.claimed_by_grid_id).is_(None),
                 col(Device.claimed_by_motd_config_id).is_(None),
-                col(Device.last_refresh_ok).is_not(False),
+                dispatch_allowed_clause(now, app.state.settings.refresh_error_backoff_seconds),
             )
         )
         due_devices = result.all()
@@ -135,12 +139,14 @@ async def _rotate_single_grid(app: FastAPI, grid_id: object) -> None:
         # A grid renders one image in lockstep across every member, so a
         # single stuck panel makes the whole composite unshowable. Pause
         # the grid until that member recovers (its controller retries the
-        # stuck image and the success ack clears last_refresh_ok).
+        # stuck image and the success ack clears last_refresh_ok) — or
+        # until the failure ages past the dispatch backoff, so a member
+        # whose controller restarted can't pause the grid forever.
         member_ids = [p.device_id for p in placements]
         errored = await session.exec(
             select(Device.device_id).where(
                 col(Device.id).in_(member_ids),
-                Device.last_refresh_ok == False,  # noqa: E712 — SQLModel comparison
+                not_(dispatch_allowed_clause(utcnow(), app.state.settings.refresh_error_backoff_seconds)),
             )
         )
         stuck = errored.all()

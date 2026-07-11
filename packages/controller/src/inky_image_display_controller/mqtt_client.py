@@ -164,17 +164,23 @@ class MQTTClient:
         except Exception:
             logger.exception("Error handling command: %s", command.action)
 
-    async def publish_ack(self, ack: DeviceAcknowledge) -> None:
-        """Publish an acknowledgement, waiting briefly for a connection."""
+    async def publish_ack(self, ack: DeviceAcknowledge) -> bool:
+        """Publish an acknowledgement, waiting briefly for a connection.
+
+        Returns True once the message was handed to the broker. Callers must
+        treat False as "the API never saw this ack" — a success ack is what
+        clears a device's failure state server-side, so a dropped one has to
+        be re-sent rather than forgotten.
+        """
         try:
             async with asyncio.timeout(30.0):
                 await self._connected.wait()
         except TimeoutError:
             logger.warning("Cannot publish ack — MQTT not connected")
-            return
+            return False
 
         if self._client is None:
-            return
+            return False
         await self._client.publish(
             _ack_topic(self._device_id),
             ack.model_dump_json(),
@@ -185,6 +191,7 @@ class MQTTClient:
             ack.successful_display_change,
             ack.image_id,
         )
+        return True
 
     async def disconnect(self) -> None:
         """Publish a graceful ``offline`` status and clear connection state.
