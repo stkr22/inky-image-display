@@ -50,7 +50,7 @@ export function Stat({ label, value, hint }: { label: string; value: string | nu
   )
 }
 
-export type BadgeTone = 'ok' | 'warn' | 'muted' | 'accent' | 'neutral'
+export type BadgeTone = 'ok' | 'warn' | 'muted' | 'accent' | 'danger' | 'neutral'
 
 // Children are optional: the badge always draws its own status dot via CSS,
 // so a bare <Badge tone="ok" /> renders as a dot-only pill.

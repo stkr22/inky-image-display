@@ -13,6 +13,7 @@ export function Landing() {
   return (
     <>
       <Hero />
+      <HealthAlerts />
       <BentoGrid>
         <ImagesTile />
         <DevicesTile />
@@ -21,6 +22,40 @@ export function Landing() {
         <QuickActionsTile />
       </BentoGrid>
     </>
+  )
+}
+
+// A stuck panel used to hide behind a friendly green dot here — the failure
+// only showed on /displays. Surface it on the page people actually open.
+function HealthAlerts() {
+  const { data: devices } = useQuery({ queryKey: ['devices'], queryFn: api.listDevices })
+  const failing = (devices ?? []).filter((d) => d.refresh_state === 'failed_retrying' || d.refresh_state === 'failed_stale')
+  if (failing.length === 0) return null
+  return (
+    <div className="col w-full gap-2" style={{ marginBottom: 16 }}>
+      {failing.map((device) => (
+        <Link
+          key={device.id}
+          to="/displays"
+          className="w-full row items-center gap-3"
+          style={{
+            padding: '12px 16px',
+            borderRadius: 14,
+            border: '1px solid rgba(239, 68, 68, 0.25)',
+            background: 'rgba(239, 68, 68, 0.06)',
+          }}
+        >
+          <Icon name="warning" style={{ color: 'var(--ink-danger)' }} />
+          <span className="ink-body flex-1">
+            <strong>{device.device_id}</strong>{' '}
+            {device.refresh_state === 'failed_stale'
+              ? 'has been failing to refresh — automatic retries did not recover it; the panel likely needs a power cycle.'
+              : 'reported a failed refresh — the controller is retrying automatically.'}
+          </span>
+          <span className="ink-small">Details →</span>
+        </Link>
+      ))}
+    </div>
   )
 }
 
@@ -119,7 +154,7 @@ function MiniDevice({ device }: { device: Device }) {
 
 function RecentActivityTile() {
   const { data: images } = useQuery({ queryKey: ['images', 'recent'], queryFn: () => api.listImages({ limit: 12 }) })
-  const recent = [...(images ?? [])]
+  const recent = [...(images?.items ?? [])]
     .sort((a, b) =>
       (b.last_displayed_at || b.created_at || '').localeCompare(a.last_displayed_at || a.created_at || ''),
     )

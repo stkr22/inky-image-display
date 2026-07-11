@@ -7,10 +7,10 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ConfirmDialog } from '../components/Dialog'
 import { Button, Switch } from '../components/fields'
 import { useNotify } from '../components/Toast'
-import { EmptyNote, PageHeader, Spinner } from '../components/ui'
+import { Badge, EmptyNote, PageHeader, Spinner } from '../components/ui'
 import { api, ApiError } from '../lib/api'
-import { formatDatetime } from '../lib/format'
-import type { GeminiJob, SyncJob } from '../lib/types'
+import { formatDatetime, formatRelative } from '../lib/format'
+import type { GeminiJob, SyncJob, SyncJobRun } from '../lib/types'
 
 function errMessage(err: unknown): string {
   return err instanceof ApiError ? err.detail || err.message : String(err)
@@ -62,18 +62,50 @@ export function Jobs() {
   )
 }
 
+// Latest run per job, from one bulk fetch — the list is pruned server-side
+// to ~20 runs per job, so 200 rows covers every job's history head.
+function useLatestRuns(jobType: 'immich' | 'gemini'): Map<string, SyncJobRun> {
+  const { data: runs } = useQuery({
+    queryKey: ['sync-runs', jobType],
+    queryFn: () => api.listSyncRuns({ job_type: jobType, limit: 200 }),
+    // Runs land whenever the worker cron fires; poll on the same cadence
+    // as the schedule view so "Run now" feedback appears without a reload.
+    refetchInterval: 15_000,
+  })
+  const latest = new Map<string, SyncJobRun>()
+  for (const run of runs ?? []) {
+    if (!latest.has(run.job_id)) latest.set(run.job_id, run) // list is newest-first
+  }
+  return latest
+}
+
 function ImmichList({ profileMap }: { profileMap: Map<string, string> }) {
-  const { data: jobs, isPending } = useQuery({ queryKey: ['sync-jobs'], queryFn: api.listSyncJobs })
+  const { data: jobs, isPending } = useQuery({
+    queryKey: ['sync-jobs'],
+    queryFn: api.listSyncJobs,
+    refetchInterval: 15_000,
+  })
+  const latestRuns = useLatestRuns('immich')
   if (isPending) return <Spinner />
   if (!jobs || jobs.length === 0) return <EmptyNote>No Immich sync jobs yet.</EmptyNote>
   return (
     <div className="col w-full gap-2">
-      {jobs.map((job) => <ImmichRow key={job.id} job={job} profileMap={profileMap} />)}
+      {jobs.map((job) => (
+        <ImmichRow key={job.id} job={job} profileMap={profileMap} lastRun={latestRuns.get(job.id) ?? null} />
+      ))}
     </div>
   )
 }
 
-function ImmichRow({ job, profileMap }: { job: SyncJob; profileMap: Map<string, string> }) {
+function ImmichRow({
+  job,
+  profileMap,
+  lastRun,
+}: {
+  job: SyncJob
+  profileMap: Map<string, string>
+  lastRun: SyncJobRun | null
+}) {
   const navigate = useNavigate()
   const targetName = profileMap.get(job.target_device_profile_id) ?? job.target_device_profile_id
   return (
@@ -82,8 +114,11 @@ function ImmichRow({ job, profileMap }: { job: SyncJob; profileMap: Map<string, 
       summary={`${job.strategy} · count ${job.count} · → ${targetName} · ${job.orientation || 'any orientation'}`}
       updatedAt={job.updated_at}
       isActive={job.is_active}
+      lastRun={lastRun}
+      runRequestedAt={job.run_requested_at}
       queryKey={['sync-jobs']}
       onToggle={(value) => api.updateSyncJob(job.id, { is_active: value })}
+      onRunNow={() => api.runSyncJobNow(job.id)}
       onEdit={() => navigate(`/sync-jobs/${job.id}`)}
       onDelete={() => api.deleteSyncJob(job.id)}
       deleteMessage={`Delete sync job '${job.name}'?`}
@@ -92,17 +127,32 @@ function ImmichRow({ job, profileMap }: { job: SyncJob; profileMap: Map<string, 
 }
 
 function GeminiList({ profileMap }: { profileMap: Map<string, string> }) {
-  const { data: jobs, isPending } = useQuery({ queryKey: ['gemini-jobs'], queryFn: api.listGeminiJobs })
+  const { data: jobs, isPending } = useQuery({
+    queryKey: ['gemini-jobs'],
+    queryFn: api.listGeminiJobs,
+    refetchInterval: 15_000,
+  })
+  const latestRuns = useLatestRuns('gemini')
   if (isPending) return <Spinner />
   if (!jobs || jobs.length === 0) return <EmptyNote>No Gemini jobs yet.</EmptyNote>
   return (
     <div className="col w-full gap-2">
-      {jobs.map((job) => <GeminiRow key={job.id} job={job} profileMap={profileMap} />)}
+      {jobs.map((job) => (
+        <GeminiRow key={job.id} job={job} profileMap={profileMap} lastRun={latestRuns.get(job.id) ?? null} />
+      ))}
     </div>
   )
 }
 
-function GeminiRow({ job, profileMap }: { job: GeminiJob; profileMap: Map<string, string> }) {
+function GeminiRow({
+  job,
+  profileMap,
+  lastRun,
+}: {
+  job: GeminiJob
+  profileMap: Map<string, string>
+  lastRun: SyncJobRun | null
+}) {
   const navigate = useNavigate()
   const targetName = profileMap.get(job.target_device_profile_id) ?? job.target_device_profile_id
   const total = (job.subjects?.length ?? 0) * (job.images_per_subject || 1)
@@ -112,8 +162,11 @@ function GeminiRow({ job, profileMap }: { job: GeminiJob; profileMap: Map<string
       summary={`${job.orientation || 'portrait'} · ${total} images per run · → ${targetName}`}
       updatedAt={job.updated_at}
       isActive={job.is_active}
+      lastRun={lastRun}
+      runRequestedAt={job.run_requested_at}
       queryKey={['gemini-jobs']}
       onToggle={(value) => api.updateGeminiJob(job.id, { is_active: value })}
+      onRunNow={() => api.runGeminiJobNow(job.id)}
       onEdit={() => navigate(`/gemini-jobs/${job.id}`)}
       onDelete={() => api.deleteGeminiJob(job.id)}
       deleteMessage={`Delete Gemini job '${job.name}'?`}
@@ -121,13 +174,24 @@ function GeminiRow({ job, profileMap }: { job: GeminiJob; profileMap: Map<string
   )
 }
 
+function lastRunSummary(run: SyncJobRun): string {
+  if (run.status === 'error') return run.error || 'failed'
+  const parts = [`${run.images_added} added`]
+  if (run.images_skipped > 0) parts.push(`${run.images_skipped} skipped`)
+  if (run.images_deleted > 0) parts.push(`${run.images_deleted} expired`)
+  return parts.join(', ')
+}
+
 function JobRow({
   name,
   summary,
   updatedAt,
   isActive,
+  lastRun,
+  runRequestedAt,
   queryKey,
   onToggle,
+  onRunNow,
   onEdit,
   onDelete,
   deleteMessage,
@@ -136,8 +200,11 @@ function JobRow({
   summary: string
   updatedAt: string
   isActive: boolean
+  lastRun: SyncJobRun | null
+  runRequestedAt: string | null
   queryKey: string[]
   onToggle: (value: boolean) => Promise<unknown>
+  onRunNow: () => Promise<unknown>
   onEdit: () => void
   onDelete: () => Promise<unknown>
   deleteMessage: string
@@ -170,13 +237,44 @@ function JobRow({
     onError: (err) => notify(`Delete failed: ${errMessage(err)}`, 'negative'),
   })
 
+  const runNowMutation = useMutation({
+    mutationFn: onRunNow,
+    onSuccess: () => {
+      notify('Run queued — the worker picks it up on its next tick', 'positive')
+      queryClient.invalidateQueries({ queryKey })
+    },
+    onError: (err) => notify(`Run request failed: ${errMessage(err)}`, 'negative'),
+  })
+  const runQueued = runRequestedAt != null
+
   return (
     <div className="bento-tile w-full" style={{ padding: '16px 20px', flexDirection: 'row', alignItems: 'center', gap: 12 }}>
       <div className="col flex-1 gap-1">
-        <h3 className="ink-h3 truncate">{name}</h3>
+        <div className="row items-center gap-2 wrap">
+          <h3 className="ink-h3 truncate">{name}</h3>
+          {runQueued && <Badge tone="accent">Run queued</Badge>}
+          {lastRun?.status === 'error' && <Badge tone="danger">Last run failed</Badge>}
+        </div>
         <span className="ink-small">{summary}</span>
+        {lastRun ? (
+          <span className="ink-small" style={lastRun.status === 'error' ? { color: 'var(--ink-danger)' } : undefined}>
+            Last run {formatRelative(lastRun.finished_at)}: {lastRunSummary(lastRun)}
+          </span>
+        ) : (
+          <span className="ink-small" style={{ opacity: 0.7 }}>
+            No runs recorded yet
+          </span>
+        )}
         <span className="ink-small">Updated {formatDatetime(updatedAt)}</span>
       </div>
+      <Button
+        flat
+        round
+        icon="play_arrow"
+        title={runQueued ? 'Run already queued' : 'Run now'}
+        disabled={runQueued || runNowMutation.isPending}
+        onClick={() => runNowMutation.mutate()}
+      />
       <Switch
         checked={shownActive}
         onChange={(value) => {

@@ -13,8 +13,13 @@ export interface Image {
   original_width: number | null
   original_height: number | null
   is_portrait: boolean
-  display_duration_seconds: number
+  // null = rotate on the device/global interval; a value holds the image
+  // on screen that long once shown.
+  display_duration_seconds: number | null
+  // Legacy field, never consulted by selection — not surfaced in the UI.
   priority: number
+  // Operator veto: excluded images never enter automatic rotation.
+  excluded_from_rotation: boolean
   last_displayed_at: string | null
   expires_at: string | null
   created_at: string
@@ -57,7 +62,13 @@ export interface Device {
   last_refresh_ok: boolean | null
   last_error: string | null
   last_error_at: string | null
+  // Server-derived health: "failed_retrying" should self-heal via the
+  // controller's retry loop; "failed_stale" outlived the backoff and most
+  // likely needs a physical power cycle (docs/refresh-issues.md).
+  refresh_state: 'ok' | 'failed_retrying' | 'failed_stale' | null
   refresh_interval_seconds: number | null
+  // Pinned devices hold their current image; rotation skips them.
+  is_pinned: boolean
   current_image: ImageSummary | null
 }
 
@@ -83,8 +94,26 @@ export interface SyncJob {
   taken_after: string | null
   taken_before: string | null
   rating: number | null
+  // Set while a "Run now" click is waiting for the worker's requested-only cron.
+  run_requested_at: string | null
   created_at: string
   updated_at: string
+}
+
+// One recorded worker run of a sync job (Immich or Gemini batch).
+export interface SyncJobRun {
+  id: string
+  job_type: 'immich' | 'gemini'
+  job_id: string
+  job_name: string
+  status: 'success' | 'error'
+  started_at: string
+  finished_at: string
+  images_added: number
+  images_skipped: number
+  images_deleted: number
+  detail: string | null
+  error: string | null
 }
 
 export interface PromptBlock {
@@ -117,6 +146,7 @@ export interface GeminiJob {
   subjects: string[]
   images_per_subject: number
   retention_days: number | null
+  run_requested_at: string | null
   created_at: string
   updated_at: string
 }
@@ -164,8 +194,19 @@ export interface GuestInvite {
   qr_png_base64: string
 }
 
+// Daily window during which automatic rotation pauses (manual pushes and
+// the MOTD's own schedule still run). Start/end are "HH:MM" wall-clock in
+// the given IANA timezone; start > end wraps midnight.
+export interface QuietHours {
+  enabled: boolean
+  start: string
+  end: string
+  timezone: string
+}
+
 export interface AppSettings {
   default_refresh_seconds: number
+  quiet_hours: QuietHours
 }
 
 export interface ImageStats {
@@ -300,6 +341,13 @@ export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash-image'
 // and cached in the bucket. Omit width for the full original.
 export function mediaUrl(storagePath: string, width?: 240 | 480 | 960): string {
   return width ? `/media/${storagePath}?w=${width}` : `/media/${storagePath}`
+}
+
+// Server-side Spectra 6 simulation (quantize + dither) of a stored image —
+// what the picture will actually look like on the panel's six inks.
+export function einkPreviewUrl(imageId: string, saturation?: number): string {
+  const base = `/api/images/${imageId}/eink-preview`
+  return saturation !== undefined ? `${base}?saturation=${saturation}` : base
 }
 
 export function imageTitle(image: Pick<Image, 'title' | 'storage_path'>): string {

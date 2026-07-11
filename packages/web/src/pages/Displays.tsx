@@ -113,6 +113,12 @@ function DevicesSection() {
       {devices?.map((device) => (
         <DeviceCard key={device.id} device={device} profile={profileById.get(device.device_profile_id)} />
       ))}
+      {devices && devices.length > 0 && (
+        <span className="ink-small" style={{ opacity: 0.7 }}>
+          Note: if a 13.3″ panel updates only one half of the screen, that is a panel/ribbon hardware fault the
+          controller cannot detect — it will still report the refresh as successful (see docs/refresh-issues.md).
+        </span>
+      )}
     </section>
   )
 }
@@ -121,6 +127,7 @@ function DeviceCard({ device, profile }: { device: Device; profile: DeviceProfil
   const notify = useNotify()
   const queryClient = useQueryClient()
   const [confirmClear, setConfirmClear] = useState(false)
+  const [confirmExclude, setConfirmExclude] = useState(false)
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const currentImage = device.current_image
 
@@ -149,6 +156,33 @@ function DeviceCard({ device, profile }: { device: Device; profile: DeviceProfil
     }
   }
 
+  const doTogglePin = async () => {
+    try {
+      await api.updateDevice(device.device_id, { is_pinned: !device.is_pinned })
+      notify(device.is_pinned ? 'Rotation resumed' : 'Image pinned — rotation paused', 'positive')
+      refresh()
+      queryClient.invalidateQueries({ queryKey: ['schedule'] })
+    } catch (err) {
+      notify(`Pin failed: ${errMessage(err)}`, 'negative')
+    }
+  }
+
+  // "Don't show again" = exclude from rotation (image stays in the library),
+  // then advance so the vetoed picture doesn't linger on the wall.
+  const doExcludeCurrent = async () => {
+    setConfirmExclude(false)
+    if (!currentImage) return
+    try {
+      await api.updateImage(currentImage.id, { excluded_from_rotation: true })
+    } catch (err) {
+      notify(`Exclude failed: ${errMessage(err)}`, 'negative')
+      return
+    }
+    notify(`${imageTitle(currentImage)} removed from rotation`, 'positive')
+    queryClient.invalidateQueries({ queryKey: ['images'] })
+    if (device.is_online && !device.is_pinned) await doNext()
+  }
+
   const profileSummary = profile ? `${profile.name} (${profile.width}x${profile.height})` : '(unknown profile)'
 
   return (
@@ -173,13 +207,25 @@ function DeviceCard({ device, profile }: { device: Device; profile: DeviceProfil
               {device.is_online ? 'Online' : `Offline since ${formatDatetime(device.last_seen)}`}
             </Badge>
             {/* A failed refresh is invisible from the online flag alone — a
-                stuck display keeps acking and stays "Online". Surface it. */}
-            {device.last_refresh_ok === false && <Badge tone="warn">Refresh failed</Badge>}
+                stuck display keeps acking and stays "Online". The server
+                classifies whether the controller's retry loop should still
+                recover it or the failure has outlived the backoff. */}
+            {device.refresh_state === 'failed_retrying' && <Badge tone="warn">Refresh failed — retrying</Badge>}
+            {device.refresh_state === 'failed_stale' && <Badge tone="danger">Refresh failing — check power</Badge>}
+            {device.is_pinned && <Badge tone="accent">Pinned</Badge>}
           </div>
-          {device.last_refresh_ok === false && (
+          {device.refresh_state === 'failed_retrying' && (
             <span className="ink-small break-words" style={{ color: 'var(--ink-warn)' }}>
               Last refresh failed{device.last_error_at ? ` ${formatRelative(device.last_error_at)}` : ''}
-              {device.last_error ? `: ${device.last_error}` : ''}
+              {device.last_error ? `: ${device.last_error}` : ''}. The controller retries automatically — this
+              usually resolves itself within a few minutes.
+            </span>
+          )}
+          {device.refresh_state === 'failed_stale' && (
+            <span className="ink-small break-words" style={{ color: 'var(--ink-danger)' }}>
+              Refreshes have kept failing{device.last_error_at ? ` since ${formatDatetime(device.last_error_at)}` : ''}
+              {device.last_error ? ` (${device.last_error})` : ''}. Automatic retries have not recovered the panel —
+              a latched panel needs its power physically unplugged and reconnected.
             </span>
           )}
           <span className="ink-small break-words">{device.room || '(no room)'}</span>
@@ -194,9 +240,19 @@ function DeviceCard({ device, profile }: { device: Device; profile: DeviceProfil
         </div>
       </div>
       <div className="row w-full gap-2 wrap" style={{ borderTop: '1px solid var(--ink-border)', paddingTop: 14 }}>
-        <Button primary icon="skip_next" disabled={!device.is_online} onClick={doNext}>
+        <Button primary icon="skip_next" disabled={!device.is_online || device.is_pinned} onClick={doNext}>
           Next
         </Button>
+        {/* Pinning is a hold on rotation, not a device command, so it works
+            regardless of online state. */}
+        <Button flat icon={device.is_pinned ? 'lock_open' : 'push_pin'} onClick={doTogglePin}>
+          {device.is_pinned ? 'Unpin' : 'Pin'}
+        </Button>
+        {currentImage && (
+          <Button flat icon="visibility_off" onClick={() => setConfirmExclude(true)}>
+            Don't show again
+          </Button>
+        )}
         {/* Schedule editing is independent of online state — operators often
             dial cadence on a device that's currently offline. */}
         <Button flat icon="schedule" onClick={() => setScheduleOpen(true)}>
@@ -214,6 +270,17 @@ function DeviceCard({ device, profile }: { device: Device; profile: DeviceProfil
         confirmLabel="Clear"
         onConfirm={doClear}
         onCancel={() => setConfirmClear(false)}
+      />
+      <ConfirmDialog
+        open={confirmExclude}
+        message={
+          currentImage
+            ? `Remove "${imageTitle(currentImage)}" from rotation? It stays in the library and can be re-included from its detail page.`
+            : ''
+        }
+        confirmLabel="Don't show again"
+        onConfirm={doExcludeCurrent}
+        onCancel={() => setConfirmExclude(false)}
       />
       {scheduleOpen && <ScheduleDialog device={device} onClose={() => setScheduleOpen(false)} onSaved={refresh} />}
     </div>

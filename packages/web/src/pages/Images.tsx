@@ -2,7 +2,7 @@
 // and a multi-select mode for bulk delete / bulk grid assignment.
 
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ConfirmDialog, Dialog } from '../components/Dialog'
 import { Button, Icon, SelectField, TextField } from '../components/fields'
@@ -13,12 +13,24 @@ import { imageTitle, mediaUrl, type Grid, type Image } from '../lib/types'
 
 const PAGE_SIZE = 30
 const SEARCH_DEBOUNCE_MS = 300
+const UNDO_DELETE_MS = 7000
+
+// "3 failed: Sunset, Beach, +1 more" — naming the failures lets the operator
+// find the stragglers instead of hunting through the library.
+function failureSummary(titles: string[]): string {
+  const shown = titles.slice(0, 3).join(', ')
+  const extra = titles.length > 3 ? `, +${titles.length - 3} more` : ''
+  return `${titles.length} failed: ${shown}${extra}`
+}
 
 export function Images() {
   const navigate = useNavigate()
+  const notify = useNotify()
+  const queryClient = useQueryClient()
   const [source, setSource] = useState('')
   const [gridFilter, setGridFilter] = useState('')
   const [orientation, setOrientation] = useState('')
+  const [excludedFilter, setExcludedFilter] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [offset, setOffset] = useState(0)
@@ -40,15 +52,84 @@ export function Images() {
     is_portrait: orientation === '' ? undefined : orientation === 'portrait',
     target_grid_id: gridFilter && gridFilter !== '__solo__' ? gridFilter : undefined,
     solo_only: gridFilter === '__solo__' || undefined,
+    excluded: excludedFilter === '' ? undefined : excludedFilter === 'excluded',
     search: search || undefined,
     limit: PAGE_SIZE,
     offset,
   }
-  const { data: images, isPending, error } = useQuery({
+  const { data, isPending, error } = useQuery({
     queryKey: ['images', filters],
     queryFn: () => api.listImages(filters),
     placeholderData: keepPreviousData,
   })
+  const images = data?.items
+  const total = data?.total ?? 0
+
+  // Titles of every image seen so far, so bulk-failure toasts can name items
+  // even when the selection spans pages no longer loaded.
+  const titlesRef = useRef(new Map<string, string>())
+  images?.forEach((img) => titlesRef.current.set(img.id, imageTitle(img)))
+
+  // Deferred bulk delete: selected images are only hidden client-side until
+  // the undo window closes, so Undo is a pure no-op (nothing was sent yet).
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<ReadonlySet<string>>(new Set())
+  const pendingDeleteRef = useRef<{ ids: string[]; timer: ReturnType<typeof setTimeout> } | null>(null)
+
+  const flushPendingDelete = useCallback(async () => {
+    const pending = pendingDeleteRef.current
+    if (!pending) return
+    pendingDeleteRef.current = null
+    clearTimeout(pending.timer)
+    const results = await Promise.allSettled(pending.ids.map((id) => api.deleteImage(id)))
+    const failedIds = pending.ids.filter((_, i) => results[i]?.status === 'rejected')
+    if (failedIds.length > 0) {
+      const titles = failedIds.map((id) => titlesRef.current.get(id) ?? 'Untitled')
+      notify(`${pending.ids.length - failedIds.length} deleted, ${failureSummary(titles)}`, 'warning')
+    }
+    // Wait for the refetch before un-hiding so successfully deleted images
+    // don't flash back into the grid; failures then reappear naturally.
+    await queryClient.invalidateQueries({ queryKey: ['images'] })
+    setPendingDeleteIds((current) => {
+      const next = new Set(current)
+      for (const id of pending.ids) next.delete(id)
+      return next
+    })
+  }, [notify, queryClient])
+
+  // Flush on unmount: if the user navigates away mid-undo-window, commit the
+  // deletion immediately rather than silently dropping it.
+  useEffect(() => {
+    return () => {
+      void flushPendingDelete()
+    }
+  }, [flushPendingDelete])
+
+  const scheduleBulkDelete = (ids: string[]) => {
+    // One undo window at a time: commit any prior batch before starting a new one.
+    void flushPendingDelete()
+    const batch = { ids, timer: setTimeout(() => void flushPendingDelete(), UNDO_DELETE_MS) }
+    pendingDeleteRef.current = batch
+    setPendingDeleteIds((current) => new Set([...current, ...ids]))
+    notify(`${ids.length} image(s) deleted`, 'info', {
+      durationMs: UNDO_DELETE_MS,
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          // A stale toast must not cancel a newer batch.
+          if (pendingDeleteRef.current !== batch) return
+          clearTimeout(batch.timer)
+          pendingDeleteRef.current = null
+          setPendingDeleteIds((current) => {
+            const next = new Set(current)
+            for (const id of batch.ids) next.delete(id)
+            return next
+          })
+        },
+      },
+    })
+  }
+
+  const visibleImages = images?.filter((img) => !pendingDeleteIds.has(img.id))
 
   const resetAnd = (apply: () => void) => {
     setOffset(0)
@@ -115,6 +196,16 @@ export function Images() {
             { value: 'portrait', label: 'Portrait only' },
           ]}
         />
+        <SelectField
+          label="Rotation"
+          value={excludedFilter}
+          onChange={(v) => resetAnd(() => setExcludedFilter(v))}
+          options={[
+            { value: '', label: 'All' },
+            { value: 'in', label: 'In rotation' },
+            { value: 'excluded', label: 'Excluded' },
+          ]}
+        />
         <div className="flex-1" />
         <div className="row gap-1 items-center">
           <button
@@ -126,11 +217,11 @@ export function Images() {
             <Icon name="chevron_left" />
           </button>
           <span className="ink-small">
-            {images && images.length > 0 ? `Showing ${offset + 1}-${offset + images.length}` : 'No results'}
+            {images && images.length > 0 ? `Showing ${offset + 1}–${offset + images.length} of ${total}` : 'No results'}
           </span>
           <button
             className="ink-btn ink-btn-flat ink-btn-icon"
-            disabled={(images?.length ?? 0) < PAGE_SIZE}
+            disabled={offset + PAGE_SIZE >= total}
             onClick={() => setOffset(offset + PAGE_SIZE)}
             aria-label="Next page"
           >
@@ -147,8 +238,8 @@ export function Images() {
           className="w-full gap-4"
           style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}
         >
-          {images?.length === 0 && <EmptyNote>No images.</EmptyNote>}
-          {images?.map((image) => (
+          {visibleImages?.length === 0 && <EmptyNote>No images.</EmptyNote>}
+          {visibleImages?.map((image) => (
             <GalleryTile
               key={image.id}
               image={image}
@@ -161,7 +252,13 @@ export function Images() {
       )}
 
       {selecting && selected.size > 0 && (
-        <BulkActionBar selectedIds={[...selected]} grids={grids ?? []} onDone={exitSelection} />
+        <BulkActionBar
+          selectedIds={[...selected]}
+          grids={grids ?? []}
+          onDone={exitSelection}
+          onScheduleDelete={scheduleBulkDelete}
+          titleFor={(id) => titlesRef.current.get(id) ?? 'Untitled'}
+        />
       )}
 
       {!selecting && (
@@ -188,6 +285,7 @@ function GalleryTile({
     <>
       <img src={mediaUrl(image.storage_path, 480)} loading="lazy" alt={imageTitle(image)} />
       <span className="ink-thumb-caption">{imageTitle(image)}</span>
+      {image.excluded_from_rotation && <span className="ink-badge muted ink-thumb-flag">Excluded</span>}
       {selecting && (
         <span
           className="material-icons"
@@ -228,7 +326,19 @@ function GalleryTile({
 // Sticky toolbar shown while a selection exists: bulk delete and bulk
 // grid-target assignment (each image is updated/deleted individually; the
 // API has no batch endpoint, but N requests is fine at this scale).
-function BulkActionBar({ selectedIds, grids, onDone }: { selectedIds: string[]; grids: Grid[]; onDone: () => void }) {
+function BulkActionBar({
+  selectedIds,
+  grids,
+  onDone,
+  onScheduleDelete,
+  titleFor,
+}: {
+  selectedIds: string[]
+  grids: Grid[]
+  onDone: () => void
+  onScheduleDelete: (ids: string[]) => void
+  titleFor: (id: string) => string
+}) {
   const notify = useNotify()
   const queryClient = useQueryClient()
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -236,19 +346,11 @@ function BulkActionBar({ selectedIds, grids, onDone }: { selectedIds: string[]; 
   const [targetGrid, setTargetGrid] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const finish = (succeeded: number, failed: number, verb: string) => {
-    queryClient.invalidateQueries({ queryKey: ['images'] })
-    if (failed === 0) notify(`${succeeded} image(s) ${verb}`, 'positive')
-    else notify(`${succeeded} ${verb}, ${failed} failed`, 'warning')
-    onDone()
-  }
-
-  const bulkDelete = async () => {
+  // Deletion is deferred to the parent (undo window); nothing is sent here.
+  const bulkDelete = () => {
     setConfirmDelete(false)
-    setBusy(true)
-    const results = await Promise.allSettled(selectedIds.map((id) => api.deleteImage(id)))
-    const failed = results.filter((r) => r.status === 'rejected').length
-    finish(selectedIds.length - failed, failed, 'deleted')
+    onScheduleDelete(selectedIds)
+    onDone()
   }
 
   const bulkSetGrid = async () => {
@@ -256,8 +358,11 @@ function BulkActionBar({ selectedIds, grids, onDone }: { selectedIds: string[]; 
     setBusy(true)
     const body = { target_grid_id: targetGrid || null }
     const results = await Promise.allSettled(selectedIds.map((id) => api.updateImage(id, body)))
-    const failed = results.filter((r) => r.status === 'rejected').length
-    finish(selectedIds.length - failed, failed, 'updated')
+    const failedIds = selectedIds.filter((_, i) => results[i]?.status === 'rejected')
+    queryClient.invalidateQueries({ queryKey: ['images'] })
+    if (failedIds.length === 0) notify(`${selectedIds.length} image(s) updated`, 'positive')
+    else notify(`${selectedIds.length - failedIds.length} updated, ${failureSummary(failedIds.map(titleFor))}`, 'warning')
+    onDone()
   }
 
   return (

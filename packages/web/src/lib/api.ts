@@ -23,6 +23,7 @@ import type {
   PromptPreset,
   ScheduleEntry,
   SyncJob,
+  SyncJobRun,
 } from './types'
 
 const DEVICE_NOT_CONNECTED_DETAIL = 'Device not connected'
@@ -46,7 +47,7 @@ interface RequestOptions {
   deviceCommand?: boolean
 }
 
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+async function requestRaw(path: string, options: RequestOptions = {}): Promise<Response> {
   const url = new URL(path, window.location.origin)
   for (const [key, value] of Object.entries(options.params ?? {})) {
     if (value !== undefined) url.searchParams.set(key, String(value))
@@ -69,6 +70,11 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     }
     throw new ApiError(response.status, detail)
   }
+  return response
+}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const response = await requestRaw(path, options)
   if (response.status === 204 || response.headers.get('content-length') === '0') {
     return undefined as T
   }
@@ -90,9 +96,17 @@ export interface ImageListFilters {
   is_portrait?: boolean
   target_grid_id?: string
   solo_only?: boolean
+  excluded?: boolean
   search?: string
   limit?: number
   offset?: number
+}
+
+// List result carrying the X-Total-Count header so paginated views can
+// show "x–y of N" instead of guessing from a short final page.
+export interface ImageList {
+  items: Image[]
+  total: number
 }
 
 export const api = {
@@ -102,8 +116,12 @@ export const api = {
   createGuestInvite: () => request<GuestInvite>('/api/auth/guest-invites', { method: 'POST' }),
 
   // --- Images ---
-  listImages: (filters: ImageListFilters = {}) =>
-    request<Image[]>('/api/images', { params: { limit: 100, ...filters } }),
+  listImages: async (filters: ImageListFilters = {}): Promise<ImageList> => {
+    const response = await requestRaw('/api/images', { params: { limit: 100, ...filters } })
+    const items = (await response.json()) as Image[]
+    const total = Number(response.headers.get('X-Total-Count') ?? items.length)
+    return { items, total }
+  },
   getImage: (id: string) => request<Image>(`/api/images/${id}`),
   getImageStats: () => request<ImageStats>('/api/images/stats'),
   uploadImage: (file: File, metadata: Record<string, unknown>) => {
@@ -114,16 +132,26 @@ export const api = {
   },
   updateImage: (id: string, body: Record<string, unknown>) =>
     request<Image>(`/api/images/${id}`, { method: 'PUT', body }),
+  // E-ink simulation for not-yet-uploaded bytes (upload/crop dialog preview).
+  einkPreviewUpload: async (file: Blob, saturation?: number): Promise<Blob> => {
+    const formData = new FormData()
+    formData.append('file', file, 'preview.jpg')
+    if (saturation !== undefined) formData.append('saturation', String(saturation))
+    const response = await requestRaw('/api/images/eink-preview', { method: 'POST', formData })
+    return response.blob()
+  },
   deleteImage: (id: string) => request<void>(`/api/images/${id}`, { method: 'DELETE' }),
 
   // --- Devices ---
   listDevices: () => request<Device[]>('/api/devices'),
   updateDevice: (deviceId: string, body: Record<string, unknown>) =>
     request<Device>(`/api/devices/${deviceId}`, { method: 'PATCH', body }),
-  displayImage: (deviceId: string, imageId: string) =>
+  // fit: 'auto' lets the API cover-crop a copy when the image doesn't match
+  // the panel's pixel dimensions; 'exact' (default) gets a 409 instead.
+  displayImage: (deviceId: string, imageId: string, fit: 'exact' | 'auto' = 'exact') =>
     request<void>(`/api/devices/${deviceId}/display`, {
       method: 'POST',
-      body: { image_id: imageId },
+      body: { image_id: imageId, fit },
       deviceCommand: true,
     }),
   nextImage: (deviceId: string) =>
@@ -144,6 +172,11 @@ export const api = {
   updateSyncJob: (id: string, body: Record<string, unknown>) =>
     request<SyncJob>(`/api/sync-jobs/${id}`, { method: 'PUT', body }),
   deleteSyncJob: (id: string) => request<void>(`/api/sync-jobs/${id}`, { method: 'DELETE' }),
+  runSyncJobNow: (id: string) => request<SyncJob>(`/api/sync-jobs/${id}/run-now`, { method: 'POST' }),
+
+  // --- Sync run history (both job types) ---
+  listSyncRuns: (params: { job_type?: 'immich' | 'gemini'; job_id?: string; limit?: number } = {}) =>
+    request<SyncJobRun[]>('/api/sync-runs', { params }),
 
   // --- Prompt blocks / presets ---
   listPromptBlocks: () => request<PromptBlock[]>('/api/genai/blocks'),
@@ -167,6 +200,7 @@ export const api = {
   updateGeminiJob: (id: string, body: Record<string, unknown>) =>
     request<GeminiJob>(`/api/genai/jobs/${id}`, { method: 'PUT', body }),
   deleteGeminiJob: (id: string) => request<void>(`/api/genai/jobs/${id}`, { method: 'DELETE' }),
+  runGeminiJobNow: (id: string) => request<GeminiJob>(`/api/genai/jobs/${id}/run-now`, { method: 'POST' }),
 
   // --- Grids ---
   listGrids: (includeDevices = false) =>

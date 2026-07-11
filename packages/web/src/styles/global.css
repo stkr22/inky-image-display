@@ -144,6 +144,7 @@ button { font-family: inherit; }
 .ink-badge.warn { color: var(--ink-warn); border-color: rgba(245, 158, 11, 0.25); background: rgba(245, 158, 11, 0.08); }
 .ink-badge.muted { color: var(--ink-muted); }
 .ink-badge.accent { color: var(--ink-accent); border-color: rgba(61, 90, 254, 0.25); background: var(--ink-accent-soft); }
+.ink-badge.danger { color: var(--ink-danger); border-color: rgba(239, 68, 68, 0.25); background: rgba(239, 68, 68, 0.08); }
 
 /* ---------- Top nav ----------------------------------------------------------- */
 .ink-nav {
@@ -530,6 +531,24 @@ input[type='range']::-moz-range-thumb {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
+.ink-toast-has-action { display: inline-flex; align-items: center; gap: 12px; }
+.ink-toast-action {
+  pointer-events: auto; /* .ink-toasts disables pointer events; re-enable for the button */
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.14);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ink-toast-action:hover { background: rgba(255, 255, 255, 0.26); }
+
+/* Tile overlay flag (e.g. "Excluded" on gallery thumbs); parent tile is position: relative. */
+.ink-thumb-flag { position: absolute; top: 8px; left: 8px; }
 
 /* ---------- Action bar ------------------------------------------------------------------------------ */
 .ink-action-bar {
@@ -605,3 +624,12 @@ input[type='range']::-moz-range-thumb {
   -webkit-font-feature-settings: 'liga';
   -webkit-font-smoothing: antialiased;
 }
+
+/* Draggable device rectangles on the grid layout preview */
+.ink-canvas-placement {
+  cursor: grab;
+  touch-action: none; /* keep touch drags from scrolling the page mid-move */
+  user-select: none;
+}
+.ink-canvas-placement.dragging { cursor: grabbing; }
+.ink-canvas-placement.disabled { cursor: default; }

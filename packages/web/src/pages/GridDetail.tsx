@@ -2,7 +2,7 @@
 // placement management, and per-grid image actions with quality hints.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, Dialog } from '../components/Dialog'
 import { Button, IntervalInputs, NumberField, SelectField, Switch, TextField, totalSeconds } from '../components/fields'
@@ -28,7 +28,8 @@ export function GridDetail() {
   })
   const { data: devices } = useQuery({ queryKey: ['devices'], queryFn: api.listDevices })
   const { data: profiles } = useQuery({ queryKey: ['device-profiles'], queryFn: api.listDeviceProfiles })
-  const { data: images } = useQuery({ queryKey: ['images', 'grid-pool'], queryFn: () => api.listImages({ limit: 200 }) })
+  const { data: imageList } = useQuery({ queryKey: ['images', 'grid-pool'], queryFn: () => api.listImages({ limit: 200 }) })
+  const images = imageList?.items
 
   const [previewImageId, setPreviewImageId] = useState<string | null>(null)
 
@@ -52,11 +53,12 @@ export function GridDetail() {
   return (
     <>
       <GridHeader grid={grid} onChanged={refresh} />
-      <CanvasPreview grid={grid} devices={devices ?? []} previewImage={previewImage} maxPxcm={maxPxcm} />
+      <CanvasPreview grid={grid} devices={devices ?? []} previewImage={previewImage} maxPxcm={maxPxcm} onChanged={refresh} />
       <Placements grid={grid} devices={devices ?? []} profiles={profiles ?? []} onChanged={refresh} />
       <ImageActions
         grid={grid}
         images={images ?? []}
+        poolTotal={imageList?.total ?? 0}
         maxPxcm={maxPxcm}
         previewImageId={previewImageId}
         onPreview={setPreviewImageId}
@@ -196,16 +198,111 @@ function CanvasPreview({
   devices,
   previewImage,
   maxPxcm,
+  onChanged,
 }: {
   grid: Grid
   devices: Device[]
   previewImage: Image | null
   maxPxcm: number | null
+  onChanged: () => void
 }) {
+  const notify = useNotify()
   const placements = grid.devices ?? []
   const deviceById = new Map(devices.map((d) => [d.id, d]))
   const gridW = grid.width_cm
   const gridH = grid.height_cm
+
+  const canvasRef = useRef<HTMLDivElement>(null)
+  // Live drag bookkeeping stays in a ref so pointermove only re-renders via
+  // the position state below, and pointerup reads the latest coords reliably.
+  const dragInfo = useRef<{
+    pointerId: number
+    startClientX: number
+    startClientY: number
+    originXCm: number
+    originYCm: number
+    cmPerPx: number
+    xCm: number
+    yCm: number
+  } | null>(null)
+  // Position override for the dragged rectangle. `active: false` means the
+  // drop was saved and we are waiting for the refetched grid to catch up.
+  const [drag, setDrag] = useState<{ deviceId: string; xCm: number; yCm: number; active: boolean } | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  // Clear the saved-drop override once the refetched placement matches it,
+  // otherwise the stale override would mask later numeric Move edits.
+  useEffect(() => {
+    if (!drag || drag.active) return
+    const placed = (grid.devices ?? []).find((p) => p.device_id === drag.deviceId)
+    if (!placed || (Math.abs(placed.bottom_left_x_cm - drag.xCm) < 0.001 && Math.abs(placed.bottom_left_y_cm - drag.yCm) < 0.001)) {
+      setDrag(null)
+    }
+  }, [grid.devices, drag])
+
+  const startDrag = (event: React.PointerEvent<HTMLDivElement>, placement: GridPlacement) => {
+    if (saving) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    dragInfo.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      originXCm: placement.bottom_left_x_cm,
+      originYCm: placement.bottom_left_y_cm,
+      // Canvas aspect ratio matches the grid, so one scale serves both axes.
+      cmPerPx: gridW / canvas.getBoundingClientRect().width,
+      xCm: placement.bottom_left_x_cm,
+      yCm: placement.bottom_left_y_cm,
+    }
+    setDrag({ deviceId: placement.device_id, xCm: placement.bottom_left_x_cm, yCm: placement.bottom_left_y_cm, active: true })
+  }
+
+  const moveDrag = (event: React.PointerEvent<HTMLDivElement>, placement: GridPlacement) => {
+    const info = dragInfo.current
+    if (!info || info.pointerId !== event.pointerId) return
+    const dxCm = (event.clientX - info.startClientX) * info.cmPerPx
+    // Pointer moving down the screen (CSS Y grows down) shrinks the API's
+    // bottom-left Y, which grows up — hence the sign flip.
+    const dyCm = (event.clientY - info.startClientY) * info.cmPerPx
+    info.xCm = Math.min(Math.max(info.originXCm + dxCm, 0), Math.max(0, gridW - placement.width_cm))
+    info.yCm = Math.min(Math.max(info.originYCm - dyCm, 0), Math.max(0, gridH - placement.height_cm))
+    setDrag({ deviceId: placement.device_id, xCm: info.xCm, yCm: info.yCm, active: true })
+  }
+
+  const endDrag = async (event: React.PointerEvent<HTMLDivElement>, placement: GridPlacement) => {
+    const info = dragInfo.current
+    if (!info || info.pointerId !== event.pointerId) return
+    dragInfo.current = null
+    const xCm = Math.round(info.xCm * 10) / 10
+    const yCm = Math.round(info.yCm * 10) / 10
+    if (xCm === Math.round(info.originXCm * 10) / 10 && yCm === Math.round(info.originYCm * 10) / 10) {
+      setDrag(null)
+      return
+    }
+    setDrag({ deviceId: placement.device_id, xCm, yCm, active: false })
+    setSaving(true)
+    try {
+      await api.updateDevicePlacement(grid.id, placement.device_id, { bottom_left_x_cm: xCm, bottom_left_y_cm: yCm })
+    } catch (err) {
+      setDrag(null) // revert to the last server-confirmed position
+      notify(`Move failed: ${errMessage(err)}`, 'negative')
+      return
+    } finally {
+      setSaving(false)
+    }
+    notify('Device moved', 'positive')
+    onChanged()
+  }
+
+  const cancelDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const info = dragInfo.current
+    if (!info || info.pointerId !== event.pointerId) return
+    dragInfo.current = null
+    setDrag(null)
+  }
 
   const bgStyle = previewImage
     ? {
@@ -226,27 +323,36 @@ function CanvasPreview({
         )}
       </div>
       <div className="row w-full gap-4 wrap items-start">
-        <div
-          style={{
-            flex: '1 1 480px',
-            maxWidth: 720,
-            aspectRatio: `${gridW} / ${gridH}`,
-            position: 'relative',
-            border: '1px solid var(--ink-border)',
-            borderRadius: 8,
-            overflow: 'hidden',
-            ...bgStyle,
-          }}
-        >
+        <div className="col gap-1" style={{ flex: '1 1 480px', maxWidth: 720 }}>
+          <div
+            ref={canvasRef}
+            style={{
+              width: '100%',
+              aspectRatio: `${gridW} / ${gridH}`,
+              position: 'relative',
+              border: '1px solid var(--ink-border)',
+              borderRadius: 8,
+              overflow: 'hidden',
+              ...bgStyle,
+            }}
+          >
           {placements.map((placement) => {
             const device = deviceById.get(placement.device_id)
             const label = device?.device_id ?? placement.device_id.slice(0, 8)
+            const dragPos = drag && drag.deviceId === placement.device_id ? drag : null
             // API gives bottom-left (Y-up); CSS wants top-left (Y-down).
-            const leftPct = (placement.bottom_left_x_cm / gridW) * 100
-            const topPct = ((gridH - placement.bottom_left_y_cm - placement.height_cm) / gridH) * 100
+            const xCm = dragPos ? dragPos.xCm : placement.bottom_left_x_cm
+            const yCm = dragPos ? dragPos.yCm : placement.bottom_left_y_cm
+            const leftPct = (xCm / gridW) * 100
+            const topPct = ((gridH - yCm - placement.height_cm) / gridH) * 100
             return (
               <div
                 key={placement.device_id}
+                className={`ink-canvas-placement${dragPos?.active ? ' dragging' : ''}${saving ? ' disabled' : ''}`}
+                onPointerDown={(e) => startDrag(e, placement)}
+                onPointerMove={(e) => moveDrag(e, placement)}
+                onPointerUp={(e) => endDrag(e, placement)}
+                onPointerCancel={cancelDrag}
                 style={{
                   position: 'absolute',
                   left: `${leftPct}%`,
@@ -275,6 +381,8 @@ function CanvasPreview({
               </div>
             )
           })}
+          </div>
+          {placements.length > 0 && <span className="ink-small">Drag a panel to reposition it.</span>}
         </div>
         {previewImage && <SourceWithUsedRegion image={previewImage} grid={grid} />}
       </div>
@@ -416,6 +524,7 @@ function Placements({
   const notify = useNotify()
   const [addOpen, setAddOpen] = useState(false)
   const [movePlacement, setMovePlacement] = useState<GridPlacement | null>(null)
+  const [confirmRemove, setConfirmRemove] = useState<GridPlacement | null>(null)
 
   const placements = grid.devices ?? []
   const placedIds = new Set(placements.map((p) => p.device_id))
@@ -424,6 +533,7 @@ function Placements({
   const profileById = new Map(profiles.map((p) => [p.id, p]))
 
   const remove = async (placement: GridPlacement) => {
+    setConfirmRemove(null)
     try {
       await api.removeDeviceFromGrid(grid.id, placement.device_id)
     } catch (err) {
@@ -462,7 +572,7 @@ function Placements({
               <Button flat icon="open_with" onClick={() => setMovePlacement(placement)}>
                 Move
               </Button>
-              <Button flat danger icon="delete" onClick={() => remove(placement)}>
+              <Button flat danger icon="delete" onClick={() => setConfirmRemove(placement)}>
                 Remove
               </Button>
             </div>
@@ -481,6 +591,18 @@ function Placements({
       {movePlacement && (
         <MoveDeviceDialog grid={grid} placement={movePlacement} onClose={() => setMovePlacement(null)} onDone={onChanged} />
       )}
+      <ConfirmDialog
+        open={confirmRemove != null}
+        message={
+          confirmRemove
+            ? `Remove '${deviceById.get(confirmRemove.device_id)?.device_id ?? confirmRemove.device_id.slice(0, 8)}' from this grid? The device returns to solo rotation.`
+            : ''
+        }
+        destructive
+        confirmLabel="Remove"
+        onConfirm={() => confirmRemove && remove(confirmRemove)}
+        onCancel={() => setConfirmRemove(null)}
+      />
     </div>
   )
 }
@@ -618,6 +740,7 @@ function MoveDeviceDialog({
 function ImageActions({
   grid,
   images,
+  poolTotal,
   maxPxcm,
   previewImageId,
   onPreview,
@@ -625,6 +748,7 @@ function ImageActions({
 }: {
   grid: Grid
   images: Image[]
+  poolTotal: number
   maxPxcm: number | null
   previewImageId: string | null
   onPreview: (id: string) => void
@@ -663,6 +787,11 @@ function ImageActions({
           Release devices
         </Button>
       </div>
+      {poolTotal > images.length && (
+        <span className="ink-small">
+          Showing first {images.length} of {poolTotal} images — images beyond this pool are not listed here.
+        </span>
+      )}
       {gridImages.length === 0 && (
         <EmptyNote>No images target this grid. Upload an image and pick this grid as target.</EmptyNote>
       )}

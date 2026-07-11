@@ -2,16 +2,17 @@
 // detection from the decoded image, and a live quality hint vs the target grid.
 
 import { useQuery } from '@tanstack/react-query'
-import { useRef, useState, type DragEvent } from 'react'
+import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { CropDialog } from '../components/CropDialog'
-import { Button, Icon, NumberField, SelectField, Slider, Switch, TextArea, TextField } from '../components/fields'
+import { Button, Icon, SelectField, Switch, TextArea, TextField } from '../components/fields'
 import { useNotify } from '../components/Toast'
 import { PageHeader } from '../components/ui'
 import { api, ApiError } from '../lib/api'
 import type { CroppedResult } from '../lib/crop'
 import { cropText, imageFit, maxDevicePxcm, recommendedDims, resolutionBand } from '../lib/quality'
 import type { Grid } from '../lib/types'
+import { useUnsavedGuard } from '../lib/useUnsavedGuard'
 
 interface SelectedFile {
   file: File
@@ -38,12 +39,16 @@ export function ImageUpload() {
   const [description, setDescription] = useState('')
   const [author, setAuthor] = useState('')
   const [tags, setTags] = useState('')
-  const [duration, setDuration] = useState<number | ''>(600)
-  const [priority, setPriority] = useState(5)
   const [portrait, setPortrait] = useState(false)
   const [targetGrid, setTargetGrid] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [uploaded, setUploaded] = useState(false)
+  // Server-rendered Spectra 6 simulation of the currently selected (possibly
+  // cropped) bytes, so surprises show up before the upload — not on the wall.
+  const [einkPreview, setEinkPreview] = useState(false)
+  const [einkUrl, setEinkUrl] = useState<string | null>(null)
+  const [einkBusy, setEinkBusy] = useState(false)
 
   const pickFile = (file: File) => {
     const previewUrl = URL.createObjectURL(file)
@@ -78,6 +83,37 @@ export function ImageUpload() {
     if (file) pickFile(file)
   }
 
+  // Re-render the e-ink simulation whenever the toggle is on and the file
+  // (or its crop) changes; revoke stale object URLs to avoid leaks.
+  useEffect(() => {
+    if (!einkPreview || !selected) {
+      setEinkUrl(null)
+      return
+    }
+    let cancelled = false
+    setEinkBusy(true)
+    api
+      .einkPreviewUpload(selected.file)
+      .then((blob) => {
+        if (!cancelled) setEinkUrl(URL.createObjectURL(blob))
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setEinkPreview(false)
+          notify('E-ink preview failed — showing the original.', 'warning')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setEinkBusy(false)
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [einkPreview, selected])
+
+  useEffect(() => () => void (einkUrl && URL.revokeObjectURL(einkUrl)), [einkUrl])
+
   const submit = async () => {
     if (!selected) {
       setError('Choose a file first.')
@@ -89,8 +125,6 @@ export function ImageUpload() {
       description: description || null,
       author: author || null,
       tags: tags || null,
-      display_duration_seconds: Number(duration) || 600,
-      priority,
       is_portrait: portrait,
     }
     if (targetGrid) metadata.target_grid_id = targetGrid
@@ -102,9 +136,15 @@ export function ImageUpload() {
       setBusy(false)
       return
     }
+    setUploaded(true)
+    allowLeave()
     notify('Uploaded', 'positive')
     navigate('/images')
   }
+
+  // A picked (and possibly cropped) file is real work worth guarding; the
+  // post-upload navigation must not prompt (allowLeave below).
+  const allowLeave = useUnsavedGuard(selected !== null && !uploaded)
 
   const grid = grids?.find((g) => g.id === targetGrid)
 
@@ -133,10 +173,11 @@ export function ImageUpload() {
           >
             {selected ? (
               <>
-                <img src={selected.previewUrl} alt="Preview" />
+                <img src={einkPreview && einkUrl ? einkUrl : selected.previewUrl} alt="Preview" />
                 <span className="ink-small">
                   {selected.file.name}
                   {selected.width && selected.height ? ` · ${selected.width}x${selected.height} px` : ''}
+                  {einkPreview && einkUrl ? ' · e-ink simulation' : ''}
                 </span>
               </>
             ) : (
@@ -157,7 +198,7 @@ export function ImageUpload() {
             }}
           />
           {selected && (
-            <div className="row gap-2 wrap">
+            <div className="row gap-2 wrap items-center">
               <Button ghost icon="crop" disabled={!selected.width} onClick={() => setCropOpen(true)}>
                 Crop…
               </Button>
@@ -166,6 +207,11 @@ export function ImageUpload() {
                   Reset to original
                 </Button>
               )}
+              <Switch
+                label={einkBusy ? 'E-ink preview (rendering…)' : 'E-ink preview'}
+                checked={einkPreview}
+                onChange={setEinkPreview}
+              />
             </div>
           )}
         </div>
@@ -190,10 +236,6 @@ export function ImageUpload() {
           <div className="ink-form-row w-full">
             <TextField label="Author" value={author} onChange={setAuthor} />
             <TextField label="Tags (comma-separated)" value={tags} onChange={setTags} />
-          </div>
-          <div className="ink-form-row items-end w-full">
-            <NumberField label="Duration (s)" value={duration} onChange={setDuration} min={1} step={1} />
-            <Slider label="Priority" value={priority} onChange={setPriority} min={1} max={10} />
           </div>
           <Switch label="Portrait (for portrait-oriented devices)" checked={portrait} onChange={setPortrait} />
           <SelectField

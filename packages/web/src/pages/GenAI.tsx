@@ -100,7 +100,7 @@ function RecentGenerations() {
         <span className="ink-eyebrow">Status</span>
         <h3 className="ink-h3">Recent generations</h3>
       </div>
-      <span className="ink-small">History covers the current API process — restarts clear it, images are kept.</span>
+      <span className="ink-small">Recent generations, persisted across API restarts (bounded history).</span>
       <div className="col w-full gap-2">
         {tasks.map((task) => {
           const badge = TASK_BADGE[task.status]

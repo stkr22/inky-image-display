@@ -1,14 +1,14 @@
-// App-wide settings: global default refresh interval, guest access.
+// App-wide settings: global default refresh interval, quiet hours, guest access.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Dialog } from '../components/Dialog'
-import { Button, IntervalInputs, totalSeconds } from '../components/fields'
+import { Button, IntervalInputs, Switch, TextField, totalSeconds } from '../components/fields'
 import { useNotify } from '../components/Toast'
 import { ErrorNote, PageHeader, Spinner } from '../components/ui'
 import { api, ApiError } from '../lib/api'
 import { formatDatetime, splitHoursMinutes } from '../lib/format'
-import type { GuestInvite } from '../lib/types'
+import type { AppSettings, GuestInvite } from '../lib/types'
 
 export function Settings() {
   const notify = useNotify()
@@ -65,8 +65,62 @@ export function Settings() {
         </div>
       </div>
 
+      {settings && <QuietHoursCard settings={settings} />}
+
       <GuestAccessCard />
     </>
+  )
+}
+
+// E-paper refreshes flash the panel for ~30 s — unwelcome next to a bed at
+// 3 a.m. During the window automatic rotation pauses; manual pushes and the
+// MOTD's own explicit schedule still work.
+function QuietHoursCard({ settings }: { settings: AppSettings }) {
+  const notify = useNotify()
+  const queryClient = useQueryClient()
+  const [enabled, setEnabled] = useState(settings.quiet_hours.enabled)
+  const [start, setStart] = useState(settings.quiet_hours.start)
+  const [end, setEnd] = useState(settings.quiet_hours.end)
+  const [timezone, setTimezone] = useState(settings.quiet_hours.timezone)
+  const [saving, setSaving] = useState(false)
+
+  const save = async () => {
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(start) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(end)) {
+      notify('Times must be HH:MM (24-hour).', 'warning')
+      return
+    }
+    setSaving(true)
+    try {
+      await api.updateAppSettings({ quiet_hours: { enabled, start, end, timezone } })
+      notify('Quiet hours updated', 'positive')
+      queryClient.invalidateQueries({ queryKey: ['app-settings'] })
+    } catch (err) {
+      notify(`Update failed: ${err instanceof ApiError ? err.detail || err.message : err}`, 'negative')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="ink-card" style={{ maxWidth: 480, padding: 20 }}>
+      <h3 className="ink-h3">Quiet hours</h3>
+      <span className="ink-small">
+        Pause automatic rotation during a daily window (e.g. overnight) so panels don't flash while you sleep. A
+        window ending before it starts spans midnight. Manual pushes and the MOTD schedule are unaffected; overdue
+        devices refresh right after the window ends.
+      </span>
+      <Switch label="Enable quiet hours" checked={enabled} onChange={setEnabled} />
+      <div className="row w-full gap-2">
+        <TextField label="From (HH:MM)" value={start} onChange={setStart} disabled={!enabled} />
+        <TextField label="Until (HH:MM)" value={end} onChange={setEnd} disabled={!enabled} />
+      </div>
+      <TextField label="Timezone (IANA)" value={timezone} onChange={setTimezone} disabled={!enabled} />
+      <div className="row w-full justify-end">
+        <Button primary icon="save" onClick={save} disabled={saving}>
+          Save
+        </Button>
+      </div>
+    </div>
   )
 }
 

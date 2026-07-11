@@ -4,13 +4,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, Dialog } from '../components/Dialog'
-import { Button, Expansion, NumberField, Slider, TextArea, TextField } from '../components/fields'
+import { Button, Expansion, NumberField, Switch, TextArea, TextField } from '../components/fields'
 import { useNotify } from '../components/Toast'
 import { Badge, ErrorNote, PageHeader, Spinner } from '../components/ui'
 import { api, ApiError, DeviceNotConnectedError } from '../lib/api'
 import { formatDatetime } from '../lib/format'
 import { maxDevicePxcm, recommendedDims } from '../lib/quality'
-import { imageTitle, mediaUrl, type Device, type Grid, type Image } from '../lib/types'
+import { einkPreviewUrl, imageTitle, mediaUrl, type Device, type DeviceProfile, type Grid, type Image } from '../lib/types'
+import { useUnsavedGuard } from '../lib/useUnsavedGuard'
 
 export function ImageDetail() {
   const { imageId } = useParams<{ imageId: string }>()
@@ -28,10 +29,14 @@ export function ImageDetail() {
   const [description, setDescription] = useState('')
   const [author, setAuthor] = useState('')
   const [tags, setTags] = useState('')
-  const [duration, setDuration] = useState<number | ''>(600)
-  const [priority, setPriority] = useState(5)
+  // Per-image hold: null on the wire means "rotate on the device interval".
+  const [holdEnabled, setHoldEnabled] = useState(false)
+  const [duration, setDuration] = useState<number | ''>(3600)
+  const [excluded, setExcluded] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [sendOpen, setSendOpen] = useState(false)
+  // Toggle between the plain photo and the server-side Spectra 6 simulation.
+  const [einkPreview, setEinkPreview] = useState(false)
 
   useEffect(() => {
     if (!image) return
@@ -39,24 +44,29 @@ export function ImageDetail() {
     setDescription(image.description ?? '')
     setAuthor(image.author ?? '')
     setTags(image.tags ?? '')
-    setDuration(image.display_duration_seconds ?? 600)
-    setPriority(image.priority ?? 5)
+    setHoldEnabled(image.display_duration_seconds != null)
+    setDuration(image.display_duration_seconds ?? 3600)
+    setExcluded(image.excluded_from_rotation)
   }, [image])
 
   const saveMutation = useMutation({
-    mutationFn: () =>
-      api.updateImage(imageId!, {
+    mutationFn: () => {
+      if (holdEnabled && (Number(duration) || 0) < 1) {
+        return Promise.reject(new ApiError(0, 'Hold time must be at least 1 second.'))
+      }
+      return api.updateImage(imageId!, {
         title: title || null,
         description: description || null,
         author: author || null,
         tags: tags || null,
-        display_duration_seconds: Number(duration) || 600,
-        priority,
-      }),
+        display_duration_seconds: holdEnabled ? Number(duration) : null,
+        excluded_from_rotation: excluded,
+      })
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['images'] })
+      queryClient.invalidateQueries({ queryKey: ['image', imageId] })
       notify('Saved', 'positive')
-      navigate('/images')
     },
     onError: (err) => notify(`Update failed: ${err instanceof ApiError ? err.detail || err.message : err}`, 'negative'),
   })
@@ -64,12 +74,26 @@ export function ImageDetail() {
   const deleteMutation = useMutation({
     mutationFn: () => api.deleteImage(imageId!),
     onSuccess: () => {
+      // Deleting intentionally discards edits — don't prompt on the redirect.
+      allowLeave()
       queryClient.invalidateQueries({ queryKey: ['images'] })
       notify('Deleted', 'positive')
       navigate('/images')
     },
     onError: (err) => notify(`Delete failed: ${err instanceof ApiError ? err.detail || err.message : err}`, 'negative'),
   })
+
+  // Dirty vs the loaded record.
+  const dirty =
+    Boolean(image) &&
+    (title !== (image?.title ?? '') ||
+      description !== (image?.description ?? '') ||
+      author !== (image?.author ?? '') ||
+      tags !== (image?.tags ?? '') ||
+      excluded !== (image?.excluded_from_rotation ?? false) ||
+      holdEnabled !== (image?.display_duration_seconds != null) ||
+      (holdEnabled && Number(duration) !== image?.display_duration_seconds))
+  const allowLeave = useUnsavedGuard(dirty)
 
   if (isPending) return <Spinner />
   if (error || !image) return <ErrorNote>Could not load image.</ErrorNote>
@@ -81,16 +105,25 @@ export function ImageDetail() {
           <span className="material-icons">arrow_back</span>
         </Link>
         <PageHeader eyebrow="Image" title={imageTitle(image)} />
+        {image.excluded_from_rotation && <Badge tone="muted">Excluded from rotation</Badge>}
       </div>
 
       <div className="row w-full gap-5 wrap items-start">
         <div className="bento-tile flex-1" style={{ padding: 16, minWidth: 280 }}>
           <img
-            src={mediaUrl(image.storage_path)}
+            src={einkPreview ? einkPreviewUrl(image.id) : mediaUrl(image.storage_path)}
             alt={imageTitle(image)}
             loading="lazy"
             style={{ width: '100%', maxHeight: '72vh', objectFit: 'contain', borderRadius: 12, background: 'var(--ink-field-bg)' }}
           />
+          <div className="row w-full items-center justify-between wrap gap-2">
+            <Switch label="E-ink preview" checked={einkPreview} onChange={setEinkPreview} />
+            {einkPreview && (
+              <span className="ink-small" style={{ opacity: 0.7 }}>
+                Simulated Spectra 6 rendering — the same six-ink dither the panel applies.
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="bento-tile" style={{ padding: 20, width: '100%', maxWidth: 420 }}>
@@ -100,10 +133,22 @@ export function ImageDetail() {
             <TextArea label="Description" value={description} onChange={setDescription} rows={3} />
             <TextField label="Author" value={author} onChange={setAuthor} />
             <TextField label="Tags (comma-separated)" value={tags} onChange={setTags} />
-            <div className="ink-form-row items-end w-full">
-              <NumberField label="Duration (s)" value={duration} onChange={setDuration} min={1} step={1} />
-              <Slider label="Priority" value={priority} onChange={setPriority} min={1} max={10} />
-            </div>
+            <Switch label="Hold on screen for a custom time" checked={holdEnabled} onChange={setHoldEnabled} />
+            {holdEnabled && (
+              <>
+                <NumberField label="Hold time (s)" value={duration} onChange={setDuration} min={1} step={1} />
+                <span className="ink-small" style={{ opacity: 0.7 }}>
+                  Once shown, this image stays up this long before the device rotates — overriding the device
+                  interval for this image only.
+                </span>
+              </>
+            )}
+            <Switch label="Exclude from rotation" checked={excluded} onChange={setExcluded} />
+            {excluded && (
+              <span className="ink-small" style={{ opacity: 0.7 }}>
+                Never picked automatically (solo or grid). Manual sends still work.
+              </span>
+            )}
             <Expansion title="Metadata">
               <Metadata image={image} />
             </Expansion>
@@ -113,7 +158,7 @@ export function ImageDetail() {
 
       <div className="ink-action-bar">
         <Button flat onClick={() => navigate('/images')}>
-          Cancel
+          Back
         </Button>
         <Button flat danger icon="delete" onClick={() => setConfirmDelete(true)}>
           Delete
@@ -190,9 +235,12 @@ function Metadata({ image }: { image: Image }) {
   )
 }
 
-// Pick a compatible device or grid and dispatch this image to it. Devices
-// require an exact dimension match because e-ink panels can't rescale; grids
-// cover-crop anything that meets the densest member device's recommendation.
+// Pick a device or grid and dispatch this image to it. Exact-size matches
+// send as-is; other devices are offered with a "cropped to fit" note and the
+// API cover-crops a derived copy server-side (fit=auto) — previously those
+// devices were silently hidden, which read as "no compatible devices" with
+// no explanation. Grids cover-crop anything that meets the densest member
+// device's recommendation.
 function SendDialog({ image, onClose }: { image: Image; onClose: () => void }) {
   const notify = useNotify()
   const { data: devices } = useQuery({ queryKey: ['devices'], queryFn: api.listDevices })
@@ -203,13 +251,15 @@ function SendDialog({ image, onClose }: { image: Image; onClose: () => void }) {
   const imgH = image.original_height
   const profileById = new Map((profiles ?? []).map((p) => [p.id, p]))
 
-  const compatibleDevices = (imgW && imgH ? (devices ?? []) : []).filter((device) => {
+  const isExactMatch = (device: Device): boolean => {
     const profile = profileById.get(device.device_profile_id)
-    if (!profile) return false
+    if (!profile || !imgW || !imgH) return false
     const [targetW, targetH] =
       device.display_orientation === 'portrait' ? [profile.height, profile.width] : [profile.width, profile.height]
     return targetW === imgW && targetH === imgH
-  })
+  }
+
+  const allDevices = imgW && imgH ? (devices ?? []) : []
 
   const compatibleGrids = (imgW && imgH ? (grids ?? []) : []).filter((grid) => {
     const maxPxcm = maxDevicePxcm(grid, devices ?? [], profiles ?? [])
@@ -218,9 +268,9 @@ function SendDialog({ image, onClose }: { image: Image; onClose: () => void }) {
     return imgW! >= rec.w && imgH! >= rec.h
   })
 
-  const sendToDevice = async (device: Device) => {
+  const sendToDevice = async (device: Device, exact: boolean) => {
     try {
-      await api.displayImage(device.device_id, image.id)
+      await api.displayImage(device.device_id, image.id, exact ? 'exact' : 'auto')
     } catch (err) {
       if (err instanceof DeviceNotConnectedError) {
         notify(`${device.device_id} is offline — command dropped`, 'warning')
@@ -229,7 +279,7 @@ function SendDialog({ image, onClose }: { image: Image; onClose: () => void }) {
       }
       return
     }
-    notify(`Sent to ${device.device_id}`, 'positive')
+    notify(exact ? `Sent to ${device.device_id}` : `Cropped to fit and sent to ${device.device_id}`, 'positive')
     onClose()
   }
 
@@ -254,37 +304,29 @@ function SendDialog({ image, onClose }: { image: Image; onClose: () => void }) {
         </span>
       </div>
 
-      {compatibleDevices.length === 0 && compatibleGrids.length === 0 && (
-        <span className="ink-small">No compatible devices or grids for this image.</span>
+      {allDevices.length === 0 && compatibleGrids.length === 0 && (
+        <span className="ink-small">No devices or grids available for this image.</span>
       )}
 
-      {compatibleDevices.length > 0 && (
+      {allDevices.length > 0 && (
         <>
           <span className="ink-eyebrow" style={{ marginTop: 8 }}>
             Devices
           </span>
           <div className="w-full gap-2" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
-            {compatibleDevices.map((device) => (
-              <div
-                key={device.id}
-                className="ink-device-card"
-                style={{ padding: 12, opacity: device.is_online ? 1 : 0.55, cursor: device.is_online ? 'pointer' : 'default' }}
-                onClick={device.is_online ? () => sendToDevice(device) : undefined}
-              >
-                <div className="row items-center justify-between gap-2">
-                  <span className="truncate" style={{ fontSize: 14, fontWeight: 500, minWidth: 0 }}>{device.device_id}</span>
-                  <Badge tone={device.is_online ? 'ok' : 'muted'}>{device.is_online ? 'Online' : 'Offline'}</Badge>
-                </div>
-                <span className="ink-small">{device.room || '—'}</span>
-                {/* This device's last refresh failed and auto-rotation is paused
-                    for it — warn before the operator deliberately sends here. */}
-                {device.last_refresh_ok === false && (
-                  <div className="row" style={{ marginTop: 4 }}>
-                    <Badge tone="warn">Refresh failed</Badge>
-                  </div>
-                )}
-              </div>
-            ))}
+            {allDevices.map((device) => {
+              const exact = isExactMatch(device)
+              const profile = profileById.get(device.device_profile_id)
+              return (
+                <DeviceSendCard
+                  key={device.id}
+                  device={device}
+                  profile={profile}
+                  exact={exact}
+                  onSend={() => sendToDevice(device, exact)}
+                />
+              )
+            })}
           </div>
         </>
       )}
@@ -313,5 +355,48 @@ function SendDialog({ image, onClose }: { image: Image; onClose: () => void }) {
         </Button>
       </div>
     </Dialog>
+  )
+}
+
+function DeviceSendCard({
+  device,
+  profile,
+  exact,
+  onSend,
+}: {
+  device: Device
+  profile: DeviceProfile | undefined
+  exact: boolean
+  onSend: () => void
+}) {
+  return (
+    <div
+      className="ink-device-card"
+      style={{ padding: 12, opacity: device.is_online ? 1 : 0.55, cursor: device.is_online ? 'pointer' : 'default' }}
+      onClick={device.is_online ? onSend : undefined}
+    >
+      <div className="row items-center justify-between gap-2">
+        <span className="truncate" style={{ fontSize: 14, fontWeight: 500, minWidth: 0 }}>{device.device_id}</span>
+        <Badge tone={device.is_online ? 'ok' : 'muted'}>{device.is_online ? 'Online' : 'Offline'}</Badge>
+      </div>
+      <span className="ink-small">{device.room || '—'}</span>
+      {!exact && profile && (
+        <span className="ink-small" style={{ opacity: 0.8 }}>
+          Will be cover-cropped to {profile.width}x{profile.height}
+        </span>
+      )}
+      {/* This device's last refresh failed and auto-rotation is paused
+          for it — warn before the operator deliberately sends here. */}
+      {device.refresh_state === 'failed_retrying' && (
+        <div className="row" style={{ marginTop: 4 }}>
+          <Badge tone="warn">Refresh failed — retrying</Badge>
+        </div>
+      )}
+      {device.refresh_state === 'failed_stale' && (
+        <div className="row" style={{ marginTop: 4 }}>
+          <Badge tone="danger">Refresh failing — check power</Badge>
+        </div>
+      )}
+    </div>
   )
 }
