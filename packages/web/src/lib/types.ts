@@ -87,6 +87,10 @@ export interface SyncJob {
   album_ids: string[] | null
   person_ids: string[] | null
   tag_ids: string[] | null
+  // 'all' = photo must match every selected id (Immich's native AND);
+  // 'any' = the sync worker unions one query per id (OR).
+  album_match_mode: 'all' | 'any'
+  person_match_mode: 'all' | 'any'
   is_favorite: boolean | null
   city: string | null
   state: string | null

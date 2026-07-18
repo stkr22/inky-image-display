@@ -207,21 +207,27 @@ Sync jobs are stored in the `immich_sync_jobs` table and managed via the API (`/
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `album_ids` | list[str] | Album UUIDs — intersection (asset must be in **all** listed albums) |
-| `person_ids` | list[str] | Person UUIDs — intersection (asset must show **all** listed people) |
-| `tag_ids` | list[str] | Tag UUIDs — union (asset matches if it has **any** listed tag) |
+| `album_ids` | list[str] | Album UUIDs — combined per `album_match_mode` |
+| `person_ids` | list[str] | Person UUIDs — combined per `person_match_mode` |
+| `tag_ids` | list[str] | Tag UUIDs — `RANDOM` jobs match **any** listed tag, `SMART` jobs require **all** |
+| `album_match_mode` | `all` \| `any` | `all` (default): asset must be in **every** listed album. `any`: asset may be in **any** of them. |
+| `person_match_mode` | `all` \| `any` | `all` (default): asset must show **every** listed person (together). `any`: asset may show **any** of them. |
 | `is_favorite` | bool | Favorites only |
 | `city`, `state`, `country` | str | Location filters |
 | `taken_after`, `taken_before` | datetime | Date range |
 | `rating` | int | Minimum Immich rating (0–5) |
 
-> **Multi-tag semantics:** Immich's search endpoints intersect multiple `tagIds`
-> (an asset would need *every* tag at once). To match the intuitive "photos from
-> any of these tags", the `RANDOM` strategy issues one query per tag and unions
-> the results (then shuffles). `album_ids` and `person_ids` keep Immich's native
-> intersection behavior. The `RANDOM` strategy uses Immich's `/search/random`
-> endpoint, which orders the whole filtered set randomly — so picks vary across
-> the entire album, not just recent photos. `overfetch_multiplier × count` sizes
+> **Multi-value semantics:** Immich's search endpoints intersect every
+> multi-value id filter (an asset would need *every* tag/album/person at once).
+> The worker emulates the union (`any`) modes by issuing one query per filter
+> combination — e.g. `any` of 2 albums × `any` of 2 people = 4 single-id
+> queries — and deduping the merged results. `RANDOM` jobs always union tags
+> this way and shuffle the merged pool; `SMART` jobs keep native intersection
+> for tags and merge per-combination results rank-fairly (round-robin by
+> relevance). Fields left in `all` mode keep Immich's native intersection in a
+> single query. The `RANDOM` strategy uses Immich's `/search/random` endpoint,
+> which orders the whole filtered set randomly — so picks vary across the
+> entire album, not just recent photos. `overfetch_multiplier × count` sizes
 > each query (capped at Immich's maximum of 1000) so client-side orientation/size
 > filters still leave enough candidates.
 

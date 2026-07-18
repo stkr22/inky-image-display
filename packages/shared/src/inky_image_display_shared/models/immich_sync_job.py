@@ -43,6 +43,8 @@ class ImmichSyncJob(SQLModel, table=True):
         album_ids: Filter by album UUIDs
         person_ids: Filter by recognized person UUIDs
         tag_ids: Filter by tag UUIDs
+        album_match_mode: 'all' = photo must be in every album, 'any' = in at least one
+        person_match_mode: 'all' = photo must show every person, 'any' = at least one
         is_favorite: Filter favorites only
         city: Filter by city name
         state: Filter by state/region
@@ -101,6 +103,16 @@ class ImmichSyncJob(SQLModel, table=True):
     album_ids: list[str] | None = Field(default=None, sa_column=Column(JSON))
     person_ids: list[str] | None = Field(default=None, sa_column=Column(JSON))
     tag_ids: list[str] | None = Field(default=None, sa_column=Column(JSON))
+    # Immich's search API intersects multi-value id filters (AND); 'any' makes
+    # the sync worker emulate OR by unioning one query per id.
+    album_match_mode: str = Field(
+        default="all",
+        description="How multiple album_ids combine: 'all' (every album) or 'any' (at least one)",
+    )
+    person_match_mode: str = Field(
+        default="all",
+        description="How multiple person_ids combine: 'all' (every person) or 'any' (at least one)",
+    )
     is_favorite: bool | None = Field(default=None, description="Filter favorites only")
     city: str | None = Field(default=None, description="Filter by city")
     state: str | None = Field(default=None, description="Filter by state/region")
