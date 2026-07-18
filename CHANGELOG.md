@@ -1,5 +1,19 @@
 # Changelog
 
+## [5.11.0](https://github.com/stkr22/inky-image-display/compare/v5.10.0...v5.11.0) (2026-07-18)
+
+
+### Features
+
+* **sync:** selectable AND/OR matching for album and person filters ([ef82f50](https://github.com/stkr22/inky-image-display/commit/ef82f50b2b315360e8de2573e1de209ae77517cc))
+* **sync:** selectable AND/OR matching for album and person filters ([0c4499a](https://github.com/stkr22/inky-image-display/commit/0c4499ad68fb8ff5c106130851bec3835cd77c52))
+* **web:** surface Immich lookup failures and explain sync-job options ([ba200f1](https://github.com/stkr22/inky-image-display/commit/ba200f1c8733e54cef6caf28e419b77c440085ff))
+
+
+### Bug Fixes
+
+* **api:** stagger rotation rejoin after MOTD release ([49d3055](https://github.com/stkr22/inky-image-display/commit/49d305588beee5114b85f226c08cdd6c59478efd))
+
 ## [5.10.0](https://github.com/stkr22/inky-image-display/compare/v5.9.3...v5.10.0) (2026-07-11)
 
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.7.0](https://github.com/stkr22/inky-image-display/compare/shared-v4.6.0...shared-v4.7.0) (2026-07-18)
+
+
+### Features
+
+* **sync:** selectable AND/OR matching for album and person filters ([ef82f50](https://github.com/stkr22/inky-image-display/commit/ef82f50b2b315360e8de2573e1de209ae77517cc))
+* **sync:** selectable AND/OR matching for album and person filters ([0c4499a](https://github.com/stkr22/inky-image-display/commit/0c4499ad68fb8ff5c106130851bec3835cd77c52))
+
 ## [4.6.0](https://github.com/stkr22/inky-image-display/compare/shared-v4.5.1...shared-v4.6.0) (2026-07-11)
 
 
