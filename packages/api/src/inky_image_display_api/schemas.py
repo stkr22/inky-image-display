@@ -211,6 +211,8 @@ class SyncJobCreate(BaseModel):
     album_ids: list[str] | None = None
     person_ids: list[str] | None = None
     tag_ids: list[str] | None = None
+    album_match_mode: Literal["all", "any"] = "all"
+    person_match_mode: Literal["all", "any"] = "all"
     is_favorite: bool | None = None
     city: str | None = None
     state: str | None = None
@@ -236,6 +238,8 @@ class SyncJobUpdate(BaseModel):
     album_ids: list[str] | None = None
     person_ids: list[str] | None = None
     tag_ids: list[str] | None = None
+    album_match_mode: Literal["all", "any"] | None = None
+    person_match_mode: Literal["all", "any"] | None = None
     is_favorite: bool | None = None
     city: str | None = None
     state: str | None = None

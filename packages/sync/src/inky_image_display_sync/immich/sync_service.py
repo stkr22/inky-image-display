@@ -17,7 +17,7 @@ from inky_image_display_sync.immich.api_client import (
     ImmichDisplayAPIClient,
     SyncJobItem,
 )
-from inky_image_display_sync.immich.client import ImmichClient
+from inky_image_display_sync.immich.client import ImmichClient, SearchFilterCombo
 from inky_image_display_sync.immich.config import (
     DeviceRequirements,
     ImmichConnectionConfig,
@@ -298,7 +298,7 @@ class ImmichSyncService:
 
         try:
             if job.strategy == "SMART":
-                assets = await self.immich.search_smart(job, count_override=fetch_count)
+                assets = await self._fetch_smart_pool(job, fetch_count)
                 if job.random_pick and len(assets) > job.count:
                     assets = random.sample(assets, job.count)
                     self.logger.info("Randomly picked %d assets from smart search results", len(assets))
@@ -565,35 +565,104 @@ class ImmichSyncService:
             tags.extend(person.name for person in people if person.name)
         return ",".join(tags) if tags else None
 
+    @staticmethod
+    def _id_variants(ids: list[str] | None, mode: str) -> list[list[str] | None]:
+        """Expand one id filter into the per-query values that realize its mode.
+
+        'all' keeps the whole list in a single query (Immich's native AND);
+        'any' yields one single-id list per id so the caller can union the
+        per-query results into OR semantics.
+        """
+        if not ids:
+            return [None]
+        if mode == "any" and len(ids) > 1:
+            return [[single] for single in ids]
+        return [ids]
+
+    def _filter_combos(self, job: SyncJobItem, *, tags_any: bool) -> list[SearchFilterCombo]:
+        """Cartesian product of per-field query values for a job.
+
+        Fields in 'any' mode contribute one variant per id; 'all' fields
+        contribute their full list once. Querying every combination and
+        unioning the results yields (any-of-albums) AND (any-of-persons):
+        exactly the per-field OR with AND between fields. Tags have no
+        stored mode — RANDOM jobs union them (``tags_any``), SMART keeps AND.
+        """
+        album_variants = self._id_variants(job.album_ids, job.album_match_mode)
+        person_variants = self._id_variants(job.person_ids, job.person_match_mode)
+        tag_variants = self._id_variants(job.tag_ids, "any" if tags_any else "all")
+        return [
+            SearchFilterCombo(album_ids=albums, person_ids=persons, tag_ids=tags)
+            for albums in album_variants
+            for persons in person_variants
+            for tags in tag_variants
+        ]
+
     async def _fetch_random_pool(self, job: SyncJobItem, fetch_count: int) -> list[ImmichAsset]:
         """Build a candidate pool for a RANDOM job via Immich's /search/random.
 
-        ANY-tag (union) semantics: Immich has no OR-on-tags (multiple tagIds are
-        intersected), so when more than one tag is configured we issue one random
-        query per tag (each carrying album_ids + person_ids + scalar filters +
-        that single tag) and union the results, deduped by asset id. With zero or
-        one tag a single query already samples uniformly across the whole album.
-
-        Note: ``album_ids`` and ``person_ids`` keep Immich's native AND
-        (intersection) semantics — only tags are unioned.
+        Immich intersects every multi-value id filter (AND), so union (OR)
+        semantics are emulated by issuing one random query per filter
+        combination and deduping by asset id: tags always union for RANDOM
+        jobs (ANY-tag), albums/persons union when their match mode is 'any'.
+        A single combination already samples uniformly in one query.
         """
-        tag_ids = job.tag_ids or []
+        combos = self._filter_combos(job, tags_any=True)
 
-        if len(tag_ids) <= 1:
-            return await self.immich.search_random(job, count_override=fetch_count)
+        if len(combos) == 1:
+            return await self.immich.search_random(job, count_override=fetch_count, combo=combos[0])
 
         seen: dict[str, ImmichAsset] = {}
-        for tag_id in tag_ids:
-            assets = await self.immich.search_random(job, count_override=fetch_count, tag_id_override=tag_id)
+        for combo in combos:
+            assets = await self.immich.search_random(job, count_override=fetch_count, combo=combo)
             for asset in assets:
                 seen.setdefault(asset.id, asset)  # dedupe by stable asset id
 
         pool = list(seen.values())
-        # Each per-tag result is random, but the concatenation groups by tag;
-        # shuffle so downstream truncation to job.count draws fairly across tags.
+        # Each per-combo result is random, but the concatenation groups by
+        # combo; shuffle so downstream truncation to job.count draws fairly.
         random.shuffle(pool)
-        self.logger.info("Union over %d tags produced %d unique candidates", len(tag_ids), len(pool))
+        self.logger.info("Union over %d filter combinations produced %d unique candidates", len(combos), len(pool))
         return pool
+
+    async def _fetch_smart_pool(self, job: SyncJobItem, fetch_count: int) -> list[ImmichAsset]:
+        """Build a candidate pool for a SMART job via Immich's /search/smart.
+
+        Same union trick as :meth:`_fetch_random_pool` when album/person match
+        mode is 'any', except results are rank-ordered: per-combo results are
+        merged round-robin by rank (so truncation keeps each combination's top
+        matches), deduped, capped at ``fetch_count``, and enriched once at the
+        end — enriching before the cap would fetch details for assets that get
+        dropped. Tags keep Immich's native AND for SMART jobs.
+        """
+        combos = self._filter_combos(job, tags_any=False)
+
+        if len(combos) == 1:
+            return await self.immich.search_smart(job, count_override=fetch_count, combo=combos[0])
+
+        per_combo: list[list[ImmichAsset]] = []
+        for combo in combos:
+            assets = await self.immich.search_smart(
+                job, count_override=fetch_count, enrich_with_people=False, combo=combo
+            )
+            per_combo.append(assets)
+
+        seen: set[str] = set()
+        merged: list[ImmichAsset] = []
+        for rank in range(max(len(results) for results in per_combo)):
+            for results in per_combo:
+                if rank < len(results) and results[rank].id not in seen:
+                    seen.add(results[rank].id)
+                    merged.append(results[rank])
+
+        pool = merged[:fetch_count]
+        self.logger.info(
+            "Union over %d filter combinations produced %d unique candidates (kept %d)",
+            len(combos),
+            len(merged),
+            len(pool),
+        )
+        return await self.immich.enrich_assets(pool)
 
     def _filter_assets(
         self,

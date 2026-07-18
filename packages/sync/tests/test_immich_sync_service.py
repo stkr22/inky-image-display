@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 from inky_image_display_sync.api_client import DeviceItem, DeviceProfileItem, ImageItem, ImageTooSmallError
 from inky_image_display_sync.immich.api_client import ImmichDisplayAPIClient, SyncJobItem
+from inky_image_display_sync.immich.client import SearchFilterCombo
 from inky_image_display_sync.immich.config import DeviceRequirements, ImmichSyncConfig, S3WriterConfig
 from inky_image_display_sync.immich.models import ImmichAsset, ImmichExifInfo
 from inky_image_display_sync.immich.sync_service import (
@@ -506,36 +507,34 @@ class TestProcessAssetCallsApiForResize:
         service.storage.upload_from_bytes.assert_not_called()  # ty: ignore[unresolved-attribute]
 
 
-def _make_random_job(
-    count: int = 10,
-    overfetch_multiplier: int = 3,
-    tag_ids: list[str] | None = None,
-    strategy: str = "RANDOM",
-    query: str | None = None,
-) -> SyncJobItem:
-    return SyncJobItem(
-        id=uuid4(),
-        name="test-job",
-        is_active=True,
-        target_device_profile_id=uuid4(),
-        orientation=None,
-        strategy=strategy,
-        query=query,
-        count=count,
-        max_images=10,
-        random_pick=False,
-        overfetch_multiplier=overfetch_multiplier,
-        album_ids=None,
-        person_ids=None,
-        tag_ids=tag_ids,
-        is_favorite=None,
-        city=None,
-        state=None,
-        country=None,
-        taken_after=None,
-        taken_before=None,
-        rating=None,
-    )
+def _make_random_job(**overrides: object) -> SyncJobItem:
+    fields: dict[str, object] = {
+        "id": uuid4(),
+        "name": "test-job",
+        "is_active": True,
+        "target_device_profile_id": uuid4(),
+        "orientation": None,
+        "strategy": "RANDOM",
+        "query": None,
+        "count": 10,
+        "max_images": 10,
+        "random_pick": False,
+        "overfetch_multiplier": 3,
+        "album_ids": None,
+        "person_ids": None,
+        "tag_ids": None,
+        "album_match_mode": "all",
+        "person_match_mode": "all",
+        "is_favorite": None,
+        "city": None,
+        "state": None,
+        "country": None,
+        "taken_after": None,
+        "taken_before": None,
+        "rating": None,
+    }
+    fields.update(overrides)
+    return SyncJobItem.model_validate(fields)
 
 
 def _make_landscape_asset(asset_id: str) -> ImmichAsset:
@@ -552,7 +551,7 @@ def _make_landscape_asset(asset_id: str) -> ImmichAsset:
 
 
 class TestFetchRandomPool:
-    """``_fetch_random_pool`` builds the candidate pool with ANY-tag union."""
+    """``_fetch_random_pool`` builds the candidate pool with per-combo union."""
 
     @pytest.mark.asyncio
     async def test_no_tags_single_query(self) -> None:
@@ -565,7 +564,8 @@ class TestFetchRandomPool:
 
         assert result == assets
         service.immich.search_random.assert_awaited_once()
-        assert "tag_id_override" not in service.immich.search_random.call_args.kwargs
+        combo = service.immich.search_random.call_args.kwargs["combo"]
+        assert combo == SearchFilterCombo(album_ids=None, person_ids=None, tag_ids=None)
 
     @pytest.mark.asyncio
     async def test_single_tag_single_query(self) -> None:
@@ -576,7 +576,7 @@ class TestFetchRandomPool:
         await service._fetch_random_pool(_make_random_job(tag_ids=["t1"]), fetch_count=30)
 
         service.immich.search_random.assert_awaited_once()
-        assert "tag_id_override" not in service.immich.search_random.call_args.kwargs
+        assert service.immich.search_random.call_args.kwargs["combo"].tag_ids == ["t1"]
 
     @pytest.mark.asyncio
     async def test_multi_tag_union_dedupes(self) -> None:
@@ -591,8 +591,66 @@ class TestFetchRandomPool:
         # Set membership — order is shuffled, so never assert list order.
         assert {a.id for a in result} == {"a1", "a2", "a3"}
         assert service.immich.search_random.await_count == 2
-        overrides = {c.kwargs["tag_id_override"] for c in service.immich.search_random.call_args_list}
-        assert overrides == {"t1", "t2"}
+        overrides = {tuple(c.kwargs["combo"].tag_ids) for c in service.immich.search_random.call_args_list}
+        assert overrides == {("t1",), ("t2",)}
+
+    @pytest.mark.asyncio
+    async def test_albums_all_mode_single_query(self) -> None:
+        service = _make_service()
+        service.immich = AsyncMock()
+        service.immich.search_random.return_value = [_make_landscape_asset("a1")]
+
+        await service._fetch_random_pool(_make_random_job(album_ids=["al1", "al2"]), fetch_count=30)
+
+        # 'all' keeps Immich's native intersection: one query, full list.
+        service.immich.search_random.assert_awaited_once()
+        assert service.immich.search_random.call_args.kwargs["combo"].album_ids == ["al1", "al2"]
+
+    @pytest.mark.asyncio
+    async def test_albums_any_mode_unions_per_album(self) -> None:
+        service = _make_service()
+        service.immich = AsyncMock()
+        a1, a2 = _make_landscape_asset("a1"), _make_landscape_asset("a2")
+        service.immich.search_random.side_effect = [[a1], [a1, a2]]
+
+        result = await service._fetch_random_pool(
+            _make_random_job(album_ids=["al1", "al2"], album_match_mode="any"), fetch_count=30
+        )
+
+        assert {a.id for a in result} == {"a1", "a2"}
+        assert service.immich.search_random.await_count == 2
+        albums = {tuple(c.kwargs["combo"].album_ids) for c in service.immich.search_random.call_args_list}
+        assert albums == {("al1",), ("al2",)}
+
+    @pytest.mark.asyncio
+    async def test_any_modes_cartesian_across_fields(self) -> None:
+        service = _make_service()
+        service.immich = AsyncMock()
+        service.immich.search_random.return_value = [_make_landscape_asset("a1")]
+
+        await service._fetch_random_pool(
+            _make_random_job(
+                album_ids=["al1", "al2"],
+                person_ids=["p1", "p2"],
+                album_match_mode="any",
+                person_match_mode="any",
+            ),
+            fetch_count=30,
+        )
+
+        # (any of 2 albums) x (any of 2 persons) = 4 single-id queries whose
+        # union is exactly per-field OR with AND between the fields.
+        assert service.immich.search_random.await_count == 4
+        combos = {
+            (tuple(c.kwargs["combo"].album_ids), tuple(c.kwargs["combo"].person_ids))
+            for c in service.immich.search_random.call_args_list
+        }
+        assert combos == {
+            (("al1",), ("p1",)),
+            (("al1",), ("p2",)),
+            (("al2",), ("p1",)),
+            (("al2",), ("p2",)),
+        }
 
     @pytest.mark.asyncio
     async def test_multi_tag_shuffled_single_tag_not(self) -> None:
@@ -607,6 +665,73 @@ class TestFetchRandomPool:
             service.immich.search_random.side_effect = [[_make_landscape_asset("a1")], [_make_landscape_asset("a2")]]
             await service._fetch_random_pool(_make_random_job(tag_ids=["t1", "t2"]), fetch_count=30)
             shuffle_mock.assert_called_once()  # multi-tag union mixed before truncation
+
+
+class TestFetchSmartPool:
+    """``_fetch_smart_pool`` mirrors the union trick with rank-fair merging."""
+
+    @pytest.mark.asyncio
+    async def test_single_combo_delegates_with_enrichment(self) -> None:
+        service = _make_service()
+        service.immich = AsyncMock()
+        assets = [_make_landscape_asset("a1")]
+        service.immich.search_smart.return_value = assets
+
+        job = _make_random_job(strategy="SMART", query="beach", album_ids=["al1", "al2"])
+        result = await service._fetch_smart_pool(job, fetch_count=30)
+
+        assert result == assets
+        # One combination: the plain search_smart path (with its built-in
+        # enrichment) is used, no separate enrich_assets pass.
+        service.immich.search_smart.assert_awaited_once()
+        assert "enrich_with_people" not in service.immich.search_smart.call_args.kwargs
+        service.immich.enrich_assets.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_multi_tag_smart_keeps_and_semantics(self) -> None:
+        service = _make_service()
+        service.immich = AsyncMock()
+        service.immich.search_smart.return_value = [_make_landscape_asset("a1")]
+
+        await service._fetch_smart_pool(
+            _make_random_job(strategy="SMART", query="beach", tag_ids=["t1", "t2"]), fetch_count=30
+        )
+
+        service.immich.search_smart.assert_awaited_once()
+        assert service.immich.search_smart.call_args.kwargs["combo"].tag_ids == ["t1", "t2"]
+
+    @pytest.mark.asyncio
+    async def test_any_mode_merges_rank_fair_and_enriches_once(self) -> None:
+        service = _make_service()
+        service.immich = AsyncMock()
+        a1, a2, a3 = (_make_landscape_asset("a1"), _make_landscape_asset("a2"), _make_landscape_asset("a3"))
+        # a1 is the top match of both combos and must be deduped.
+        service.immich.search_smart.side_effect = [[a1, a2], [a1, a3]]
+        service.immich.enrich_assets.side_effect = lambda assets: assets
+
+        job = _make_random_job(strategy="SMART", query="beach", person_ids=["p1", "p2"], person_match_mode="any")
+        result = await service._fetch_smart_pool(job, fetch_count=30)
+
+        # Round-robin by rank: both combos' top matches come first.
+        assert [a.id for a in result] == ["a1", "a2", "a3"]
+        assert service.immich.search_smart.await_count == 2
+        assert all(c.kwargs["enrich_with_people"] is False for c in service.immich.search_smart.call_args_list)
+        service.immich.enrich_assets.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_merged_pool_capped_at_fetch_count(self) -> None:
+        service = _make_service()
+        service.immich = AsyncMock()
+        first = [_make_landscape_asset(f"x{i}") for i in range(4)]
+        second = [_make_landscape_asset(f"y{i}") for i in range(4)]
+        service.immich.search_smart.side_effect = [first, second]
+        service.immich.enrich_assets.side_effect = lambda assets: assets
+
+        job = _make_random_job(strategy="SMART", query="beach", album_ids=["al1", "al2"], album_match_mode="any")
+        result = await service._fetch_smart_pool(job, fetch_count=5)
+
+        # Cap keeps the rank-fair head: top ranks of each combo survive.
+        assert [a.id for a in result] == ["x0", "y0", "x1", "y1", "x2"]
 
 
 class TestSyncJobRandomFlow:

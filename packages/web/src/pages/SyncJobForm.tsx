@@ -43,6 +43,8 @@ export function SyncJobForm() {
   const [albumIds, setAlbumIds] = useState<string[]>([])
   const [personIds, setPersonIds] = useState<string[]>([])
   const [tagIds, setTagIds] = useState<string[]>([])
+  const [albumMatchMode, setAlbumMatchMode] = useState<'all' | 'any'>('all')
+  const [personMatchMode, setPersonMatchMode] = useState<'all' | 'any'>('all')
   const [favorite, setFavorite] = useState('')
   const [rating, setRating] = useState('')
   const [city, setCity] = useState('')
@@ -67,6 +69,8 @@ export function SyncJobForm() {
     setAlbumIds(job.album_ids ?? [])
     setPersonIds(job.person_ids ?? [])
     setTagIds(job.tag_ids ?? [])
+    setAlbumMatchMode(job.album_match_mode ?? 'all')
+    setPersonMatchMode(job.person_match_mode ?? 'all')
     setFavorite(job.is_favorite == null ? '' : String(job.is_favorite))
     setRating(typeof job.rating === 'number' ? String(job.rating) : '')
     setCity(job.city ?? '')
@@ -120,6 +124,8 @@ export function SyncJobForm() {
       album_ids: albumIds.length ? albumIds : null,
       person_ids: personIds.length ? personIds : null,
       tag_ids: tagIds.length ? tagIds : null,
+      album_match_mode: albumMatchMode,
+      person_match_mode: personMatchMode,
       is_favorite: favorite === '' ? null : favorite === 'true',
       city: city || null,
       state: state || null,
@@ -241,24 +247,52 @@ export function SyncJobForm() {
           <span className="ink-eyebrow">Immich filters</span>
           <span className="ink-small">Narrow which photos the sync pulls</span>
           <div className="ink-form-row w-full">
-            <RefMultiSelect
-              label="Albums"
-              values={albumIds}
-              onChange={setAlbumIds}
-              options={albums}
-              placeholder="Add an album…"
-              error={lookupError(albumsError)}
-              help="Photos must be in every selected album."
-            />
-            <RefMultiSelect
-              label="People"
-              values={personIds}
-              onChange={setPersonIds}
-              options={people}
-              placeholder="Add a person…"
-              error={lookupError(peopleError)}
-              help="Photos must show every selected person."
-            />
+            <div className="ink-form-section">
+              <RefMultiSelect
+                label="Albums"
+                values={albumIds}
+                onChange={setAlbumIds}
+                options={albums}
+                placeholder="Add an album…"
+                error={lookupError(albumsError)}
+                help="Limit to photos from these albums. With several albums, the match rule decides whether a photo must be in all of them or just one."
+              />
+              {albumIds.length > 1 && (
+                <SelectField
+                  label="Album match rule"
+                  value={albumMatchMode}
+                  onChange={(v) => setAlbumMatchMode(v as 'all' | 'any')}
+                  options={[
+                    { value: 'all', label: 'Must be in every album (AND)' },
+                    { value: 'any', label: 'In any selected album (OR)' },
+                  ]}
+                  help="AND keeps only photos present in every selected album — often very few. OR pulls photos from each of the albums."
+                />
+              )}
+            </div>
+            <div className="ink-form-section">
+              <RefMultiSelect
+                label="People"
+                values={personIds}
+                onChange={setPersonIds}
+                options={people}
+                placeholder="Add a person…"
+                error={lookupError(peopleError)}
+                help="Limit to photos showing these people. With several people, the match rule decides whether a photo must show all of them together or any one of them."
+              />
+              {personIds.length > 1 && (
+                <SelectField
+                  label="People match rule"
+                  value={personMatchMode}
+                  onChange={(v) => setPersonMatchMode(v as 'all' | 'any')}
+                  options={[
+                    { value: 'all', label: 'Must show everyone together (AND)' },
+                    { value: 'any', label: 'Shows any of them (OR)' },
+                  ]}
+                  help="AND keeps only photos where every selected person appears together. OR pulls photos of each person separately."
+                />
+              )}
+            </div>
             <RefMultiSelect
               label="Tags"
               values={tagIds}

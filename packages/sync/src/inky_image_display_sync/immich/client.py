@@ -3,6 +3,7 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
 
@@ -24,6 +25,21 @@ from inky_image_display_sync.immich.payloads import (
 
 # Immich's /search/random endpoint caps `size` at 1000.
 RANDOM_SEARCH_MAX_SIZE = 1000
+
+
+@dataclass(frozen=True)
+class SearchFilterCombo:
+    """One concrete (album_ids, person_ids, tag_ids) combination for a search.
+
+    Immich intersects every multi-value id filter (AND), so OR semantics are
+    emulated by the sync service issuing one query per combination and
+    unioning the results. When a combo is passed, its id lists replace the
+    job's in the payload; scalar filters always come from the job.
+    """
+
+    album_ids: list[str] | None
+    person_ids: list[str] | None
+    tag_ids: list[str] | None
 
 
 class ImmichClientError(Exception):
@@ -104,7 +120,7 @@ class ImmichClient:
         job: SyncJobItem,
         count_override: int | None = None,
         *,
-        tag_id_override: str | None = None,
+        combo: SearchFilterCombo | None = None,
     ) -> list[ImmichAsset]:
         """Fetch random assets matching job criteria.
 
@@ -114,15 +130,14 @@ class ImmichClient:
         Args:
             job: Sync job with filter configuration.
             count_override: Override job.count (for overfetching with client-side filters).
-            tag_id_override: When set, the payload carries exactly this single
-                tag id instead of ``job.tag_ids`` — used by callers to build
-                ANY-tag (union) semantics across multiple per-tag queries.
+            combo: When set, its id lists replace the job's — used by callers
+                to build union (OR) semantics across multiple per-id queries.
 
         Returns:
             List of matching assets in random order.
 
         """
-        payload = self._build_random_payload(job, count_override, tag_id_override=tag_id_override)
+        payload = self._build_random_payload(job, count_override, combo=combo)
         body = payload.model_dump(by_alias=True, exclude_none=True)
         self.logger.debug("Searching random assets with filters: %s", body)
 
@@ -134,6 +149,8 @@ class ImmichClient:
         job: SyncJobItem,
         count_override: int | None = None,
         enrich_with_people: bool = True,
+        *,
+        combo: SearchFilterCombo | None = None,
     ) -> list[ImmichAsset]:
         """Fetch assets matching semantic query with filters (CLIP-based).
 
@@ -144,6 +161,8 @@ class ImmichClient:
             job: Sync job with filter configuration (must have query set)
             count_override: Override job.count (for overfetching with client-side filters)
             enrich_with_people: Fetch full details to include people data
+            combo: When set, its id lists replace the job's — used by callers
+                to build union (OR) semantics across multiple per-id queries.
 
         Returns:
             List of matching assets ranked by semantic similarity
@@ -155,7 +174,7 @@ class ImmichClient:
         if not job.query:
             raise ValueError("Smart search requires a query string")
 
-        payload = self._build_smart_payload(job, count_override)
+        payload = self._build_smart_payload(job, count_override, combo=combo)
         body = payload.model_dump(by_alias=True, exclude_none=True)
         self.logger.debug("Searching smart assets with query '%s' and filters: %s", job.query, body)
 
@@ -165,37 +184,46 @@ class ImmichClient:
 
         # Smart search doesn't include people data - fetch full details if needed
         if enrich_with_people and assets:
-            self.logger.debug("Enriching %d assets with full details (people data)", len(assets))
-            enriched = []
-            for asset in assets:
-                try:
-                    full_asset = await self.get_asset(asset.id)
-                    enriched.append(full_asset)
-                except Exception:
-                    self.logger.warning("Failed to enrich asset %s, using partial data", asset.id)
-                    enriched.append(asset)
-            return enriched
+            return await self.enrich_assets(assets)
 
         return assets
+
+    async def enrich_assets(self, assets: list[ImmichAsset]) -> list[ImmichAsset]:
+        """Fetch full details (people, exif) for smart-search results.
+
+        Smart search responses omit people/exif data; downstream filtering
+        needs it. Assets whose detail fetch fails keep their partial data.
+        """
+        if not assets:
+            return assets
+        self.logger.debug("Enriching %d assets with full details (people data)", len(assets))
+        enriched = []
+        for asset in assets:
+            try:
+                full_asset = await self.get_asset(asset.id)
+                enriched.append(full_asset)
+            except Exception:
+                self.logger.warning("Failed to enrich asset %s, using partial data", asset.id)
+                enriched.append(asset)
+        return enriched
 
     def _build_random_payload(
         self,
         job: SyncJobItem,
         count_override: int | None = None,
         *,
-        tag_id_override: str | None = None,
+        combo: SearchFilterCombo | None = None,
     ) -> RandomSearchPayload:
         """Build payload for random search from job config.
 
         ``size`` is clamped to Immich's maximum (1000); a high count *
         overfetch_multiplier would otherwise be rejected by the endpoint.
         """
-        tag_ids = [tag_id_override] if tag_id_override is not None else job.tag_ids
         return RandomSearchPayload(
             size=min(count_override or job.count, RANDOM_SEARCH_MAX_SIZE),
-            album_ids=job.album_ids,
-            person_ids=job.person_ids,
-            tag_ids=tag_ids,
+            album_ids=combo.album_ids if combo else job.album_ids,
+            person_ids=combo.person_ids if combo else job.person_ids,
+            tag_ids=combo.tag_ids if combo else job.tag_ids,
             is_favorite=job.is_favorite,
             city=job.city,
             state=job.state,
@@ -209,6 +237,8 @@ class ImmichClient:
         self,
         job: SyncJobItem,
         count_override: int | None = None,
+        *,
+        combo: SearchFilterCombo | None = None,
     ) -> SmartSearchPayload:
         """Build payload for smart search from job config."""
         if not job.query:
@@ -217,9 +247,9 @@ class ImmichClient:
         return SmartSearchPayload(
             query=job.query,
             size=count_override or job.count,
-            album_ids=job.album_ids,
-            person_ids=job.person_ids,
-            tag_ids=job.tag_ids,
+            album_ids=combo.album_ids if combo else job.album_ids,
+            person_ids=combo.person_ids if combo else job.person_ids,
+            tag_ids=combo.tag_ids if combo else job.tag_ids,
             is_favorite=job.is_favorite,
             city=job.city,
             state=job.state,

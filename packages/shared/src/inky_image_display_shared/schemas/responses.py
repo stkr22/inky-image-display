@@ -171,6 +171,8 @@ class SyncJobResponse(BaseModel):
     album_ids: list[str] | None
     person_ids: list[str] | None
     tag_ids: list[str] | None
+    album_match_mode: str = "all"
+    person_match_mode: str = "all"
     is_favorite: bool | None
     city: str | None
     state: str | None
