@@ -607,17 +607,66 @@ async def test_release_returns_devices_to_rotation(
     before = utcnow()
     async with AsyncSession(async_engine) as session:
         db_config = (await session.exec(select(MotdConfig))).one()
-        await release_session(session, db_config)
+        await release_session(session, db_config, mock_settings)
 
     async with AsyncSession(async_engine) as session:
         device = (await session.exec(select(Device))).one()
         assert device.claimed_by_motd_config_id is None
-        assert device.scheduled_next_at <= utcnow()
+        # Rejoin is jittered within the refresh interval (default 3600s here).
         assert device.scheduled_next_at >= before - timedelta(seconds=1)
+        assert device.scheduled_next_at <= before + timedelta(seconds=3601)
         db_config = (await session.exec(select(MotdConfig))).one()
         assert db_config.active_message_id is None
         assignment = (await session.exec(select(MotdDeviceAssignment))).one()
         assert assignment.rotation_index == 0
+
+
+@pytest.mark.asyncio
+async def test_release_staggers_devices_to_avoid_synchronized_refreshes(
+    async_engine: AsyncEngine,
+    mock_settings: MagicMock,
+    mock_mqtt: MagicMock,
+    mock_s3_service: MagicMock,
+    seed_device: Device,
+) -> None:
+    """The MOTD pushes all panels at once; release must not rejoin them in
+    lockstep or they keep flashing simultaneously every interval after."""
+    second = Device(
+        id=uuid4(),
+        device_id="test-display-2",
+        room="Kitchen",
+        device_profile_id=seed_device.device_profile_id,
+        display_orientation="landscape",
+        is_online=True,
+        last_seen=datetime.now(),
+    )
+    async with AsyncSession(async_engine) as session:
+        session.add(second)
+        await session.commit()
+        await session.refresh(second)
+
+    config = await _seed_config_with_assignment(async_engine, seed_device, ["what"])
+    async with AsyncSession(async_engine) as session:
+        session.add(MotdDeviceAssignment(config_id=config.id, device_id=second.id, parts=json.dumps(["what"])))
+        await session.commit()
+    await _seed_ready_message(async_engine, config, ["what"], (1600, 1200))
+    mock_mqtt.is_connected = MagicMock(return_value=True)
+    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service)
+
+    before = utcnow()
+    with patch.object(motd_service.random, "uniform", side_effect=[600.0, 1800.0]) as uniform:
+        async with AsyncSession(async_engine) as session:
+            db_config = (await session.exec(select(MotdConfig))).one()
+            await release_session(session, db_config, mock_settings)
+    # Jitter is drawn per device over its full refresh interval.
+    assert uniform.call_count == 2
+    assert uniform.call_args_list[0].args == (0, 3600)
+
+    async with AsyncSession(async_engine) as session:
+        devices = (await session.exec(select(Device))).all()
+        offsets = sorted((d.scheduled_next_at - before).total_seconds() for d in devices)
+        assert offsets[0] == pytest.approx(600, abs=2)
+        assert offsets[1] == pytest.approx(1800, abs=2)
 
 
 @pytest.mark.asyncio

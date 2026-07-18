@@ -203,10 +203,10 @@ async def display_now(request: Request, body: MotdDisplayRequest | None = None) 
 
 @router.post("/release")
 async def release(request: Request) -> dict[str, str]:
-    """End the active session; devices rejoin normal rotation immediately."""
+    """End the active session; devices rejoin rotation at staggered times."""
     async with AsyncSession(request.app.state.engine) as session:
         config = await motd_service.get_or_create_config(session)
-        await motd_service.release_session(session, config)
+        await motd_service.release_session(session, config, request.app.state.settings)
     return {"status": "released"}
 
 
