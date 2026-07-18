@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING
@@ -71,6 +72,14 @@ _GENERATING_STALE_AFTER = timedelta(minutes=15)
 # part, indefinite session). Release resets it, so it never leaks into
 # normal rotation.
 _FAR_FUTURE = timedelta(days=3650)
+
+# A session pushes every panel at the same instant, and each subsequent
+# refresh is scheduled relative to the previous one — released in lockstep,
+# all panels would keep flashing simultaneously every interval from then on.
+# Release therefore staggers each device's rotation rejoin by a random offset
+# within its own refresh interval, capped so long-interval panels don't hold
+# the finished MOTD for hours.
+_RELEASE_JITTER_CAP_SECONDS = 3600
 
 
 class MotdStartError(Exception):
@@ -599,13 +608,20 @@ async def start_session(
         return result
 
 
-async def release_session(session: AsyncSession, config: MotdConfig) -> None:
-    """Clear all claims and session state; devices rejoin rotation now."""
+def _staggered_rejoin_at(device: Device, default_seconds: int, now: datetime) -> datetime:
+    """Randomized rotation rejoin time for a device leaving an MOTD session."""
+    interval = device.refresh_interval_seconds or default_seconds
+    return now + timedelta(seconds=random.uniform(0, min(interval, _RELEASE_JITTER_CAP_SECONDS)))
+
+
+async def release_session(session: AsyncSession, config: MotdConfig, settings: Settings) -> None:
+    """Clear all claims and session state; devices rejoin rotation staggered."""
     now = utcnow()
+    default_seconds = await get_default_refresh_seconds(session, settings)
     result = await session.exec(select(Device).where(col(Device.claimed_by_motd_config_id) == config.id))
     for device in result.all():
         device.claimed_by_motd_config_id = None
-        device.scheduled_next_at = now
+        device.scheduled_next_at = _staggered_rejoin_at(device, default_seconds, now)
         device.updated_at = now
         session.add(device)
     for assignment in await list_assignments(session, config.id):
@@ -781,7 +797,7 @@ async def tick(app: FastAPI) -> None:
 
         if config.active_message_id is not None and config.active_expires_at and config.active_expires_at <= now:
             logger.info("MOTD session expired; releasing devices")
-            await release_session(session, config)
+            await release_session(session, config, app.state.settings)
             await session.refresh(config)
 
         # Evaluate schedule predicates before any further commit expires

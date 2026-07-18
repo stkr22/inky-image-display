@@ -74,7 +74,12 @@ claim exists first wins, the other pauses/409s).
   without regenerating.
 - **End**: after `display_duration_seconds`, or — when that is null — only
   via manual release (`POST /api/motd/release`). Released devices rejoin
-  normal rotation immediately.
+  normal rotation at a random offset within their own refresh interval
+  (capped at one hour): the session pushed every panel at the same instant,
+  and since each next refresh is scheduled relative to the previous one, a
+  lockstep release would leave all panels flashing simultaneously every
+  interval from then on. A panel may therefore keep the finished MOTD up to
+  that offset before its first rotation image.
 
 Generation runs ahead of display time (`generation_lead_minutes`, default
 60) so the scheduled display pushes an already-rendered message; the
