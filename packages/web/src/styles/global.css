@@ -335,6 +335,8 @@ button { font-family: inherit; }
 /* ---------- Form fields ------------------------------------------------------------------------ */
 .ink-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .ink-field-label { font-size: 13px; font-weight: 500; color: var(--ink-muted); }
+.ink-help-tip { margin-left: 4px; color: var(--ink-muted); cursor: help; vertical-align: middle; }
+.ink-help-tip .material-icons { font-size: 14px; vertical-align: text-bottom; }
 .ink-input, .ink-textarea, .ink-select {
   font-family: inherit;
   font-size: 14px;

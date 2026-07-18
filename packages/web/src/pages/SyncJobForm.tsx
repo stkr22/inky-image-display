@@ -21,9 +21,9 @@ export function SyncJobForm() {
   // Name lookups via the API's Immich proxy. `retry: false` because a 503
   // means "not configured" — the pickers then fall back to free-text IDs.
   const immichQueryOpts = { retry: false, staleTime: 5 * 60_000 } as const
-  const { data: albums } = useQuery({ queryKey: ['immich', 'albums'], queryFn: api.listImmichAlbums, ...immichQueryOpts })
-  const { data: people } = useQuery({ queryKey: ['immich', 'people'], queryFn: api.listImmichPeople, ...immichQueryOpts })
-  const { data: tags } = useQuery({ queryKey: ['immich', 'tags'], queryFn: api.listImmichTags, ...immichQueryOpts })
+  const { data: albums, error: albumsError } = useQuery({ queryKey: ['immich', 'albums'], queryFn: api.listImmichAlbums, ...immichQueryOpts })
+  const { data: people, error: peopleError } = useQuery({ queryKey: ['immich', 'people'], queryFn: api.listImmichPeople, ...immichQueryOpts })
+  const { data: tags, error: tagsError } = useQuery({ queryKey: ['immich', 'tags'], queryFn: api.listImmichTags, ...immichQueryOpts })
   const { data: job, isPending: jobPending } = useQuery({
     queryKey: ['sync-job', jobId],
     queryFn: () => api.getSyncJob(jobId!),
@@ -79,6 +79,18 @@ export function SyncJobForm() {
   useEffect(() => {
     if (!isEdit && !targetProfile && profiles?.length) setTargetProfile(profiles[0].id)
   }, [profiles, isEdit, targetProfile])
+
+  // 503 means the proxy isn't configured at all — that case gets one shared
+  // note below the pickers. Anything else (e.g. a 502 because the Immich API
+  // key lacks album.read) is a real failure that can hit one picker while its
+  // siblings work, so it's surfaced on the affected field.
+  const proxyUnconfigured = albumsError instanceof ApiError && albumsError.statusCode === 503
+  const lookupError = (error: unknown): string | undefined => {
+    if (!error || (error instanceof ApiError && error.statusCode === 503)) return undefined
+    const detail = error instanceof ApiError && error.detail ? error.detail : 'request failed'
+    const permissionHint = detail.includes('403') ? ' — the Immich API key likely lacks read access to this list' : ''
+    return `Name lookup failed (${detail})${permissionHint}. Enter raw Immich IDs instead.`
+  }
 
   if (isEdit && jobPending) return <Spinner />
 
@@ -153,8 +165,15 @@ export function SyncJobForm() {
                 { value: 'RANDOM', label: 'RANDOM' },
                 { value: 'SMART', label: 'SMART' },
               ]}
+              help="RANDOM draws a random sample from all photos matching the filters below. SMART ranks photos by how well they match the query text (semantic search)."
             />
-            <TextField label="Query (SMART only)" value={query} onChange={setQuery} disabled={strategy !== 'SMART'} />
+            <TextField
+              label="Query (SMART only)"
+              value={query}
+              onChange={setQuery}
+              disabled={strategy !== 'SMART'}
+              help="Plain-language description of what the photos should show, e.g. 'kids playing at the beach'. Immich's semantic search matches image content, not just titles or tags."
+            />
           </div>
           <SelectField
             label="Target device profile"
@@ -171,15 +190,48 @@ export function SyncJobForm() {
               { value: 'landscape', label: 'Landscape' },
               { value: 'portrait', label: 'Portrait' },
             ]}
+            help="Only photos matching the target shape are synced. 'Any' behaves like the panel's native landscape shape; choose Portrait for portrait-mounted panels — the target dimensions rotate and only portrait photos sync."
           />
           <div className="ink-form-row items-end w-full">
-            <NumberField label={`Count (${MIN_COUNT}-${MAX_COUNT})`} value={count} onChange={setCount} min={MIN_COUNT} max={MAX_COUNT} step={1} />
-            <NumberField label="Max images kept (0 = unlimited)" value={maxImages} onChange={setMaxImages} min={0} step={1} />
-            <Slider label="Overfetch multiplier" value={overfetch} onChange={setOverfetch} min={1} max={10} />
+            <NumberField
+              label={`Count (${MIN_COUNT}-${MAX_COUNT})`}
+              value={count}
+              onChange={setCount}
+              min={MIN_COUNT}
+              max={MAX_COUNT}
+              step={1}
+              help="How many new images each run tries to add to the library."
+            />
+            <NumberField
+              label="Max images kept (0 = unlimited)"
+              value={maxImages}
+              onChange={setMaxImages}
+              min={0}
+              step={1}
+              help="Cap on the total images this job keeps in the library (only its own uploads count). At the cap, runs skip until retention deletes older images and frees the budget."
+            />
+            <Slider
+              label="Overfetch multiplier"
+              value={overfetch}
+              onChange={setOverfetch}
+              min={1}
+              max={10}
+              help="Fetches Count × this many candidates from Immich, because photos with the wrong orientation or too small for the panel are dropped afterwards. Raise it when runs deliver fewer images than requested."
+            />
           </div>
           <div className="row w-full gap-4 items-center wrap">
-            <Switch label="Random pick" checked={randomPick} onChange={setRandomPick} />
-            <Switch label="Active" checked={active} onChange={setActive} />
+            <Switch
+              label="Random pick"
+              checked={randomPick}
+              onChange={setRandomPick}
+              help="SMART only: pick the images at random from the fetched search results instead of always taking the closest matches — adds variety between runs. RANDOM jobs are already random."
+            />
+            <Switch
+              label="Active"
+              checked={active}
+              onChange={setActive}
+              help="Inactive jobs are skipped by the scheduled sync but can still be started with 'Run now'."
+            />
           </div>
         </div>
       </div>
@@ -189,11 +241,35 @@ export function SyncJobForm() {
           <span className="ink-eyebrow">Immich filters</span>
           <span className="ink-small">Narrow which photos the sync pulls</span>
           <div className="ink-form-row w-full">
-            <RefMultiSelect label="Albums" values={albumIds} onChange={setAlbumIds} options={albums} placeholder="Add an album…" />
-            <RefMultiSelect label="People" values={personIds} onChange={setPersonIds} options={people} placeholder="Add a person…" />
-            <RefMultiSelect label="Tags" values={tagIds} onChange={setTagIds} options={tags} placeholder="Add a tag…" />
+            <RefMultiSelect
+              label="Albums"
+              values={albumIds}
+              onChange={setAlbumIds}
+              options={albums}
+              placeholder="Add an album…"
+              error={lookupError(albumsError)}
+              help="Photos must be in every selected album."
+            />
+            <RefMultiSelect
+              label="People"
+              values={personIds}
+              onChange={setPersonIds}
+              options={people}
+              placeholder="Add a person…"
+              error={lookupError(peopleError)}
+              help="Photos must show every selected person."
+            />
+            <RefMultiSelect
+              label="Tags"
+              values={tagIds}
+              onChange={setTagIds}
+              options={tags}
+              placeholder="Add a tag…"
+              error={lookupError(tagsError)}
+              help="RANDOM jobs match photos carrying any selected tag; SMART jobs require all of them."
+            />
           </div>
-          {!albums && (
+          {proxyUnconfigured && (
             <span className="ink-small">
               Name lookup unavailable (Immich proxy not configured) — enter raw Immich IDs.
             </span>

@@ -53,6 +53,10 @@ npm run test:e2e                  # or WEB_E2E_BASE_URL=... to target elsewhere
 - `guest.spec.ts` — mints a guest invite on the Settings page, opens it in a
   fresh browser context, and verifies the restricted guest UI plus sign-out;
   also checks that a bogus invite token is rejected.
+- `sync-job-form.spec.ts` — stubs the `/api/immich/*` browse proxy in-browser
+  to verify each filter picker reports its own lookup failure (e.g. an API key
+  missing `album.read`) while working pickers keep their dropdowns, and that
+  the unconfigured-proxy 503 keeps the quiet raw-ID fallback.
 
 The tests are data-independent: they pass against an empty or populated
 library and clean up everything they create.

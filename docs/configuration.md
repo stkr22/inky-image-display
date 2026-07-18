@@ -38,7 +38,7 @@ All variables are prefixed with `API_`.
 | `API_DEVICE_MQTT_KEEP_ALIVE` | No | `30` | MQTT keep-alive interval advertised to controllers |
 | `API_GEMINI_API_KEY` | No | — | Google Generative AI key. Required only for `POST /api/genai/generate`; leave unset to disable on-demand generation (returns 503). |
 | `API_IMMICH_BASE_URL` | No | — | Immich base URL for the read-only browse proxy (`GET /api/immich/albums`, `/people`, `/tags`) that powers name-based sync-job filter pickers in the UI. Leave unset to disable (returns 503; the UI falls back to raw-ID inputs). |
-| `API_IMMICH_API_KEY` | No | — | Immich API key for the browse proxy. Use the same values the sync service is configured with. |
+| `API_IMMICH_API_KEY` | No | — | Immich API key for the browse proxy. Use the same values the sync service is configured with. Immich API keys carry granular permissions: the proxy needs `album.read`, `person.read` and `tag.read` (or "All"). A key missing one of these makes only that picker fail — the UI then shows a lookup error on the affected field and falls back to raw-ID input. |
 | `API_IMMICH_TIMEOUT_SECONDS` | No | `20.0` | Timeout for Immich browse-proxy requests (seconds). |
 | `API_MEDIA_CACHE_MAX_AGE` | No | `86400` | `Cache-Control: max-age` for `/media` responses (originals and thumbnails). |
 | `API_NOTIFY_URL` | No | — | Push-notification endpoint for refresh-health transitions (a panel entering/leaving the failed state). The URL is POSTed a plain-text body with a `Title` header — the [ntfy.sh](https://ntfy.sh) convention (e.g. `https://ntfy.sh/my-inky-topic`), which most generic webhook receivers also accept. Best-effort: delivery failures are logged, never block ack processing. Unset disables pushes. |
@@ -149,7 +149,7 @@ job's "Last run" line and it is what clears the run-now flag.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `IMMICH_BASE_URL` | Yes | — | Immich server URL, e.g. `https://photos.example.com` |
-| `IMMICH_API_KEY` | Yes | — | Immich API key |
+| `IMMICH_API_KEY` | Yes | — | Immich API key. The Helm chart feeds this same key to the API's browse proxy, so it also needs the read permissions listed under `API_IMMICH_API_KEY` above. |
 | `IMMICH_TIMEOUT_SECONDS` | No | `30` | HTTP request timeout |
 | `IMMICH_VERIFY_SSL` | No | `true` | Verify SSL certificates |
 

@@ -20,6 +20,16 @@ export function Icon({ name, style }: { name: string; style?: CSSProperties }) {
   )
 }
 
+// Small ⓘ next to a field label carrying a native tooltip. Reserved for
+// options whose practical effect isn't obvious from the label alone.
+export function HelpTip({ text }: { text: string }) {
+  return (
+    <span className="ink-help-tip" title={text} aria-label={text} role="note">
+      <Icon name="help_outline" />
+    </span>
+  )
+}
+
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   primary?: boolean
   ghost?: boolean
@@ -48,15 +58,17 @@ export function Button({ primary, ghost, flat, danger, icon, round, children, cl
 interface TextFieldProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'onChange'> {
   label?: string
   onChange?: (value: string) => void
+  help?: string
 }
 
-export function TextField({ label, onChange, className, ...rest }: TextFieldProps) {
+export function TextField({ label, onChange, className, help, ...rest }: TextFieldProps) {
   const id = useId()
   return (
     <div className={`ink-field ${className ?? ''}`}>
       {label && (
         <label className="ink-field-label" htmlFor={id}>
           {label}
+          {help && <HelpTip text={help} />}
         </label>
       )}
       <input id={id} className="ink-input" onChange={(e) => onChange?.(e.target.value)} {...rest} />
@@ -74,15 +86,17 @@ interface NumberFieldProps {
   disabled?: boolean
   placeholder?: string
   className?: string
+  help?: string
 }
 
-export function NumberField({ label, value, onChange, className, ...rest }: NumberFieldProps) {
+export function NumberField({ label, value, onChange, className, help, ...rest }: NumberFieldProps) {
   const id = useId()
   return (
     <div className={`ink-field ${className ?? ''}`}>
       {label && (
         <label className="ink-field-label" htmlFor={id}>
           {label}
+          {help && <HelpTip text={help} />}
         </label>
       )}
       <input
@@ -141,15 +155,17 @@ interface SelectFieldProps {
   options: SelectOption[]
   disabled?: boolean
   className?: string
+  help?: string
 }
 
-export function SelectField({ label, value, onChange, options, disabled, className }: SelectFieldProps) {
+export function SelectField({ label, value, onChange, options, disabled, className, help }: SelectFieldProps) {
   const id = useId()
   return (
     <div className={`ink-field ${className ?? ''}`}>
       {label && (
         <label className="ink-field-label" htmlFor={id}>
           {label}
+          {help && <HelpTip text={help} />}
         </label>
       )}
       <select id={id} className="ink-select" value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
@@ -168,17 +184,20 @@ export function Switch({
   checked,
   onChange,
   disabled,
+  help,
 }: {
   label?: string
   checked: boolean
   onChange: (value: boolean) => void
   disabled?: boolean
+  help?: string
 }) {
   return (
     <label className="ink-switch">
       <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
       <span className="ink-switch-track" />
       {label && <span>{label}</span>}
+      {help && <HelpTip text={help} />}
     </label>
   )
 }
@@ -190,6 +209,7 @@ export function Slider({
   min,
   max,
   step = 1,
+  help,
 }: {
   label: string
   value: number
@@ -197,11 +217,15 @@ export function Slider({
   min: number
   max: number
   step?: number
+  help?: string
 }) {
   return (
     <div className="ink-field flex-1" style={{ minWidth: 160 }}>
       <div className="row justify-between items-baseline w-full">
-        <span className="ink-field-label">{label}</span>
+        <span className="ink-field-label">
+          {label}
+          {help && <HelpTip text={help} />}
+        </span>
         <span className="ink-slider-value">{value}</span>
       </div>
       <div className="ink-slider-row">
@@ -225,11 +249,15 @@ export function ChipsInput({
   values,
   onChange,
   placeholder,
+  error,
+  help,
 }: {
   label: string
   values: string[]
   onChange: (values: string[]) => void
   placeholder?: string
+  error?: string
+  help?: string
 }) {
   const [draft, setDraft] = useState('')
 
@@ -250,7 +278,10 @@ export function ChipsInput({
 
   return (
     <div className="ink-field">
-      <span className="ink-field-label">{label}</span>
+      <span className="ink-field-label">
+        {label}
+        {help && <HelpTip text={help} />}
+      </span>
       <div className="ink-chips">
         {values.map((value) => (
           <span key={value} className="ink-chip">
@@ -268,6 +299,7 @@ export function ChipsInput({
           onBlur={commit}
         />
       </div>
+      {error && <span className="ink-form-error">{error}</span>}
     </div>
   )
 }
@@ -280,25 +312,30 @@ export interface RefOption {
 // Multi-select over known id/name pairs (e.g. Immich albums) rendered as
 // chips with a filtering dropdown. When `options` is undefined (lookup
 // unavailable), falls back to free-text ID entry via ChipsInput so the form
-// keeps working without the server-side proxy.
+// keeps working without the server-side proxy; `error` explains the failure
+// per field, since one lookup can fail while its siblings work.
 export function RefMultiSelect({
   label,
   values,
   onChange,
   options,
   placeholder,
+  error,
+  help,
 }: {
   label: string
   values: string[]
   onChange: (values: string[]) => void
   options: RefOption[] | undefined
   placeholder?: string
+  error?: string
+  help?: string
 }) {
   const [draft, setDraft] = useState('')
   const [open, setOpen] = useState(false)
 
   if (!options) {
-    return <ChipsInput label={label} values={values} onChange={onChange} placeholder={placeholder} />
+    return <ChipsInput label={label} values={values} onChange={onChange} placeholder={placeholder} error={error} help={help} />
   }
 
   const nameById = new Map(options.map((option) => [option.id, option.name]))
@@ -309,7 +346,10 @@ export function RefMultiSelect({
 
   return (
     <div className="ink-field" style={{ position: 'relative' }}>
-      <span className="ink-field-label">{label}</span>
+      <span className="ink-field-label">
+        {label}
+        {help && <HelpTip text={help} />}
+      </span>
       <div className="ink-chips">
         {values.map((id) => (
           <span key={id} className="ink-chip">
