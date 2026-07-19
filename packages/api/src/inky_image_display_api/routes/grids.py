@@ -139,7 +139,7 @@ async def display_image_on_grid(
     """Render slices for ``body.image_id`` and push them to every member device."""
     async with AsyncSession(request.app.state.engine) as session:
         grid = await grid_service.get_grid_or_404(session, grid_id)
-        await _refuse_when_job_active(session, grid_id)
+        _refuse_when_job_active(grid)
         image_result = await session.exec(select(Image).where(col(Image.id) == body.image_id))
         image = image_result.first()
         if image is None:
@@ -164,7 +164,7 @@ async def advance_grid_rotation(request: Request, grid_id: UUID) -> dict[str, st
     """Pick the next image from the grid's pool and push it."""
     async with AsyncSession(request.app.state.engine) as session:
         grid = await grid_service.get_grid_or_404(session, grid_id)
-        await _refuse_when_job_active(session, grid_id)
+        _refuse_when_job_active(grid)
         image = await grid_service.get_next_grid_image(session, grid)
         if image is None:
             raise HTTPException(status_code=404, detail="No images assigned to this grid")
@@ -180,9 +180,8 @@ async def advance_grid_rotation(request: Request, grid_id: UUID) -> dict[str, st
         return {"status": "ok", "image_id": str(image.id)}
 
 
-async def _refuse_when_job_active(session: AsyncSession, grid_id: UUID) -> None:
+def _refuse_when_job_active(grid: Grid) -> None:
     """409 when a display-job session currently holds this grid's panels."""
-    grid = await grid_service.get_grid_or_404(session, grid_id)
     if grid.active_message_id is not None:
         raise HTTPException(
             status_code=409,

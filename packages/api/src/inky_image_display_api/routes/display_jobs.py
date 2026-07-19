@@ -232,7 +232,15 @@ async def display_now(
         grid_id = job.target_grid_id
         message_id = body.message_id if body else None
         if message_id is None:
-            message = await display_job_service.latest_ready_message(session, job.id)
+            # This job's newest ready message — not the grid's, so with two
+            # jobs on one grid each Display button shows its own content.
+            result = await session.exec(
+                select(MotdMessage)
+                .where(col(MotdMessage.job_id) == job.id, col(MotdMessage.status) == "ready")
+                .order_by(col(MotdMessage.created_at).desc())
+                .limit(1)
+            )
+            message = result.first()
             if message is None:
                 raise HTTPException(status_code=409, detail="No generated message is ready — generate one first")
             message_id = message.id

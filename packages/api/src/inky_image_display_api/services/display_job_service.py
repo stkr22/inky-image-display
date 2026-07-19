@@ -384,17 +384,6 @@ async def _prune_old_messages(engine: AsyncEngine, s3: S3Service, job_id: UUID) 
             await session.commit()
 
 
-async def latest_ready_message(session: AsyncSession, job_id: UUID) -> MotdMessage | None:
-    """Return the job's newest ready message, if any."""
-    result = await session.exec(
-        select(MotdMessage)
-        .where(col(MotdMessage.job_id) == job_id, col(MotdMessage.status) == "ready")
-        .order_by(col(MotdMessage.created_at).desc())
-        .limit(1)
-    )
-    return result.first()
-
-
 async def latest_ready_message_for_grid(session: AsyncSession, grid_id: UUID) -> MotdMessage | None:
     """Return the newest ready message across all jobs targeting this grid.
 

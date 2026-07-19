@@ -189,10 +189,6 @@ export interface Grid {
   display_weekday_mask: number
   display_timezone: string
   display_duration_seconds: number | null
-  active_message_id: string | null
-  active_since: string | null
-  active_expires_at: string | null
-  last_displayed_on: string | null
   devices: GridPlacement[] | null
 }
 
