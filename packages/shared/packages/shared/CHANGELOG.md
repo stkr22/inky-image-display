@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.8.0](https://github.com/stkr22/inky-image-display/compare/shared-v4.7.0...shared-v4.8.0) (2026-07-19)
+
+
+### Features
+
+* restructure MOTD into grid-targeting display jobs ([d634095](https://github.com/stkr22/inky-image-display/commit/d6340950c52fa7687cea6dfa4776e8828b7ca7f9))
+* restructure MOTD into grid-targeting display jobs ([1497c94](https://github.com/stkr22/inky-image-display/commit/1497c94ddef675ef7304eac941bfec0618eb98a0))
+
 ## [4.7.0](https://github.com/stkr22/inky-image-display/compare/shared-v4.6.0...shared-v4.7.0) (2026-07-18)
 
 
