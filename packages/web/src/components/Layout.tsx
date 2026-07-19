@@ -27,6 +27,7 @@ const SECTION_BY_PREFIX: Array<[string, string]> = [
   ['/jobs', '/jobs'],
   ['/sync-jobs', '/jobs'],
   ['/gemini-jobs', '/jobs'],
+  ['/display-jobs', '/jobs'],
   ['/genai', '/genai'],
   ['/generate', '/genai'],
   ['/prompts', '/genai'],

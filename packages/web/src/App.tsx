@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { Spinner } from './components/ui'
 import { useAuth } from './lib/auth'
+import { DisplayJobForm } from './pages/DisplayJobForm'
 import { Displays } from './pages/Displays'
 import { GeminiJobForm } from './pages/GeminiJobForm'
 import { GenAI } from './pages/GenAI'
@@ -58,6 +59,8 @@ export function App() {
         <Route path="/gemini-jobs" element={<Navigate to="/jobs?tab=gemini" replace />} />
         <Route path="/gemini-jobs/new" element={<GeminiJobForm />} />
         <Route path="/gemini-jobs/:jobId" element={<GeminiJobForm />} />
+        <Route path="/display-jobs" element={<Navigate to="/jobs?tab=display" replace />} />
+        <Route path="/display-jobs/:jobId" element={<DisplayJobForm />} />
         <Route path="/genai" element={<GenAI />} />
         <Route path="/generate" element={<Navigate to="/genai" replace />} />
         <Route path="/prompts" element={<Navigate to="/genai" replace />} />

@@ -238,10 +238,13 @@ export const api = {
       method: 'POST',
       body: messageId ? { message_id: messageId } : {},
     }),
-  displayJobRelease: (id: string) => request<{ status: string }>(`/api/display-jobs/${id}/release`, { method: 'POST' }),
-  getDisplayJobStatus: (id: string) => request<DisplayJobStatus>(`/api/display-jobs/${id}/status`),
   listDisplayJobMessages: (id: string, limit = 10) =>
     request<MotdMessage[]>(`/api/display-jobs/${id}/messages`, { params: { limit } }),
+  startGridSession: (gridId: string) =>
+    request<{ status: string; message_id: string }>(`/api/grids/${gridId}/display-session`, { method: 'POST' }),
+  releaseGridSession: (gridId: string) =>
+    request<{ status: string }>(`/api/grids/${gridId}/release-session`, { method: 'POST' }),
+  getGridDisplayStatus: (gridId: string) => request<DisplayJobStatus>(`/api/grids/${gridId}/display-status`),
 
   // --- Immich browse proxy (503 when not configured server-side) ---
   listImmichAlbums: () => request<ImmichRef[]>('/api/immich/albums'),

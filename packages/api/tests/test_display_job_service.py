@@ -168,7 +168,7 @@ async def test_generate_message_renders_screens_per_slot(
             ("qr", 1600, 1200),
         }
         db_job = (await session.exec(select(DisplayJob))).one()
-        assert db_job.last_generated_on is not None
+        assert db_job.last_run_at is not None
     assert mock_s3_service.upload_image.call_count == 3
 
 
@@ -266,7 +266,7 @@ async def test_start_session_claims_grid_and_pushes(
     await _seed_ready_message(async_engine, job, ["what", "why"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
 
-    result = await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
+    result = await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, grid.id)
 
     assert result.displayed == [seed_device.device_id]
     command = mock_mqtt.send_command.await_args.args[1]
@@ -274,21 +274,20 @@ async def test_start_session_claims_grid_and_pushes(
     async with AsyncSession(async_engine) as session:
         device = (await session.exec(select(Device))).one()
         assert device.claimed_by_grid_id == grid.id
-        db_job = (await session.exec(select(DisplayJob))).one()
-        assert db_job.active_message_id is not None
-        assert db_job.active_expires_at is None  # default duration = indefinite
+        db_grid = (await session.exec(select(Grid))).one()
+        assert db_grid.active_message_id is not None
+        assert db_grid.active_expires_at is None  # default duration = indefinite
 
 
 @pytest.mark.asyncio
-async def test_start_session_without_grid_raises(
+async def test_start_session_on_unknown_grid_raises(
     async_engine: AsyncEngine,
     mock_settings: MagicMock,
     mock_mqtt: MagicMock,
     mock_s3_service: MagicMock,
 ) -> None:
-    job = await _seed_job(async_engine, None, {})
-    with pytest.raises(JobStartError, match="no target grid"):
-        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
+    with pytest.raises(JobStartError, match="grid no longer exists"):
+        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, uuid4())
 
 
 @pytest.mark.asyncio
@@ -300,9 +299,9 @@ async def test_start_session_without_message_raises(
     seed_device: Device,
 ) -> None:
     grid = await _seed_grid(async_engine, [seed_device])
-    job = await _seed_job(async_engine, grid, {(0, 0): ["what"]})
+    await _seed_job(async_engine, grid, {(0, 0): ["what"]})
     with pytest.raises(JobStartError, match="No generated message"):
-        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
+        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, grid.id)
 
 
 @pytest.mark.asyncio
@@ -320,7 +319,7 @@ async def test_start_session_renders_missing_screens_on_demand(
     await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
 
-    result = await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
+    result = await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, grid.id)
 
     assert result.displayed == [seed_device.device_id]
     assert result.skipped_no_content == []
@@ -349,7 +348,7 @@ async def test_start_session_refits_image_for_new_panel_size(  # noqa: PLR0913 �
     mock_mqtt.is_connected = MagicMock(return_value=True)
     mock_s3_service.get_object_bytes = MagicMock(return_value=_tiny_jpeg())
 
-    result = await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
+    result = await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, grid.id)
 
     assert set(result.displayed) == {seed_device.device_id, portrait.device_id}
     mock_s3_service.get_object_bytes.assert_called_once_with(f"motd/{message.id}/image_1600x1200.jpg")
@@ -376,7 +375,7 @@ async def test_start_session_cannot_conjure_missing_illustration(
     mock_mqtt.is_connected = MagicMock(return_value=True)
 
     with pytest.raises(JobStartError, match="No grid slot has content"):
-        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
+        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, grid.id)
     mock_s3_service.upload_image.assert_not_called()
 
 
@@ -395,12 +394,12 @@ async def test_start_session_redisplays_specific_message(
     await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
 
-    result = await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id, message_id=older.id)
+    result = await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, grid.id, message_id=older.id)
 
     assert result.message_id == older.id
     async with AsyncSession(async_engine) as session:
-        db_job = (await session.exec(select(DisplayJob))).one()
-        assert db_job.active_message_id == older.id
+        db_grid = (await session.exec(select(Grid))).one()
+        assert db_grid.active_message_id == older.id
         message = (await session.exec(select(MotdMessage).where(col(MotdMessage.id) == older.id))).one()
         assert message.displayed_at is not None
 
@@ -416,7 +415,7 @@ async def test_start_session_rejects_unknown_or_unready_message(
     grid = await _seed_grid(async_engine, [seed_device])
     job = await _seed_job(async_engine, grid, {(0, 0): ["what"]})
     with pytest.raises(JobStartError, match="no longer exists"):
-        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id, message_id=uuid4())
+        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, grid.id, message_id=uuid4())
 
     async with AsyncSession(async_engine) as session:
         failed = MotdMessage(job_id=job.id, status="failed")
@@ -424,7 +423,7 @@ async def test_start_session_rejects_unknown_or_unready_message(
         await session.commit()
         await session.refresh(failed)
     with pytest.raises(JobStartError, match="not ready"):
-        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id, message_id=failed.id)
+        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, grid.id, message_id=failed.id)
 
 
 @pytest.mark.asyncio
@@ -444,9 +443,9 @@ async def test_prune_keeps_recent_active_and_latest_ready(
             message = (await session.exec(select(MotdMessage).where(col(MotdMessage.id) == message_id))).one()
             message.created_at = utcnow() - timedelta(days=days)
             session.add(message)
-        db_job = (await session.exec(select(DisplayJob))).one()
-        db_job.active_message_id = old_active.id
-        session.add(db_job)
+        db_grid = (await session.exec(select(Grid))).one()
+        db_grid.active_message_id = old_active.id
+        session.add(db_grid)
         await session.commit()
 
     await display_job_service._prune_old_messages(async_engine, mock_s3_service, job.id)
@@ -472,7 +471,7 @@ async def test_resync_pushes_changed_slot(
     job = await _seed_job(async_engine, grid, {(0, 0): ["what"]})
     await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
-    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
+    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, grid.id)
     assert mock_mqtt.send_command.await_count == 1
 
     async with AsyncSession(async_engine) as session:
@@ -517,7 +516,7 @@ async def test_resync_releases_removed_slot_and_keeps_unchanged(  # noqa: PLR091
     job = await _seed_job(async_engine, grid, {(0, 0): ["what"], (0, 1): ["why"]})
     await _seed_ready_message(async_engine, job, ["what", "why"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
-    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
+    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, grid.id)
     assert mock_mqtt.send_command.await_count == 2
 
     async with AsyncSession(async_engine) as session:
@@ -570,7 +569,7 @@ async def test_advance_rotates_and_wraps(
     job = await _seed_job(async_engine, grid, {(0, 0): ["what", "why"]})
     await _seed_ready_message(async_engine, job, ["what", "why"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
-    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
+    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, grid.id)
 
     app = _make_app(async_engine, mock_settings, mock_mqtt)
     for expected_part in ("why", "what"):
@@ -601,7 +600,7 @@ async def test_advance_parks_single_part_slot(
     job = await _seed_job(async_engine, grid, {(0, 0): ["what"]})
     await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
-    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
+    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, grid.id)
     assert mock_mqtt.send_command.await_count == 1
 
     app = _make_app(async_engine, mock_settings, mock_mqtt)
@@ -626,12 +625,12 @@ async def test_release_without_pool_returns_devices_to_solo_rotation(
     job = await _seed_job(async_engine, grid, {(0, 0): ["what"]})
     await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
-    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
+    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, grid.id)
 
     before = utcnow()
     async with AsyncSession(async_engine) as session:
-        db_job = (await session.exec(select(DisplayJob))).one()
-        await release_session(session, db_job, mock_settings)
+        db_grid = (await session.exec(select(Grid))).one()
+        await release_session(session, db_grid, mock_settings)
 
     async with AsyncSession(async_engine) as session:
         device = (await session.exec(select(Device))).one()
@@ -639,8 +638,8 @@ async def test_release_without_pool_returns_devices_to_solo_rotation(
         # Rejoin is jittered within the refresh interval (default 3600s here).
         assert device.scheduled_next_at >= before - timedelta(seconds=1)
         assert device.scheduled_next_at <= before + timedelta(seconds=3601)
-        db_job = (await session.exec(select(DisplayJob))).one()
-        assert db_job.active_message_id is None
+        db_grid = (await session.exec(select(Grid))).one()
+        assert db_grid.active_message_id is None
         slot = (await session.exec(select(DisplayJobSlot))).one()
         assert slot.rotation_index == 0
 
@@ -661,13 +660,13 @@ async def test_release_staggers_devices_to_avoid_synchronized_refreshes(  # noqa
     job = await _seed_job(async_engine, grid, {(0, 0): ["what"], (0, 1): ["what"]})
     await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
-    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
+    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, grid.id)
 
     before = utcnow()
     with patch.object(display_job_service.random, "uniform", side_effect=[600.0, 1800.0]) as uniform:
         async with AsyncSession(async_engine) as session:
-            db_job = (await session.exec(select(DisplayJob))).one()
-            await release_session(session, db_job, mock_settings)
+            db_grid = (await session.exec(select(Grid))).one()
+            await release_session(session, db_grid, mock_settings)
     # Jitter is drawn per device over its full refresh interval.
     assert uniform.call_count == 2
     assert uniform.call_args_list[0].args == (0, 3600)
@@ -702,13 +701,13 @@ async def test_release_with_pool_resumes_grid_rotation_with_jitter(
         )
         await session.commit()
     mock_mqtt.is_connected = MagicMock(return_value=True)
-    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
+    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, grid.id)
 
     before = utcnow()
     with patch.object(display_job_service.random, "uniform", return_value=900.0) as uniform:
         async with AsyncSession(async_engine) as session:
-            db_job = (await session.exec(select(DisplayJob))).one()
-            await release_session(session, db_job, mock_settings)
+            db_grid = (await session.exec(select(Grid))).one()
+            await release_session(session, db_grid, mock_settings)
     uniform.assert_called_once()
 
     async with AsyncSession(async_engine) as session:
@@ -729,19 +728,19 @@ async def test_expired_session_is_released_by_tick(
     grid = await _seed_grid(async_engine, [seed_device])
     job = await _seed_job(async_engine, grid, {(0, 0): ["what"]})
     async with AsyncSession(async_engine) as session:
-        db_job = (await session.exec(select(DisplayJob))).one()
-        db_job.display_duration_seconds = 60
-        session.add(db_job)
+        db_grid = (await session.exec(select(Grid))).one()
+        db_grid.display_duration_seconds = 60
+        session.add(db_grid)
         await session.commit()
     await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
-    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
+    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, grid.id)
 
     async with AsyncSession(async_engine) as session:
-        db_job = (await session.exec(select(DisplayJob))).one()
-        assert db_job.active_expires_at is not None
-        db_job.active_expires_at = utcnow() - timedelta(seconds=1)
-        session.add(db_job)
+        db_grid = (await session.exec(select(Grid))).one()
+        assert db_grid.active_expires_at is not None
+        db_grid.active_expires_at = utcnow() - timedelta(seconds=1)
+        session.add(db_grid)
         await session.commit()
 
     app = _make_app(async_engine, mock_settings, mock_mqtt)
@@ -750,62 +749,77 @@ async def test_expired_session_is_released_by_tick(
     async with AsyncSession(async_engine) as session:
         device = (await session.exec(select(Device))).one()
         assert device.claimed_by_grid_id is None
-        db_job = (await session.exec(select(DisplayJob))).one()
-        assert db_job.active_message_id is None
+        db_grid = (await session.exec(select(Grid))).one()
+        assert db_grid.active_message_id is None
 
 
-def test_schedule_due_helpers() -> None:
-    """Weekday mask, lead time and once-per-day guards drive the tick."""
-    job = DisplayJob(
+def test_generation_due_follows_interval() -> None:
+    """Generation runs on the job's own interval lease, like the sync jobs."""
+    now = datetime(2026, 7, 1, 7, 30)
+    job = DisplayJob(name="test", target_grid_id=uuid4())
+
+    assert not generation_due(job, now)  # no interval → manual only
+
+    job.interval_minutes = 1440
+    job.next_run_at = now - timedelta(minutes=1)
+    assert generation_due(job, now)
+    job.next_run_at = now + timedelta(minutes=1)
+    assert not generation_due(job, now)
+
+    # A job without a target grid has nothing to render for.
+    job.next_run_at = now - timedelta(minutes=1)
+    job.target_grid_id = None
+    assert not generation_due(job, now)
+
+
+def test_display_due_follows_grid_schedule() -> None:
+    """Weekday mask, display time and once-per-day guard drive the grid tick."""
+    grid = Grid(
         name="test",
-        target_grid_id=uuid4(),
-        schedule_enabled=True,
+        width_cm=27.1,
+        height_cm=20.3,
+        display_schedule_enabled=True,
         display_time="08:00",
-        weekday_mask=127,
-        timezone="UTC",
-        generation_lead_minutes=60,
+        display_weekday_mask=127,
+        display_timezone="UTC",
     )
-    before_lead = datetime(2026, 7, 1, 6, 30)
-    within_lead = datetime(2026, 7, 1, 7, 30)
+    before_display = datetime(2026, 7, 1, 7, 30)
     after_display = datetime(2026, 7, 1, 8, 5)
 
-    assert not generation_due(job, before_lead)
-    assert generation_due(job, within_lead)
-    assert not display_due(job, within_lead)
-    assert display_due(job, after_display)
+    assert not display_due(grid, before_display)
+    assert display_due(grid, after_display)
 
-    job.last_generated_on = within_lead.date()
-    assert not generation_due(job, within_lead)
-    job.last_displayed_on = after_display.date()
-    assert not display_due(job, after_display)
+    grid.last_displayed_on = after_display.date()
+    assert not display_due(grid, after_display)
+    grid.last_displayed_on = None
+
+    # An active session blocks a re-start.
+    grid.active_message_id = uuid4()
+    assert not display_due(grid, after_display)
+    grid.active_message_id = None
 
     # Wednesday 2026-07-01; mask without Wednesday (bit 2) → nothing fires.
-    job.last_generated_on = None
-    job.last_displayed_on = None
-    job.weekday_mask = 127 & ~(1 << 2)
-    assert not generation_due(job, within_lead)
-    assert not display_due(job, after_display)
+    grid.display_weekday_mask = 127 & ~(1 << 2)
+    assert not display_due(grid, after_display)
 
-    # A job without a target grid never fires.
-    job.weekday_mask = 127
-    job.target_grid_id = None
-    assert not generation_due(job, within_lead)
-    assert not display_due(job, after_display)
+    grid.display_weekday_mask = 127
+    grid.display_schedule_enabled = False
+    assert not display_due(grid, after_display)
 
 
-def test_schedule_respects_timezone() -> None:
+def test_display_schedule_respects_timezone() -> None:
     """08:00 in Berlin (UTC+2 in July) is 06:00 UTC."""
-    job = DisplayJob(
+    grid = Grid(
         name="tz-test",
-        target_grid_id=uuid4(),
-        schedule_enabled=True,
+        width_cm=27.1,
+        height_cm=20.3,
+        display_schedule_enabled=True,
         display_time="08:00",
-        weekday_mask=127,
-        timezone="Europe/Berlin",
-        generation_lead_minutes=0,
+        display_weekday_mask=127,
+        display_timezone="Europe/Berlin",
     )
-    assert not display_due(job, datetime(2026, 7, 1, 5, 55))
-    assert display_due(job, datetime(2026, 7, 1, 6, 5))
+    assert not display_due(grid, datetime(2026, 7, 1, 5, 55))
+    assert display_due(grid, datetime(2026, 7, 1, 6, 5))
 
 
 def _tiny_jpeg() -> bytes:

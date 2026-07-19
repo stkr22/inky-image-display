@@ -303,6 +303,15 @@ class GridResponse(BaseModel):
     displayed_since: UtcDatetime | None
     scheduled_next_at: UtcDatetime
     refresh_interval_seconds: int | None = None
+    display_schedule_enabled: bool = False
+    display_time: str = "08:00"
+    display_weekday_mask: int = 127
+    display_timezone: str = "UTC"
+    display_duration_seconds: int | None = None
+    active_message_id: UUID | None = None
+    active_since: UtcDatetime | None = None
+    active_expires_at: UtcDatetime | None = None
+    last_displayed_on: date | None = None
     created_at: UtcDatetime
     updated_at: UtcDatetime
     devices: list[GridDeviceResponse] | None = None
@@ -385,17 +394,9 @@ class DisplayJobResponse(BaseModel):
     source_mode: str
     image_preset_id: UUID | None
     text_model_name: str
-    schedule_enabled: bool
-    display_time: str
-    weekday_mask: int
-    timezone: str
-    generation_lead_minutes: int
-    display_duration_seconds: int | None
-    active_message_id: UUID | None
-    active_since: UtcDatetime | None
-    active_expires_at: UtcDatetime | None
-    last_generated_on: date | None
-    last_displayed_on: date | None
+    interval_minutes: int | None
+    next_run_at: UtcDatetime | None
+    last_run_at: UtcDatetime | None
     created_at: UtcDatetime
     updated_at: UtcDatetime
     slots: list[DisplayJobSlotResponse]

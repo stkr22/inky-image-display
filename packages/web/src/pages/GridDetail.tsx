@@ -1,14 +1,16 @@
 // Grid detail: layout preview with device rectangles over the source image,
-// tile-layout editing, and per-grid image actions with quality hints.
+// tile-layout editing, the display-job content schedule (when generated
+// content takes over the panels), and per-grid image actions with quality
+// hints.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, Dialog } from '../components/Dialog'
-import { Button, IntervalInputs, Switch, TextField, totalSeconds } from '../components/fields'
+import { Button, IntervalInputs, NumberField, Switch, TextField, totalSeconds } from '../components/fields'
 import { GridLayoutEditor, layoutRowsFromGrid, type LayoutRows } from '../components/GridLayoutEditor'
 import { useNotify } from '../components/Toast'
-import { EmptyNote, ErrorNote, Spinner } from '../components/ui'
+import { Badge, EmptyNote, ErrorNote, Spinner } from '../components/ui'
 import { api, ApiError } from '../lib/api'
 import { formatDatetime, formatIntervalSeconds, formatRelative, splitHoursMinutes } from '../lib/format'
 import { CROP_NEGLIGIBLE, cropText, imageFit, maxDevicePxcm, recommendedDims, resolutionBand } from '../lib/quality'
@@ -55,6 +57,7 @@ export function GridDetail() {
     <>
       <GridHeader grid={grid} devices={devices ?? []} onChanged={refresh} />
       <CanvasPreview grid={grid} devices={devices ?? []} previewImage={previewImage} maxPxcm={maxPxcm} />
+      <DisplayScheduleCard grid={grid} onChanged={refresh} />
       <ImageActions
         grid={grid}
         images={images ?? []}
@@ -199,6 +202,220 @@ function EditGridDialog({
         </Button>
       </div>
     </Dialog>
+  )
+}
+
+// --- Display-job content schedule ------------------------------------------------
+
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+// Explicit 24h hour/minute inputs: the native time input renders 12h on
+// AM/PM-locale browsers, and the operator wants 24h everywhere.
+function DisplayTimeFields({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string
+  onChange: (value: string) => void
+  disabled?: boolean
+}) {
+  const [hour = 8, minute = 0] = value.split(':').map((piece) => Number(piece) || 0)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const clamp = (n: number | '', max: number) => Math.min(Math.max(Number(n) || 0, 0), max)
+  return (
+    <>
+      <NumberField
+        label="Show at (hour, 24h)"
+        value={hour}
+        onChange={(v) => onChange(`${pad(clamp(v, 23))}:${pad(minute)}`)}
+        min={0}
+        max={23}
+        disabled={disabled}
+        className="flex-1"
+      />
+      <NumberField
+        label="Minute"
+        value={minute}
+        onChange={(v) => onChange(`${pad(hour)}:${pad(clamp(v, 59))}`)}
+        min={0}
+        max={59}
+        disabled={disabled}
+        className="flex-1"
+      />
+    </>
+  )
+}
+
+// The grid's side of display jobs: when the latest generated content takes
+// over the panels, for how long, plus live session status and manual
+// show/release. What is generated (and its cadence) lives on the job pages.
+function DisplayScheduleCard({ grid, onChanged }: { grid: Grid; onChanged: () => void }) {
+  const notify = useNotify()
+  const queryClient = useQueryClient()
+  const { data: jobs } = useQuery({ queryKey: ['display-jobs'], queryFn: api.listDisplayJobs })
+  const { data: status } = useQuery({
+    queryKey: ['grid-display-status', grid.id],
+    queryFn: () => api.getGridDisplayStatus(grid.id),
+    refetchInterval: 15_000,
+  })
+  const targetingJobs = (jobs ?? []).filter((job) => job.target_grid_id === grid.id)
+
+  const [enabled, setEnabled] = useState(grid.display_schedule_enabled)
+  const [displayTime, setDisplayTime] = useState(grid.display_time)
+  const [weekdayMask, setWeekdayMask] = useState(grid.display_weekday_mask)
+  const [timezone, setTimezone] = useState(grid.display_timezone)
+  const [untilReleased, setUntilReleased] = useState(grid.display_duration_seconds === null)
+  const [durationMinutes, setDurationMinutes] = useState<number | ''>(
+    grid.display_duration_seconds ? Math.round(grid.display_duration_seconds / 60) : 60,
+  )
+  const [busy, setBusy] = useState(false)
+
+  const refreshStatus = () => {
+    queryClient.invalidateQueries({ queryKey: ['grid-display-status', grid.id] })
+    onChanged()
+  }
+
+  const save = async () => {
+    setBusy(true)
+    try {
+      const durationSeconds = untilReleased ? null : Math.max(Number(durationMinutes) || 0, 1) * 60
+      await api.updateGrid(grid.id, {
+        display_schedule_enabled: enabled,
+        display_time: displayTime,
+        display_weekday_mask: weekdayMask,
+        display_timezone: timezone,
+        display_duration_seconds: durationSeconds,
+        clear_display_duration: untilReleased,
+      })
+      notify('Display schedule saved.', 'positive')
+      refreshStatus()
+    } catch (err) {
+      notify(`Save failed: ${errMessage(err)}`, 'negative')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const showNow = async () => {
+    setBusy(true)
+    try {
+      await api.startGridSession(grid.id)
+      notify('Session started — the latest generated content is on the panels.', 'positive')
+      refreshStatus()
+    } catch (err) {
+      notify(`Could not start: ${errMessage(err)}`, 'negative')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const release = async () => {
+    setBusy(true)
+    try {
+      await api.releaseGridSession(grid.id)
+      notify('Released — the grid returns to normal rotation.', 'positive')
+      refreshStatus()
+    } catch (err) {
+      notify(`Release failed: ${errMessage(err)}`, 'negative')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="ink-card" style={{ gap: 12 }}>
+      <div className="row w-full items-center gap-3 wrap">
+        <h3 className="ink-h3">Scheduled content</h3>
+        {status?.active ? <Badge tone="ok">Active</Badge> : <Badge tone="muted">Idle</Badge>}
+        {status?.active && status.headline && <span className="ink-small">“{status.headline}”</span>}
+        <div className="flex-1" />
+        <Button onClick={showNow} disabled={busy || targetingJobs.length === 0}>
+          Show now
+        </Button>
+        <Button danger onClick={release} disabled={busy || !status?.active}>
+          Release
+        </Button>
+      </div>
+      {status?.active && status.slots.length > 0 && (
+        <div className="row w-full gap-3 wrap">
+          {status.slots.map((slot) => (
+            <span key={`${slot.row}:${slot.col}`} className="ink-small">
+              <Badge tone={slot.is_online ? 'ok' : 'warn'} /> {slot.device_id}: {slot.current_part ?? '—'}
+            </span>
+          ))}
+        </div>
+      )}
+      <span className="ink-small">
+        {targetingJobs.length === 0 ? (
+          <>
+            No display job targets this grid yet — create one on the{' '}
+            <Link to="/jobs?tab=display" style={{ color: 'var(--ink-accent)' }}>
+              Jobs page
+            </Link>
+            .
+          </>
+        ) : (
+          <>
+            Shows the latest content generated by{' '}
+            {targetingJobs.map((job, index) => (
+              <span key={job.id}>
+                {index > 0 && ', '}
+                <Link to={`/display-jobs/${job.id}`} style={{ color: 'var(--ink-accent)' }}>
+                  {job.name}
+                </Link>
+              </span>
+            ))}
+            .
+          </>
+        )}
+      </span>
+      <Switch checked={enabled} onChange={setEnabled} label="Show automatically every day" />
+      <div className="row gap-3 w-full wrap">
+        <DisplayTimeFields value={displayTime} onChange={setDisplayTime} disabled={!enabled} />
+        <TextField
+          label="Timezone (IANA)"
+          value={timezone}
+          onChange={setTimezone}
+          placeholder="Europe/Berlin"
+          disabled={!enabled}
+          className="flex-1"
+        />
+      </div>
+      <div className="row gap-2 wrap">
+        {WEEKDAYS.map((day, index) => {
+          const selected = Boolean(weekdayMask & (1 << index))
+          return (
+            <Button
+              key={day}
+              flat={!selected}
+              primary={selected}
+              disabled={!enabled}
+              onClick={() => setWeekdayMask((mask) => mask ^ (1 << index))}
+            >
+              {day}
+            </Button>
+          )
+        })}
+      </div>
+      <div className="row gap-3 w-full items-end wrap">
+        <Switch checked={untilReleased} onChange={setUntilReleased} label="Show until released manually" />
+        {!untilReleased && (
+          <NumberField
+            label="Duration (minutes)"
+            value={durationMinutes}
+            onChange={setDurationMinutes}
+            min={1}
+            className="flex-1"
+          />
+        )}
+      </div>
+      <div className="row w-full justify-end">
+        <Button primary onClick={save} disabled={busy}>
+          Save schedule
+        </Button>
+      </div>
+    </div>
   )
 }
 

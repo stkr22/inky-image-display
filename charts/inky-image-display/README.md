@@ -4,8 +4,8 @@ Deploys the API (which serves the operator UI and `/media` proxy), the
 persistent volume for its SQLite database, an Ingress, and the Immich /
 Gemini sync CronJobs. The CronJobs only poll the API for *due* jobs on a
 frequent schedule — the actual per-job cadence is set in the web UI.
-Display jobs (the MOTD) need no extra workload at all — their daily
-schedules run inside the API process.
+Display jobs (the MOTD) need no extra workload at all — their generation
+intervals and the grids' display schedules run inside the API process.
 
 The chart is published on every GitHub release, version-locked to the
 container images built from the same tag:
