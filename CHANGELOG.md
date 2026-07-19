@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.13.0](https://github.com/stkr22/inky-image-display/compare/v5.12.0...v5.13.0) (2026-07-19)
+
+
+### Features
+
+* decouple display-job generation from grid display schedules ([94f9c5c](https://github.com/stkr22/inky-image-display/commit/94f9c5c9679da4f82f3743e5965f934832bb2618))
+* decouple display-job generation from grid display schedules ([5b77cc0](https://github.com/stkr22/inky-image-display/commit/5b77cc0ae01412de67b468254a14f0ade965304a))
+
 ## [5.12.0](https://github.com/stkr22/inky-image-display/compare/v5.11.0...v5.12.0) (2026-07-19)
 
 
