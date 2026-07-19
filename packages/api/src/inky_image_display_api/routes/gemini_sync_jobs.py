@@ -1,6 +1,7 @@
 """REST endpoints for Gemini batch sync job management."""
 
 import logging
+from datetime import timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
@@ -14,6 +15,7 @@ from inky_image_display_api.schemas import (
     GeminiSyncJobResponse,
     GeminiSyncJobUpdate,
 )
+from inky_image_display_api.services.sync_job_scheduling import claim_due_jobs, due_clause
 
 router = APIRouter(prefix="/api/genai/jobs", tags=["genai"])
 logger = logging.getLogger(__name__)
@@ -23,23 +25,31 @@ logger = logging.getLogger(__name__)
 async def list_gemini_sync_jobs(
     request: Request,
     is_active: bool | None = None,
-    requested: bool | None = None,
+    due: bool | None = None,
 ) -> list[GeminiSyncJob]:
     """List Gemini sync jobs with optional filters.
 
-    ``requested=true`` returns only jobs flagged by "Run now" — the query
-    the worker's ``--requested-only`` mode polls with.
+    ``due=true`` is a pure read of what a claim would return — used by the
+    worker's dry-run mode; it does not advance schedules.
     """
     async with AsyncSession(request.app.state.engine) as session:
         stmt = select(GeminiSyncJob)
         if is_active is not None:
             stmt = stmt.where(GeminiSyncJob.is_active == is_active)
-        if requested is True:
-            stmt = stmt.where(col(GeminiSyncJob.run_requested_at).is_not(None))
-        elif requested is False:
-            stmt = stmt.where(col(GeminiSyncJob.run_requested_at).is_(None))
+        if due is True:
+            stmt = stmt.where(due_clause(GeminiSyncJob, utcnow()))
         result = await session.exec(stmt)
         return list(result.all())
+
+
+@router.post("/claim-due", response_model=list[GeminiSyncJobResponse])
+async def claim_due_gemini_jobs(request: Request) -> list[GeminiSyncJob]:
+    """Hand out due Gemini jobs and advance their schedules (lease semantics)."""
+    async with AsyncSession(request.app.state.engine) as session:
+        jobs = await claim_due_jobs(session, GeminiSyncJob, utcnow())
+    if jobs:
+        logger.info("Handed out %d due gemini sync job(s)", len(jobs))
+    return jobs
 
 
 @router.get("/{job_id}", response_model=GeminiSyncJobResponse)
@@ -57,6 +67,9 @@ async def get_gemini_sync_job(request: Request, job_id: UUID) -> GeminiSyncJob:
 async def create_gemini_sync_job(request: Request, body: GeminiSyncJobCreate) -> GeminiSyncJob:
     """Create a new Gemini sync job."""
     job = GeminiSyncJob(**body.model_dump())
+    if job.interval_minutes is not None:
+        # Due immediately: a freshly created job should deliver right away.
+        job.next_run_at = utcnow()
     async with AsyncSession(request.app.state.engine) as session:
         session.add(job)
         await session.commit()
@@ -73,8 +86,13 @@ async def update_gemini_sync_job(request: Request, job_id: UUID, body: GeminiSyn
         job = result.first()
         if job is None:
             raise HTTPException(status_code=404, detail="Gemini sync job not found")
-        for key, value in body.model_dump(exclude_unset=True).items():
+        update_data = body.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
             setattr(job, key, value)
+        if "interval_minutes" in update_data:
+            # Rebase the schedule on the new cadence (null = manual only).
+            interval = job.interval_minutes
+            job.next_run_at = None if interval is None else utcnow() + timedelta(minutes=interval)
         job.updated_at = utcnow()
         session.add(job)
         await session.commit()
@@ -108,3 +126,4 @@ async def delete_gemini_sync_job(request: Request, job_id: UUID) -> None:
             raise HTTPException(status_code=404, detail="Gemini sync job not found")
         await session.delete(job)
         await session.commit()
+    logger.info("Deleted gemini sync job %s", job_id)

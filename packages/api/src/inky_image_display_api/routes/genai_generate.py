@@ -14,23 +14,10 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from inky_image_display_api.schemas import GenerationTaskResponse, ImageGenerateRequest, ImageGenerateResponse
 from inky_image_display_api.services.generation_service import generate_and_publish
-from inky_image_display_api.services.generation_tasks import GenerationTaskStore
+from inky_image_display_api.services.generation_tasks import task_registry
 
 router = APIRouter(prefix="/api/genai", tags=["genai"])
 logger = logging.getLogger(__name__)
-
-
-def _task_registry(request: Request) -> GenerationTaskStore:
-    """Return the app-wide task store, creating it lazily.
-
-    Lazy creation keeps test apps (which assemble ``app.state`` by hand)
-    working without extra fixtures.
-    """
-    registry = getattr(request.app.state, "generation_tasks", None)
-    if registry is None:
-        registry = GenerationTaskStore(request.app.state.engine)
-        request.app.state.generation_tasks = registry
-    return registry
 
 
 @router.post("/generate", status_code=202)
@@ -54,7 +41,7 @@ async def generate_image(
         )
 
     task_id = uuid4()
-    tasks = _task_registry(request)
+    tasks = task_registry(request)
     await tasks.create(task_id, body.subject)
     background_tasks.add_task(
         generate_and_publish,
@@ -81,7 +68,7 @@ async def list_generation_tasks(request: Request, limit: int = 50) -> list[Gener
     History is persisted (bounded) in the ``generation_tasks`` table, so
     it survives API restarts — visibility, not auditing.
     """
-    tasks = _task_registry(request)
+    tasks = task_registry(request)
     return [
         GenerationTaskResponse(
             task_id=t.task_id,

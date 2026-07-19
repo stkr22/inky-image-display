@@ -7,18 +7,17 @@ import type {
   AuthMe,
   Device,
   DeviceProfile,
+  DisplayJob,
+  DisplayJobDisplayResult,
+  DisplayJobStatus,
   GeminiJob,
   GenerationTask,
   Grid,
-  GridPlacement,
   GuestInvite,
   Image,
   ImageStats,
   ImmichRef,
-  MotdConfig,
-  MotdDisplayResult,
   MotdMessage,
-  MotdStatus,
   PromptBlock,
   PromptPreset,
   ScheduleEntry,
@@ -210,12 +209,6 @@ export const api = {
   updateGrid: (id: string, body: Record<string, unknown>) =>
     request<Grid>(`/api/grids/${id}`, { method: 'PUT', body }),
   deleteGrid: (id: string) => request<void>(`/api/grids/${id}`, { method: 'DELETE' }),
-  addDeviceToGrid: (gridId: string, body: Record<string, unknown>) =>
-    request<GridPlacement>(`/api/grids/${gridId}/devices`, { method: 'POST', body }),
-  updateDevicePlacement: (gridId: string, deviceId: string, body: Record<string, unknown>) =>
-    request<GridPlacement>(`/api/grids/${gridId}/devices/${deviceId}`, { method: 'PUT', body }),
-  removeDeviceFromGrid: (gridId: string, deviceId: string) =>
-    request<void>(`/api/grids/${gridId}/devices/${deviceId}`, { method: 'DELETE' }),
   displayGridImage: (gridId: string, imageId: string) =>
     request<Record<string, unknown>>(`/api/grids/${gridId}/display`, { method: 'POST', body: { image_id: imageId } }),
   releaseGrid: (gridId: string) =>
@@ -230,20 +223,25 @@ export const api = {
     request<{ task_id: string; status: string }>('/api/genai/generate', { method: 'POST', body }),
   listGenerationTasks: (limit = 20) => request<GenerationTask[]>('/api/genai/tasks', { params: { limit } }),
 
-  // --- Message of the day ---
-  getMotdConfig: () => request<MotdConfig>('/api/motd/config'),
-  updateMotdConfig: (body: Record<string, unknown>) =>
-    request<MotdConfig>('/api/motd/config', { method: 'PUT', body }),
-  motdGenerate: () => request<{ task_id: string; status: string }>('/api/motd/generate', { method: 'POST' }),
-  motdDisplay: (messageId?: string) =>
-    request<MotdDisplayResult>('/api/motd/display', {
+  // --- Display jobs (MOTD and future grid content types) ---
+  listDisplayJobs: () => request<DisplayJob[]>('/api/display-jobs'),
+  createDisplayJob: (body: Record<string, unknown>) =>
+    request<DisplayJob>('/api/display-jobs', { method: 'POST', body }),
+  getDisplayJob: (id: string) => request<DisplayJob>(`/api/display-jobs/${id}`),
+  updateDisplayJob: (id: string, body: Record<string, unknown>) =>
+    request<DisplayJob>(`/api/display-jobs/${id}`, { method: 'PUT', body }),
+  deleteDisplayJob: (id: string) => request<void>(`/api/display-jobs/${id}`, { method: 'DELETE' }),
+  displayJobGenerate: (id: string) =>
+    request<{ task_id: string; status: string }>(`/api/display-jobs/${id}/generate`, { method: 'POST' }),
+  displayJobDisplay: (id: string, messageId?: string) =>
+    request<DisplayJobDisplayResult>(`/api/display-jobs/${id}/display`, {
       method: 'POST',
       body: messageId ? { message_id: messageId } : {},
     }),
-  motdRelease: () => request<{ status: string }>('/api/motd/release', { method: 'POST' }),
-  getMotdStatus: () => request<MotdStatus>('/api/motd/status'),
-  getLatestMotdMessage: () => request<MotdMessage | null>('/api/motd/messages/latest'),
-  listMotdMessages: (limit = 10) => request<MotdMessage[]>('/api/motd/messages', { params: { limit } }),
+  displayJobRelease: (id: string) => request<{ status: string }>(`/api/display-jobs/${id}/release`, { method: 'POST' }),
+  getDisplayJobStatus: (id: string) => request<DisplayJobStatus>(`/api/display-jobs/${id}/status`),
+  listDisplayJobMessages: (id: string, limit = 10) =>
+    request<MotdMessage[]>(`/api/display-jobs/${id}/messages`, { params: { limit } }),
 
   // --- Immich browse proxy (503 when not configured server-side) ---
   listImmichAlbums: () => request<ImmichRef[]>('/api/immich/albums'),

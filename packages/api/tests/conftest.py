@@ -18,12 +18,12 @@ from inky_image_display_api.routes import (
     auth,
     device_profiles,
     devices,
+    display_jobs,
     eink_preview,
     gemini_sync_jobs,
     grids,
     images,
     images_process,
-    motd,
     prompt_blocks,
     schedule,
     sync_jobs,
@@ -34,14 +34,14 @@ from inky_image_display_shared.models import (
     AppSetting,
     Device,
     DeviceProfile,
+    DisplayJob,
+    DisplayJobSlot,
     GeminiSyncJob,
     GenerationTask,
     Grid,
     GridDevice,
     Image,
     ImmichSyncJob,
-    MotdConfig,
-    MotdDeviceAssignment,
     MotdMessage,
     MotdScreen,
     PromptBlock,
@@ -71,13 +71,13 @@ async def async_engine() -> AsyncIterator[AsyncEngine]:
             Grid.__table__,  # ty: ignore[unresolved-attribute]
             PromptBlock.__table__,  # ty: ignore[unresolved-attribute]
             PromptPreset.__table__,  # ty: ignore[unresolved-attribute]
-            MotdConfig.__table__,  # ty: ignore[unresolved-attribute]
             Device.__table__,  # ty: ignore[unresolved-attribute]
             GridDevice.__table__,  # ty: ignore[unresolved-attribute]
             ImmichSyncJob.__table__,  # ty: ignore[unresolved-attribute]
             AppSetting.__table__,  # ty: ignore[unresolved-attribute]
             GeminiSyncJob.__table__,  # ty: ignore[unresolved-attribute]
-            MotdDeviceAssignment.__table__,  # ty: ignore[unresolved-attribute]
+            DisplayJob.__table__,  # ty: ignore[unresolved-attribute]
+            DisplayJobSlot.__table__,  # ty: ignore[unresolved-attribute]
             MotdMessage.__table__,  # ty: ignore[unresolved-attribute]
             MotdScreen.__table__,  # ty: ignore[unresolved-attribute]
             SyncJobRun.__table__,  # ty: ignore[unresolved-attribute]
@@ -204,7 +204,7 @@ def test_app(
     app.include_router(app_settings.router)
     app.include_router(prompt_blocks.router)
     app.include_router(gemini_sync_jobs.router)
-    app.include_router(motd.router)
+    app.include_router(display_jobs.router)
 
     return app
 

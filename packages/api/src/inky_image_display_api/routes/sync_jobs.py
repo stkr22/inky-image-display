@@ -1,6 +1,7 @@
 """REST endpoints for Immich sync job management."""
 
 import logging
+from datetime import timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
@@ -10,6 +11,7 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.schemas import SyncJobCreate, SyncJobResponse, SyncJobUpdate
+from inky_image_display_api.services.sync_job_scheduling import claim_due_jobs, due_clause
 
 router = APIRouter(prefix="/api/sync-jobs", tags=["sync-jobs"])
 logger = logging.getLogger(__name__)
@@ -19,23 +21,31 @@ logger = logging.getLogger(__name__)
 async def list_sync_jobs(
     request: Request,
     is_active: bool | None = None,
-    requested: bool | None = None,
+    due: bool | None = None,
 ) -> list[ImmichSyncJob]:
     """List sync jobs with optional filters.
 
-    ``requested=true`` returns only jobs flagged by "Run now" — the query
-    the worker's ``--requested-only`` mode polls with.
+    ``due=true`` is a pure read of what a claim would return — used by the
+    worker's dry-run mode and diagnostics; it does not advance schedules.
     """
     async with AsyncSession(request.app.state.engine) as session:
         stmt = select(ImmichSyncJob)
         if is_active is not None:
             stmt = stmt.where(ImmichSyncJob.is_active == is_active)
-        if requested is True:
-            stmt = stmt.where(col(ImmichSyncJob.run_requested_at).is_not(None))
-        elif requested is False:
-            stmt = stmt.where(col(ImmichSyncJob.run_requested_at).is_(None))
+        if due is True:
+            stmt = stmt.where(due_clause(ImmichSyncJob, utcnow()))
         result = await session.exec(stmt)
         return list(result.all())
+
+
+@router.post("/claim-due", response_model=list[SyncJobResponse])
+async def claim_due_sync_jobs(request: Request) -> list[ImmichSyncJob]:
+    """Hand out due jobs to the worker and advance their schedules (lease semantics)."""
+    async with AsyncSession(request.app.state.engine) as session:
+        jobs = await claim_due_jobs(session, ImmichSyncJob, utcnow())
+    if jobs:
+        logger.info("Handed out %d due sync job(s)", len(jobs))
+    return jobs
 
 
 @router.get("/{job_id}", response_model=SyncJobResponse)
@@ -53,6 +63,9 @@ async def get_sync_job(request: Request, job_id: UUID) -> ImmichSyncJob:
 async def create_sync_job(request: Request, body: SyncJobCreate) -> ImmichSyncJob:
     """Create a new sync job."""
     job = ImmichSyncJob(**body.model_dump())
+    if job.interval_minutes is not None:
+        # Due immediately: a freshly created job should deliver right away.
+        job.next_run_at = utcnow()
     async with AsyncSession(request.app.state.engine) as session:
         session.add(job)
         await session.commit()
@@ -73,6 +86,10 @@ async def update_sync_job(request: Request, job_id: UUID, body: SyncJobUpdate) -
         update_data = body.model_dump(exclude_unset=True)
         for key, value in update_data.items():
             setattr(job, key, value)
+        if "interval_minutes" in update_data:
+            # Rebase the schedule on the new cadence (null = manual only).
+            interval = job.interval_minutes
+            job.next_run_at = None if interval is None else utcnow() + timedelta(minutes=interval)
         job.updated_at = utcnow()
 
         session.add(job)
@@ -87,9 +104,9 @@ async def update_sync_job(request: Request, job_id: UUID, body: SyncJobUpdate) -
 async def request_sync_job_run(request: Request, job_id: UUID) -> ImmichSyncJob:
     """Flag a job for an out-of-band worker run.
 
-    The worker's frequent ``--requested-only`` cron executes flagged jobs
-    (active or not — running a paused job on demand is the point of the
-    button) and the posted run report clears the flag.
+    The frequent worker cron claims flagged jobs (active or not — running a
+    paused job on demand is the point of the button) and the posted run
+    report clears the flag.
     """
     async with AsyncSession(request.app.state.engine) as session:
         result = await session.exec(select(ImmichSyncJob).where(col(ImmichSyncJob.id) == job_id))

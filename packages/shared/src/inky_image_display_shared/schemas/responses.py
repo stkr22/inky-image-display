@@ -180,6 +180,9 @@ class SyncJobResponse(BaseModel):
     taken_after: datetime | None
     taken_before: datetime | None
     rating: int | None
+    interval_minutes: int | None = None
+    next_run_at: UtcDatetime | None = None
+    last_run_at: UtcDatetime | None = None
     run_requested_at: UtcDatetime | None = None
     created_at: datetime
     updated_at: datetime
@@ -256,6 +259,9 @@ class GeminiSyncJobResponse(BaseModel):
     subjects: list[str]
     images_per_subject: int
     retention_days: int | None
+    interval_minutes: int | None = None
+    next_run_at: UtcDatetime | None = None
+    last_run_at: UtcDatetime | None = None
     run_requested_at: UtcDatetime | None = None
     created_at: datetime
     updated_at: datetime
@@ -265,12 +271,19 @@ class GeminiSyncJobResponse(BaseModel):
 
 
 class GridDeviceResponse(BaseModel):
-    """A device placement on a grid (bottom-left corner, Y-up)."""
+    """A device placement on a grid.
+
+    ``row``/``col`` are the layout slot (row 0 = top); the cm rect is the
+    computed geometry, expressed as the bottom-left corner Y-up for the
+    canvas preview.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
     grid_id: UUID
     device_id: UUID
+    row: int
+    col: int
     bottom_left_x_cm: float
     bottom_left_y_cm: float
     width_cm: float
@@ -317,7 +330,7 @@ class QuietHoursSettings(BaseModel):
 
     E-paper refreshes flash the panel for ~30 s, which is unwelcome in a
     bedroom at night. During the window the scheduler skips devices and
-    grids; manual pushes and the MOTD's own explicit schedule are not
+    grids; manual pushes and display jobs' own explicit schedules are not
     affected. A window whose start equals its end is treated as disabled.
 
     Shared between the settings response and the update body so both sides
@@ -346,23 +359,25 @@ class AppSettingsResponse(BaseModel):
     quiet_hours: QuietHoursSettings = QuietHoursSettings()
 
 
-# --- Message of the day ---
+# --- Display jobs ---
 
 
-class MotdAssignmentResponse(BaseModel):
-    """One device's part assignment within the MOTD config."""
+class DisplayJobSlotResponse(BaseModel):
+    """One grid slot's part mapping within a display job."""
 
-    model_config = ConfigDict(from_attributes=True)
-
-    device_id: UUID
+    row: int
+    col: int
     parts: list[str]
     rotation_index: int
 
 
-class MotdConfigResponse(BaseModel):
-    """The MOTD configuration plus live session state."""
+class DisplayJobResponse(BaseModel):
+    """A display job's configuration plus live session state."""
 
     id: UUID
+    name: str
+    job_type: str
+    target_grid_id: UUID | None
     content_prompt: str
     # Shipped default so the UI can offer "reset to default" without
     # hardcoding a copy of the prompt.
@@ -383,7 +398,7 @@ class MotdConfigResponse(BaseModel):
     last_displayed_on: date | None
     created_at: UtcDatetime
     updated_at: UtcDatetime
-    assignments: list[MotdAssignmentResponse]
+    slots: list[DisplayJobSlotResponse]
 
 
 class MotdScreenResponse(BaseModel):
@@ -422,31 +437,32 @@ class MotdMessageResponse(BaseModel):
     screens: list[MotdScreenResponse] = []
 
 
-class MotdDeviceStatus(BaseModel):
-    """Live per-device state while a MOTD session is active."""
+class DisplayJobSlotStatus(BaseModel):
+    """Live per-slot state while a job session is active."""
 
+    row: int
+    col: int
     device_id: str
     is_online: bool
     current_part: str | None
 
 
-class MotdStatusResponse(BaseModel):
-    """Whether a MOTD session is active and what each device shows."""
+class DisplayJobStatusResponse(BaseModel):
+    """Whether a job session is active and what each slot shows."""
 
     active: bool
     message_id: UUID | None
     headline: str | None
     active_since: UtcDatetime | None
     active_expires_at: UtcDatetime | None
-    devices: list[MotdDeviceStatus]
+    slots: list[DisplayJobSlotStatus]
 
 
-class MotdDisplayResult(BaseModel):
-    """Per-device outcome of ``POST /api/motd/display``."""
+class DisplayJobDisplayResult(BaseModel):
+    """Per-device outcome of ``POST /api/display-jobs/{id}/display``."""
 
     message_id: UUID
     headline: str | None
     displayed: list[str]
     offline: list[str]
-    skipped_grid_claimed: list[str]
     skipped_no_content: list[str]

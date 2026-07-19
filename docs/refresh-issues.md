@@ -137,7 +137,7 @@ physically removed.
 ## Recovery after a failed refresh
 
 Once the controller acks a failure, the API stops all automatic dispatch to
-that device (rotation, grids, MOTD, GenAI) so the scheduler doesn't pile
+that device (rotation, grids, display jobs, GenAI) so the scheduler doesn't pile
 images onto a panel that can't show them. Several layers then work to end
 that halt, in order of preference:
 

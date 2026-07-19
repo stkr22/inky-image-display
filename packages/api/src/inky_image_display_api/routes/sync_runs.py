@@ -70,8 +70,10 @@ async def report_sync_run(request: Request, body: SyncJobRunReport) -> SyncJobRu
         job_model = ImmichSyncJob if body.job_type == "immich" else GeminiSyncJob
         job_result = await session.exec(select(job_model).where(col(job_model.id) == body.job_id))
         job = job_result.first()
-        if job is not None and job.run_requested_at is not None and job.run_requested_at <= body.started_at:
-            job.run_requested_at = None
+        if job is not None:
+            job.last_run_at = body.finished_at
+            if job.run_requested_at is not None and job.run_requested_at <= body.started_at:
+                job.run_requested_at = None
             session.add(job)
 
         # Prune per (type, id) beyond the retention window. Autoflush has

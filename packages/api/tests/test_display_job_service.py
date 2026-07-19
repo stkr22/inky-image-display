@@ -1,4 +1,4 @@
-"""Tests for MOTD orchestration: generation, sessions, rotation, release."""
+"""Tests for display-job orchestration: generation, sessions, rotation, release."""
 
 from __future__ import annotations
 
@@ -10,27 +10,28 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
-from inky_image_display_api.services import motd_service
-from inky_image_display_api.services.motd_service import (
-    MotdStartError,
-    advance_due_parts,
+from inky_image_display_api.services import display_job_service
+from inky_image_display_api.services.display_job_service import (
+    JobStartError,
+    advance_due_slots,
     display_due,
     generate_message,
     generation_due,
-    get_or_create_config,
     release_session,
     start_session,
 )
-from inky_image_display_api.services.rotation import _rotate_due_devices
 from inky_image_display_shared.ai import MotdStory
 from inky_image_display_shared.models import (
     Device,
-    DeviceProfile,
-    MotdConfig,
-    MotdDeviceAssignment,
+    DisplayJob,
+    DisplayJobSlot,
+    Grid,
+    GridDevice,
     MotdMessage,
     MotdScreen,
-    PromptPreset,
+)
+from inky_image_display_shared.models import (
+    Image as ImageModel,
 )
 from inky_image_display_shared.time import utcnow
 from PIL import Image
@@ -51,26 +52,49 @@ STORY = MotdStory(
 )
 
 
-async def _seed_config_with_assignment(
-    engine: AsyncEngine,
-    device: Device,
-    parts: list[str],
-) -> MotdConfig:
+async def _seed_grid(engine: AsyncEngine, devices: list[Device]) -> Grid:
+    """A one-row grid with the given devices side by side (slot cols 0..n)."""
+    grid = Grid(name=f"grid-{uuid4()}", width_cm=27.1 * len(devices), height_cm=20.3)
     async with AsyncSession(engine) as session:
-        config = await get_or_create_config(session)
-        session.add(MotdDeviceAssignment(config_id=config.id, device_id=device.id, parts=json.dumps(parts)))
+        session.add(grid)
+        await session.flush()
+        for index, device in enumerate(devices):
+            session.add(
+                GridDevice(
+                    grid_id=grid.id,
+                    device_id=device.id,
+                    row=0,
+                    col=index,
+                    top_left_x_cm=27.1 * index,
+                    top_left_y_cm=0.0,
+                    width_cm=27.1,
+                    height_cm=20.3,
+                )
+            )
         await session.commit()
-        await session.refresh(config)
-    return config
+        await session.refresh(grid)
+    return grid
+
+
+async def _seed_job(engine: AsyncEngine, grid: Grid | None, slots: dict[tuple[int, int], list[str]]) -> DisplayJob:
+    job = DisplayJob(name=f"job-{uuid4()}", target_grid_id=grid.id if grid else None)
+    async with AsyncSession(engine) as session:
+        session.add(job)
+        await session.flush()
+        for (row, column), parts in slots.items():
+            session.add(DisplayJobSlot(job_id=job.id, row=row, col=column, parts=json.dumps(parts)))
+        await session.commit()
+        await session.refresh(job)
+    return job
 
 
 async def _seed_ready_message(
-    engine: AsyncEngine, config: MotdConfig, parts: list[str], dims: tuple[int, int]
+    engine: AsyncEngine, job: DisplayJob, parts: list[str], dims: tuple[int, int]
 ) -> MotdMessage:
     width, height = dims
     async with AsyncSession(engine) as session:
         message = MotdMessage(
-            config_id=config.id,
+            job_id=job.id,
             status="ready",
             headline=STORY.headline,
             what=STORY.what,
@@ -98,176 +122,6 @@ async def _seed_ready_message(
     return message
 
 
-@pytest.mark.asyncio
-async def test_generate_message_renders_screens_per_assignment(
-    async_engine: AsyncEngine,
-    mock_settings: MagicMock,
-    mock_s3_service: MagicMock,
-    seed_device: Device,
-) -> None:
-    """Full generation path: story + screens for the assigned parts/dims."""
-    mock_settings.gemini_api_key = MagicMock(get_secret_value=MagicMock(return_value="dummy"))
-    await _seed_config_with_assignment(async_engine, seed_device, ["what", "why+takeaway", "qr"])
-
-    with patch(
-        "inky_image_display_api.services.motd_service.generate_motd_story",
-        new=AsyncMock(return_value=(STORY, "https://news.example/bridge")),
-    ):
-        await generate_message(async_engine, mock_settings, mock_s3_service, task_id=uuid4())
-
-    async with AsyncSession(async_engine) as session:
-        message = (await session.exec(select(MotdMessage))).one()
-        assert message.status == "ready"
-        assert message.what == STORY.what
-        assert message.source_url == "https://news.example/bridge"
-        screens = (await session.exec(select(MotdScreen))).all()
-        # seed_device is a landscape 1600x1200 panel.
-        assert {(s.part, s.width, s.height) for s in screens} == {
-            ("what", 1600, 1200),
-            ("why+takeaway", 1600, 1200),
-            ("qr", 1600, 1200),
-        }
-        config = (await session.exec(select(MotdConfig))).one()
-        assert config.last_generated_on is not None
-    assert mock_s3_service.upload_image.call_count == 3
-
-
-@pytest.mark.asyncio
-async def test_generate_message_without_source_url_skips_qr(
-    async_engine: AsyncEngine,
-    mock_settings: MagicMock,
-    mock_s3_service: MagicMock,
-    seed_device: Device,
-) -> None:
-    mock_settings.gemini_api_key = MagicMock(get_secret_value=MagicMock(return_value="dummy"))
-    await _seed_config_with_assignment(async_engine, seed_device, ["what", "qr"])
-
-    with patch(
-        "inky_image_display_api.services.motd_service.generate_motd_story",
-        new=AsyncMock(return_value=(STORY, None)),
-    ):
-        await generate_message(async_engine, mock_settings, mock_s3_service, task_id=uuid4())
-
-    async with AsyncSession(async_engine) as session:
-        screens = (await session.exec(select(MotdScreen))).all()
-        assert [s.part for s in screens] == ["what"]
-
-
-@pytest.mark.asyncio
-async def test_generate_message_generates_image_once_per_orientation(
-    async_engine: AsyncEngine,
-    mock_settings: MagicMock,
-    mock_s3_service: MagicMock,
-    seed_device: Device,
-) -> None:
-    mock_settings.gemini_api_key = MagicMock(get_secret_value=MagicMock(return_value="dummy"))
-    await _seed_config_with_assignment(async_engine, seed_device, ["image"])
-
-    fake_image = AsyncMock(return_value=_tiny_jpeg())
-    fake_preset = MagicMock(model_name="gemini-image")
-    with (
-        patch(
-            "inky_image_display_api.services.motd_service.generate_motd_story",
-            new=AsyncMock(return_value=(STORY, None)),
-        ),
-        patch(
-            "inky_image_display_api.services.motd_service.resolve_preset",
-            new=AsyncMock(return_value=(fake_preset, {})),
-        ),
-        patch(
-            "inky_image_display_api.services.motd_service.build_rendered_prompt",
-            return_value=MagicMock(),
-        ),
-        patch("inky_image_display_api.services.motd_service.generate_image_bytes", new=fake_image),
-    ):
-        await generate_message(async_engine, mock_settings, mock_s3_service, task_id=uuid4())
-
-    assert fake_image.await_count == 1
-    async with AsyncSession(async_engine) as session:
-        screens = (await session.exec(select(MotdScreen))).all()
-        assert [s.part for s in screens] == ["image"]
-
-
-@pytest.mark.asyncio
-async def test_generate_message_records_failure(
-    async_engine: AsyncEngine,
-    mock_settings: MagicMock,
-    mock_s3_service: MagicMock,
-    seed_device: Device,
-) -> None:
-    mock_settings.gemini_api_key = MagicMock(get_secret_value=MagicMock(return_value="dummy"))
-    await _seed_config_with_assignment(async_engine, seed_device, ["what"])
-
-    with patch(
-        "inky_image_display_api.services.motd_service.generate_motd_story",
-        new=AsyncMock(side_effect=RuntimeError("boom")),
-    ):
-        await generate_message(async_engine, mock_settings, mock_s3_service, task_id=uuid4())
-
-    async with AsyncSession(async_engine) as session:
-        message = (await session.exec(select(MotdMessage))).one()
-        assert message.status == "failed"
-        assert message.error == "boom"
-
-
-@pytest.mark.asyncio
-async def test_start_session_claims_and_pushes(
-    async_engine: AsyncEngine,
-    mock_settings: MagicMock,
-    mock_mqtt: MagicMock,
-    mock_s3_service: MagicMock,
-    seed_device: Device,
-) -> None:
-    config = await _seed_config_with_assignment(async_engine, seed_device, ["what", "why"])
-    await _seed_ready_message(async_engine, config, ["what", "why"], (1600, 1200))
-    mock_mqtt.is_connected = MagicMock(return_value=True)
-
-    result = await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service)
-
-    assert result.displayed == [seed_device.device_id]
-    command = mock_mqtt.send_command.await_args.args[1]
-    assert command.image_path.endswith("what_1600x1200.jpg")
-    async with AsyncSession(async_engine) as session:
-        device = (await session.exec(select(Device))).one()
-        assert device.claimed_by_motd_config_id == config.id
-        db_config = (await session.exec(select(MotdConfig))).one()
-        assert db_config.active_message_id is not None
-        assert db_config.active_expires_at is None  # default duration = indefinite
-
-
-@pytest.mark.asyncio
-async def test_start_session_skips_grid_claimed_device(
-    async_engine: AsyncEngine,
-    mock_settings: MagicMock,
-    mock_mqtt: MagicMock,
-    mock_s3_service: MagicMock,
-    seed_device: Device,
-) -> None:
-    config = await _seed_config_with_assignment(async_engine, seed_device, ["what"])
-    await _seed_ready_message(async_engine, config, ["what"], (1600, 1200))
-    async with AsyncSession(async_engine) as session:
-        device = (await session.exec(select(Device))).one()
-        device.claimed_by_grid_id = uuid4()
-        session.add(device)
-        await session.commit()
-
-    with pytest.raises(MotdStartError, match="could be claimed"):
-        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service)
-
-
-@pytest.mark.asyncio
-async def test_start_session_without_message_raises(
-    async_engine: AsyncEngine,
-    mock_settings: MagicMock,
-    mock_mqtt: MagicMock,
-    mock_s3_service: MagicMock,
-    seed_device: Device,
-) -> None:
-    await _seed_config_with_assignment(async_engine, seed_device, ["what"])
-    with pytest.raises(MotdStartError, match="No generated message"):
-        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service)
-
-
 async def _seed_extra_device(async_engine: AsyncEngine, profile_id: UUID, device_id: str, orientation: str) -> Device:
     device = Device(
         id=uuid4(),
@@ -283,10 +137,172 @@ async def _seed_extra_device(async_engine: AsyncEngine, profile_id: UUID, device
     return device
 
 
-async def _add_assignment(async_engine: AsyncEngine, config: MotdConfig, device: Device, parts: list[str]) -> None:
+@pytest.mark.asyncio
+async def test_generate_message_renders_screens_per_slot(
+    async_engine: AsyncEngine,
+    mock_settings: MagicMock,
+    mock_s3_service: MagicMock,
+    seed_device: Device,
+) -> None:
+    """Full generation path: story + screens for the mapped parts/dims."""
+    mock_settings.gemini_api_key = MagicMock(get_secret_value=MagicMock(return_value="dummy"))
+    grid = await _seed_grid(async_engine, [seed_device])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["what", "why+takeaway", "qr"]})
+
+    with patch(
+        "inky_image_display_api.services.display_job_service.generate_motd_story",
+        new=AsyncMock(return_value=(STORY, "https://news.example/bridge")),
+    ):
+        await generate_message(async_engine, mock_settings, mock_s3_service, job_id=job.id, task_id=uuid4())
+
     async with AsyncSession(async_engine) as session:
-        session.add(MotdDeviceAssignment(config_id=config.id, device_id=device.id, parts=json.dumps(parts)))
-        await session.commit()
+        message = (await session.exec(select(MotdMessage))).one()
+        assert message.status == "ready"
+        assert message.what == STORY.what
+        assert message.source_url == "https://news.example/bridge"
+        screens = (await session.exec(select(MotdScreen))).all()
+        # seed_device is a landscape 1600x1200 panel.
+        assert {(s.part, s.width, s.height) for s in screens} == {
+            ("what", 1600, 1200),
+            ("why+takeaway", 1600, 1200),
+            ("qr", 1600, 1200),
+        }
+        db_job = (await session.exec(select(DisplayJob))).one()
+        assert db_job.last_generated_on is not None
+    assert mock_s3_service.upload_image.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_generate_message_without_source_url_skips_qr(
+    async_engine: AsyncEngine,
+    mock_settings: MagicMock,
+    mock_s3_service: MagicMock,
+    seed_device: Device,
+) -> None:
+    mock_settings.gemini_api_key = MagicMock(get_secret_value=MagicMock(return_value="dummy"))
+    grid = await _seed_grid(async_engine, [seed_device])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["what", "qr"]})
+
+    with patch(
+        "inky_image_display_api.services.display_job_service.generate_motd_story",
+        new=AsyncMock(return_value=(STORY, None)),
+    ):
+        await generate_message(async_engine, mock_settings, mock_s3_service, job_id=job.id, task_id=uuid4())
+
+    async with AsyncSession(async_engine) as session:
+        screens = (await session.exec(select(MotdScreen))).all()
+        assert [s.part for s in screens] == ["what"]
+
+
+@pytest.mark.asyncio
+async def test_generate_message_generates_image_once_per_orientation(
+    async_engine: AsyncEngine,
+    mock_settings: MagicMock,
+    mock_s3_service: MagicMock,
+    seed_device: Device,
+) -> None:
+    mock_settings.gemini_api_key = MagicMock(get_secret_value=MagicMock(return_value="dummy"))
+    grid = await _seed_grid(async_engine, [seed_device])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["image"]})
+
+    fake_image = AsyncMock(return_value=_tiny_jpeg())
+    fake_preset = MagicMock(model_name="gemini-image")
+    with (
+        patch(
+            "inky_image_display_api.services.display_job_service.generate_motd_story",
+            new=AsyncMock(return_value=(STORY, None)),
+        ),
+        patch(
+            "inky_image_display_api.services.display_job_service.resolve_preset",
+            new=AsyncMock(return_value=(fake_preset, {})),
+        ),
+        patch(
+            "inky_image_display_api.services.display_job_service.build_rendered_prompt",
+            return_value=MagicMock(),
+        ),
+        patch("inky_image_display_api.services.display_job_service.generate_image_bytes", new=fake_image),
+    ):
+        await generate_message(async_engine, mock_settings, mock_s3_service, job_id=job.id, task_id=uuid4())
+
+    assert fake_image.await_count == 1
+    async with AsyncSession(async_engine) as session:
+        screens = (await session.exec(select(MotdScreen))).all()
+        assert [s.part for s in screens] == ["image"]
+
+
+@pytest.mark.asyncio
+async def test_generate_message_records_failure(
+    async_engine: AsyncEngine,
+    mock_settings: MagicMock,
+    mock_s3_service: MagicMock,
+    seed_device: Device,
+) -> None:
+    mock_settings.gemini_api_key = MagicMock(get_secret_value=MagicMock(return_value="dummy"))
+    grid = await _seed_grid(async_engine, [seed_device])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["what"]})
+
+    with patch(
+        "inky_image_display_api.services.display_job_service.generate_motd_story",
+        new=AsyncMock(side_effect=RuntimeError("boom")),
+    ):
+        await generate_message(async_engine, mock_settings, mock_s3_service, job_id=job.id, task_id=uuid4())
+
+    async with AsyncSession(async_engine) as session:
+        message = (await session.exec(select(MotdMessage))).one()
+        assert message.status == "failed"
+        assert message.error == "boom"
+
+
+@pytest.mark.asyncio
+async def test_start_session_claims_grid_and_pushes(
+    async_engine: AsyncEngine,
+    mock_settings: MagicMock,
+    mock_mqtt: MagicMock,
+    mock_s3_service: MagicMock,
+    seed_device: Device,
+) -> None:
+    grid = await _seed_grid(async_engine, [seed_device])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["what", "why"]})
+    await _seed_ready_message(async_engine, job, ["what", "why"], (1600, 1200))
+    mock_mqtt.is_connected = MagicMock(return_value=True)
+
+    result = await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
+
+    assert result.displayed == [seed_device.device_id]
+    command = mock_mqtt.send_command.await_args.args[1]
+    assert command.image_path.endswith("what_1600x1200.jpg")
+    async with AsyncSession(async_engine) as session:
+        device = (await session.exec(select(Device))).one()
+        assert device.claimed_by_grid_id == grid.id
+        db_job = (await session.exec(select(DisplayJob))).one()
+        assert db_job.active_message_id is not None
+        assert db_job.active_expires_at is None  # default duration = indefinite
+
+
+@pytest.mark.asyncio
+async def test_start_session_without_grid_raises(
+    async_engine: AsyncEngine,
+    mock_settings: MagicMock,
+    mock_mqtt: MagicMock,
+    mock_s3_service: MagicMock,
+) -> None:
+    job = await _seed_job(async_engine, None, {})
+    with pytest.raises(JobStartError, match="no target grid"):
+        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
+
+
+@pytest.mark.asyncio
+async def test_start_session_without_message_raises(
+    async_engine: AsyncEngine,
+    mock_settings: MagicMock,
+    mock_mqtt: MagicMock,
+    mock_s3_service: MagicMock,
+    seed_device: Device,
+) -> None:
+    grid = await _seed_grid(async_engine, [seed_device])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["what"]})
+    with pytest.raises(JobStartError, match="No generated message"):
+        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
 
 
 @pytest.mark.asyncio
@@ -297,13 +313,14 @@ async def test_start_session_renders_missing_screens_on_demand(
     mock_s3_service: MagicMock,
     seed_device: Device,
 ) -> None:
-    """A part assigned after generation is rendered at session start."""
-    config = await _seed_config_with_assignment(async_engine, seed_device, ["why"])
-    # The message was generated while the assignment was still "what".
-    await _seed_ready_message(async_engine, config, ["what"], (1600, 1200))
+    """A part mapped after generation is rendered at session start."""
+    grid = await _seed_grid(async_engine, [seed_device])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["why"]})
+    # The message was generated while the slot mapping was still "what".
+    await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
 
-    result = await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service)
+    result = await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
 
     assert result.displayed == [seed_device.device_id]
     assert result.skipped_no_content == []
@@ -322,17 +339,17 @@ async def test_start_session_refits_image_for_new_panel_size(  # noqa: PLR0913 �
     mock_mqtt: MagicMock,
     mock_s3_service: MagicMock,
     seed_device: Device,
-    seed_profile: DeviceProfile,
+    seed_profile,
 ) -> None:
-    """A panel size assigned the image part after generation re-fits an existing screen."""
+    """A panel size mapped the image part after generation re-fits an existing screen."""
     portrait = await _seed_extra_device(async_engine, seed_profile.id, "test-portrait", "portrait")
-    config = await _seed_config_with_assignment(async_engine, seed_device, ["image"])
-    await _add_assignment(async_engine, config, portrait, ["image"])
-    message = await _seed_ready_message(async_engine, config, ["image"], (1600, 1200))
+    grid = await _seed_grid(async_engine, [seed_device, portrait])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["image"], (0, 1): ["image"]})
+    message = await _seed_ready_message(async_engine, job, ["image"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
     mock_s3_service.get_object_bytes = MagicMock(return_value=_tiny_jpeg())
 
-    result = await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service)
+    result = await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
 
     assert set(result.displayed) == {seed_device.device_id, portrait.device_id}
     mock_s3_service.get_object_bytes.assert_called_once_with(f"motd/{message.id}/image_1600x1200.jpg")
@@ -353,12 +370,13 @@ async def test_start_session_cannot_conjure_missing_illustration(
     seed_device: Device,
 ) -> None:
     """Without any rendered image screen the image part stays missing."""
-    config = await _seed_config_with_assignment(async_engine, seed_device, ["image"])
-    await _seed_ready_message(async_engine, config, ["what"], (1600, 1200))
+    grid = await _seed_grid(async_engine, [seed_device])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["image"]})
+    await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
 
-    with pytest.raises(MotdStartError, match="could be claimed"):
-        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service)
+    with pytest.raises(JobStartError, match="No grid slot has content"):
+        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
     mock_s3_service.upload_image.assert_not_called()
 
 
@@ -371,17 +389,18 @@ async def test_start_session_redisplays_specific_message(
     seed_device: Device,
 ) -> None:
     """An explicit message_id displays that message, not the latest, and stamps displayed_at."""
-    config = await _seed_config_with_assignment(async_engine, seed_device, ["what"])
-    older = await _seed_ready_message(async_engine, config, ["what"], (1600, 1200))
-    await _seed_ready_message(async_engine, config, ["what"], (1600, 1200))
+    grid = await _seed_grid(async_engine, [seed_device])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["what"]})
+    older = await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
+    await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
 
-    result = await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, message_id=older.id)
+    result = await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id, message_id=older.id)
 
     assert result.message_id == older.id
     async with AsyncSession(async_engine) as session:
-        db_config = (await session.exec(select(MotdConfig))).one()
-        assert db_config.active_message_id == older.id
+        db_job = (await session.exec(select(DisplayJob))).one()
+        assert db_job.active_message_id == older.id
         message = (await session.exec(select(MotdMessage).where(col(MotdMessage.id) == older.id))).one()
         assert message.displayed_at is not None
 
@@ -394,17 +413,18 @@ async def test_start_session_rejects_unknown_or_unready_message(
     mock_s3_service: MagicMock,
     seed_device: Device,
 ) -> None:
-    config = await _seed_config_with_assignment(async_engine, seed_device, ["what"])
-    with pytest.raises(MotdStartError, match="no longer exists"):
-        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, message_id=uuid4())
+    grid = await _seed_grid(async_engine, [seed_device])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["what"]})
+    with pytest.raises(JobStartError, match="no longer exists"):
+        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id, message_id=uuid4())
 
     async with AsyncSession(async_engine) as session:
-        failed = MotdMessage(config_id=config.id, status="failed")
+        failed = MotdMessage(job_id=job.id, status="failed")
         session.add(failed)
         await session.commit()
         await session.refresh(failed)
-    with pytest.raises(MotdStartError, match="not ready"):
-        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, message_id=failed.id)
+    with pytest.raises(JobStartError, match="not ready"):
+        await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id, message_id=failed.id)
 
 
 @pytest.mark.asyncio
@@ -414,21 +434,22 @@ async def test_prune_keeps_recent_active_and_latest_ready(
     seed_device: Device,
 ) -> None:
     """Retention is time-based, but the active and newest ready messages survive."""
-    config = await _seed_config_with_assignment(async_engine, seed_device, ["what"])
-    old_plain = await _seed_ready_message(async_engine, config, ["what"], (1600, 1200))
-    old_active = await _seed_ready_message(async_engine, config, ["what"], (1600, 1200))
-    recent = await _seed_ready_message(async_engine, config, ["what"], (1600, 1200))
+    grid = await _seed_grid(async_engine, [seed_device])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["what"]})
+    old_plain = await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
+    old_active = await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
+    recent = await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
     async with AsyncSession(async_engine) as session:
         for message_id, days in ((old_plain.id, 9), (old_active.id, 8), (recent.id, 0)):
             message = (await session.exec(select(MotdMessage).where(col(MotdMessage.id) == message_id))).one()
             message.created_at = utcnow() - timedelta(days=days)
             session.add(message)
-        db_config = (await session.exec(select(MotdConfig))).one()
-        db_config.active_message_id = old_active.id
-        session.add(db_config)
+        db_job = (await session.exec(select(DisplayJob))).one()
+        db_job.active_message_id = old_active.id
+        session.add(db_job)
         await session.commit()
 
-    await motd_service._prune_old_messages(async_engine, mock_s3_service, config.id)
+    await display_job_service._prune_old_messages(async_engine, mock_s3_service, job.id)
 
     async with AsyncSession(async_engine) as session:
         remaining = {m.id for m in (await session.exec(select(MotdMessage))).all()}
@@ -439,35 +460,36 @@ async def test_prune_keeps_recent_active_and_latest_ready(
 
 
 @pytest.mark.asyncio
-async def test_resync_pushes_changed_assignment(
+async def test_resync_pushes_changed_slot(
     async_engine: AsyncEngine,
     mock_settings: MagicMock,
     mock_mqtt: MagicMock,
     mock_s3_service: MagicMock,
     seed_device: Device,
 ) -> None:
-    """Editing a claimed device's parts mid-session renders and pushes the new part."""
-    config = await _seed_config_with_assignment(async_engine, seed_device, ["what"])
-    await _seed_ready_message(async_engine, config, ["what"], (1600, 1200))
+    """Editing a slot's parts mid-session renders and pushes the new part."""
+    grid = await _seed_grid(async_engine, [seed_device])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["what"]})
+    await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
-    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service)
+    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
     assert mock_mqtt.send_command.await_count == 1
 
     async with AsyncSession(async_engine) as session:
-        assignment = (await session.exec(select(MotdDeviceAssignment))).one()
-        assignment.parts = json.dumps(["takeaway"])
-        session.add(assignment)
+        slot = (await session.exec(select(DisplayJobSlot))).one()
+        slot.parts = json.dumps(["takeaway"])
+        session.add(slot)
         await session.commit()
 
     async with AsyncSession(async_engine) as session:
-        db_config = (await session.exec(select(MotdConfig))).one()
-        await motd_service.resync_active_session(
+        db_job = (await session.exec(select(DisplayJob))).one()
+        await display_job_service.resync_active_session(
             session,
             mock_mqtt,
             mock_settings,
             mock_s3_service,
-            db_config,
-            {seed_device.id: ["what"]},
+            db_job,
+            {(0, 0): ["what"]},
         )
 
     assert mock_mqtt.send_command.await_count == 2
@@ -475,55 +497,54 @@ async def test_resync_pushes_changed_assignment(
     assert command.image_path.endswith("takeaway_1600x1200.jpg")
     async with AsyncSession(async_engine) as session:
         device = (await session.exec(select(Device))).one()
-        assert device.claimed_by_motd_config_id == config.id
-        assignment = (await session.exec(select(MotdDeviceAssignment))).one()
-        assert assignment.rotation_index == 0
+        assert device.claimed_by_grid_id == grid.id
+        slot = (await session.exec(select(DisplayJobSlot))).one()
+        assert slot.rotation_index == 0
 
 
 @pytest.mark.asyncio
-async def test_resync_releases_removed_device_and_keeps_unchanged(  # noqa: PLR0913 — all six are fixtures
+async def test_resync_releases_removed_slot_and_keeps_unchanged(  # noqa: PLR0913 — all six are fixtures
     async_engine: AsyncEngine,
     mock_settings: MagicMock,
     mock_mqtt: MagicMock,
     mock_s3_service: MagicMock,
     seed_device: Device,
-    seed_profile: DeviceProfile,
+    seed_profile,
 ) -> None:
-    """Unchanged devices keep their screen; devices dropped from the list are released."""
+    """Unchanged slots keep their screen; slots dropped from the mapping release their panel."""
     second = await _seed_extra_device(async_engine, seed_profile.id, "test-second", "landscape")
-    config = await _seed_config_with_assignment(async_engine, seed_device, ["what"])
-    await _add_assignment(async_engine, config, second, ["why"])
-    await _seed_ready_message(async_engine, config, ["what", "why"], (1600, 1200))
+    grid = await _seed_grid(async_engine, [seed_device, second])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["what"], (0, 1): ["why"]})
+    await _seed_ready_message(async_engine, job, ["what", "why"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
-    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service)
+    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
     assert mock_mqtt.send_command.await_count == 2
 
     async with AsyncSession(async_engine) as session:
-        assignments = (await session.exec(select(MotdDeviceAssignment))).all()
-        for assignment in assignments:
-            if assignment.device_id == second.id:
-                await session.delete(assignment)
+        slots = (await session.exec(select(DisplayJobSlot))).all()
+        for slot in slots:
+            if slot.col == 1:
+                await session.delete(slot)
         await session.commit()
 
     async with AsyncSession(async_engine) as session:
-        db_config = (await session.exec(select(MotdConfig))).one()
-        await motd_service.resync_active_session(
+        db_job = (await session.exec(select(DisplayJob))).one()
+        await display_job_service.resync_active_session(
             session,
             mock_mqtt,
             mock_settings,
             mock_s3_service,
-            db_config,
-            {seed_device.id: ["what"], second.id: ["why"]},
+            db_job,
+            {(0, 0): ["what"], (0, 1): ["why"]},
         )
 
-    # No extra e-ink refresh for the unchanged device, no push for the removed one.
+    # No extra e-ink refresh for the unchanged slot, no push for the removed one.
     assert mock_mqtt.send_command.await_count == 2
     async with AsyncSession(async_engine) as session:
         kept = (await session.exec(select(Device).where(col(Device.id) == seed_device.id))).one()
         released = (await session.exec(select(Device).where(col(Device.id) == second.id))).one()
-        assert kept.claimed_by_motd_config_id == config.id
-        assert released.claimed_by_motd_config_id is None
-        assert released.scheduled_next_at <= utcnow()
+        assert kept.claimed_by_grid_id == grid.id
+        assert released.claimed_by_grid_id is None
 
 
 def _make_app(engine: AsyncEngine, settings: MagicMock, mqtt: MagicMock) -> MagicMock:
@@ -531,7 +552,7 @@ def _make_app(engine: AsyncEngine, settings: MagicMock, mqtt: MagicMock) -> Magi
     app.state.engine = engine
     app.state.settings = settings
     app.state.mqtt = mqtt
-    app.state.motd_generation_inflight = False
+    app.state.display_job_generation_inflight = set()
     app.state.generation_tasks = None
     return app
 
@@ -544,11 +565,12 @@ async def test_advance_rotates_and_wraps(
     mock_s3_service: MagicMock,
     seed_device: Device,
 ) -> None:
-    """A due, claimed device advances through its parts and wraps around."""
-    config = await _seed_config_with_assignment(async_engine, seed_device, ["what", "why"])
-    await _seed_ready_message(async_engine, config, ["what", "why"], (1600, 1200))
+    """A due, claimed panel advances through its slot's parts and wraps around."""
+    grid = await _seed_grid(async_engine, [seed_device])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["what", "why"]})
+    await _seed_ready_message(async_engine, job, ["what", "why"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
-    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service)
+    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
 
     app = _make_app(async_engine, mock_settings, mock_mqtt)
     for expected_part in ("why", "what"):
@@ -557,7 +579,7 @@ async def test_advance_rotates_and_wraps(
             device.scheduled_next_at = utcnow() - timedelta(seconds=1)
             session.add(device)
             await session.commit()
-        await advance_due_parts(app)
+        await advance_due_slots(app)
         command = mock_mqtt.send_command.await_args.args[1]
         assert f"{expected_part}_1600x1200" in command.image_path
 
@@ -567,18 +589,19 @@ async def test_advance_rotates_and_wraps(
 
 
 @pytest.mark.asyncio
-async def test_advance_parks_single_part_device(
+async def test_advance_parks_single_part_slot(
     async_engine: AsyncEngine,
     mock_settings: MagicMock,
     mock_mqtt: MagicMock,
     mock_s3_service: MagicMock,
     seed_device: Device,
 ) -> None:
-    """Single-part devices are parked, not re-pushed every interval."""
-    config = await _seed_config_with_assignment(async_engine, seed_device, ["what"])
-    await _seed_ready_message(async_engine, config, ["what"], (1600, 1200))
+    """Single-part slots are parked, not re-pushed every interval."""
+    grid = await _seed_grid(async_engine, [seed_device])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["what"]})
+    await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
-    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service)
+    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
     assert mock_mqtt.send_command.await_count == 1
 
     app = _make_app(async_engine, mock_settings, mock_mqtt)
@@ -587,77 +610,64 @@ async def test_advance_parks_single_part_device(
         device.scheduled_next_at = utcnow() - timedelta(seconds=1)
         session.add(device)
         await session.commit()
-    await advance_due_parts(app)
+    await advance_due_slots(app)
     assert mock_mqtt.send_command.await_count == 1  # no extra e-ink refresh
 
 
 @pytest.mark.asyncio
-async def test_release_returns_devices_to_rotation(
+async def test_release_without_pool_returns_devices_to_solo_rotation(
     async_engine: AsyncEngine,
     mock_settings: MagicMock,
     mock_mqtt: MagicMock,
     mock_s3_service: MagicMock,
     seed_device: Device,
 ) -> None:
-    config = await _seed_config_with_assignment(async_engine, seed_device, ["what"])
-    await _seed_ready_message(async_engine, config, ["what"], (1600, 1200))
+    grid = await _seed_grid(async_engine, [seed_device])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["what"]})
+    await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
-    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service)
+    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
 
     before = utcnow()
     async with AsyncSession(async_engine) as session:
-        db_config = (await session.exec(select(MotdConfig))).one()
-        await release_session(session, db_config, mock_settings)
+        db_job = (await session.exec(select(DisplayJob))).one()
+        await release_session(session, db_job, mock_settings)
 
     async with AsyncSession(async_engine) as session:
         device = (await session.exec(select(Device))).one()
-        assert device.claimed_by_motd_config_id is None
+        assert device.claimed_by_grid_id is None
         # Rejoin is jittered within the refresh interval (default 3600s here).
         assert device.scheduled_next_at >= before - timedelta(seconds=1)
         assert device.scheduled_next_at <= before + timedelta(seconds=3601)
-        db_config = (await session.exec(select(MotdConfig))).one()
-        assert db_config.active_message_id is None
-        assignment = (await session.exec(select(MotdDeviceAssignment))).one()
-        assert assignment.rotation_index == 0
+        db_job = (await session.exec(select(DisplayJob))).one()
+        assert db_job.active_message_id is None
+        slot = (await session.exec(select(DisplayJobSlot))).one()
+        assert slot.rotation_index == 0
 
 
 @pytest.mark.asyncio
-async def test_release_staggers_devices_to_avoid_synchronized_refreshes(
+async def test_release_staggers_devices_to_avoid_synchronized_refreshes(  # noqa: PLR0913 — all six are fixtures
     async_engine: AsyncEngine,
     mock_settings: MagicMock,
     mock_mqtt: MagicMock,
     mock_s3_service: MagicMock,
     seed_device: Device,
+    seed_profile,
 ) -> None:
-    """The MOTD pushes all panels at once; release must not rejoin them in
+    """A session pushes all panels at once; release must not rejoin them in
     lockstep or they keep flashing simultaneously every interval after."""
-    second = Device(
-        id=uuid4(),
-        device_id="test-display-2",
-        room="Kitchen",
-        device_profile_id=seed_device.device_profile_id,
-        display_orientation="landscape",
-        is_online=True,
-        last_seen=datetime.now(),
-    )
-    async with AsyncSession(async_engine) as session:
-        session.add(second)
-        await session.commit()
-        await session.refresh(second)
-
-    config = await _seed_config_with_assignment(async_engine, seed_device, ["what"])
-    async with AsyncSession(async_engine) as session:
-        session.add(MotdDeviceAssignment(config_id=config.id, device_id=second.id, parts=json.dumps(["what"])))
-        await session.commit()
-    await _seed_ready_message(async_engine, config, ["what"], (1600, 1200))
+    second = await _seed_extra_device(async_engine, seed_profile.id, "test-display-2", "landscape")
+    grid = await _seed_grid(async_engine, [seed_device, second])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["what"], (0, 1): ["what"]})
+    await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
-    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service)
+    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
 
     before = utcnow()
-    with patch.object(motd_service.random, "uniform", side_effect=[600.0, 1800.0]) as uniform:
+    with patch.object(display_job_service.random, "uniform", side_effect=[600.0, 1800.0]) as uniform:
         async with AsyncSession(async_engine) as session:
-            db_config = (await session.exec(select(MotdConfig))).one()
-            await release_session(session, db_config, mock_settings)
+            db_job = (await session.exec(select(DisplayJob))).one()
+            await release_session(session, db_job, mock_settings)
     # Jitter is drawn per device over its full refresh interval.
     assert uniform.call_count == 2
     assert uniform.call_args_list[0].args == (0, 3600)
@@ -670,6 +680,45 @@ async def test_release_staggers_devices_to_avoid_synchronized_refreshes(
 
 
 @pytest.mark.asyncio
+async def test_release_with_pool_resumes_grid_rotation_with_jitter(
+    async_engine: AsyncEngine,
+    mock_settings: MagicMock,
+    mock_mqtt: MagicMock,
+    mock_s3_service: MagicMock,
+    seed_device: Device,
+) -> None:
+    """A grid with pool images keeps its claims; only its next tick is jittered."""
+    grid = await _seed_grid(async_engine, [seed_device])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["what"]})
+    await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
+    async with AsyncSession(async_engine) as session:
+        session.add(
+            ImageModel(
+                source_name="manual",
+                storage_path="manual/pool.jpg",
+                is_portrait=False,
+                target_grid_id=grid.id,
+            )
+        )
+        await session.commit()
+    mock_mqtt.is_connected = MagicMock(return_value=True)
+    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
+
+    before = utcnow()
+    with patch.object(display_job_service.random, "uniform", return_value=900.0) as uniform:
+        async with AsyncSession(async_engine) as session:
+            db_job = (await session.exec(select(DisplayJob))).one()
+            await release_session(session, db_job, mock_settings)
+    uniform.assert_called_once()
+
+    async with AsyncSession(async_engine) as session:
+        device = (await session.exec(select(Device))).one()
+        assert device.claimed_by_grid_id == grid.id  # grid resumes pool rotation
+        db_grid = (await session.exec(select(Grid))).one()
+        assert (db_grid.scheduled_next_at - before).total_seconds() == pytest.approx(900, abs=2)
+
+
+@pytest.mark.asyncio
 async def test_expired_session_is_released_by_tick(
     async_engine: AsyncEngine,
     mock_settings: MagicMock,
@@ -677,36 +726,39 @@ async def test_expired_session_is_released_by_tick(
     mock_s3_service: MagicMock,
     seed_device: Device,
 ) -> None:
-    config = await _seed_config_with_assignment(async_engine, seed_device, ["what"])
+    grid = await _seed_grid(async_engine, [seed_device])
+    job = await _seed_job(async_engine, grid, {(0, 0): ["what"]})
     async with AsyncSession(async_engine) as session:
-        db_config = (await session.exec(select(MotdConfig))).one()
-        db_config.display_duration_seconds = 60
-        session.add(db_config)
+        db_job = (await session.exec(select(DisplayJob))).one()
+        db_job.display_duration_seconds = 60
+        session.add(db_job)
         await session.commit()
-    await _seed_ready_message(async_engine, config, ["what"], (1600, 1200))
+    await _seed_ready_message(async_engine, job, ["what"], (1600, 1200))
     mock_mqtt.is_connected = MagicMock(return_value=True)
-    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service)
+    await start_session(async_engine, mock_mqtt, mock_settings, mock_s3_service, job.id)
 
     async with AsyncSession(async_engine) as session:
-        db_config = (await session.exec(select(MotdConfig))).one()
-        assert db_config.active_expires_at is not None
-        db_config.active_expires_at = utcnow() - timedelta(seconds=1)
-        session.add(db_config)
+        db_job = (await session.exec(select(DisplayJob))).one()
+        assert db_job.active_expires_at is not None
+        db_job.active_expires_at = utcnow() - timedelta(seconds=1)
+        session.add(db_job)
         await session.commit()
 
     app = _make_app(async_engine, mock_settings, mock_mqtt)
-    await motd_service.tick(app)
+    await display_job_service.tick(app)
 
     async with AsyncSession(async_engine) as session:
         device = (await session.exec(select(Device))).one()
-        assert device.claimed_by_motd_config_id is None
-        db_config = (await session.exec(select(MotdConfig))).one()
-        assert db_config.active_message_id is None
+        assert device.claimed_by_grid_id is None
+        db_job = (await session.exec(select(DisplayJob))).one()
+        assert db_job.active_message_id is None
 
 
 def test_schedule_due_helpers() -> None:
     """Weekday mask, lead time and once-per-day guards drive the tick."""
-    config = MotdConfig(
+    job = DisplayJob(
+        name="test",
+        target_grid_id=uuid4(),
         schedule_enabled=True,
         display_time="08:00",
         weekday_mask=127,
@@ -717,91 +769,46 @@ def test_schedule_due_helpers() -> None:
     within_lead = datetime(2026, 7, 1, 7, 30)
     after_display = datetime(2026, 7, 1, 8, 5)
 
-    assert not generation_due(config, before_lead)
-    assert generation_due(config, within_lead)
-    assert not display_due(config, within_lead)
-    assert display_due(config, after_display)
+    assert not generation_due(job, before_lead)
+    assert generation_due(job, within_lead)
+    assert not display_due(job, within_lead)
+    assert display_due(job, after_display)
 
-    config.last_generated_on = within_lead.date()
-    assert not generation_due(config, within_lead)
-    config.last_displayed_on = after_display.date()
-    assert not display_due(config, after_display)
+    job.last_generated_on = within_lead.date()
+    assert not generation_due(job, within_lead)
+    job.last_displayed_on = after_display.date()
+    assert not display_due(job, after_display)
 
     # Wednesday 2026-07-01; mask without Wednesday (bit 2) → nothing fires.
-    config.last_generated_on = None
-    config.last_displayed_on = None
-    config.weekday_mask = 127 & ~(1 << 2)
-    assert not generation_due(config, within_lead)
-    assert not display_due(config, after_display)
+    job.last_generated_on = None
+    job.last_displayed_on = None
+    job.weekday_mask = 127 & ~(1 << 2)
+    assert not generation_due(job, within_lead)
+    assert not display_due(job, after_display)
+
+    # A job without a target grid never fires.
+    job.weekday_mask = 127
+    job.target_grid_id = None
+    assert not generation_due(job, within_lead)
+    assert not display_due(job, after_display)
 
 
 def test_schedule_respects_timezone() -> None:
     """08:00 in Berlin (UTC+2 in July) is 06:00 UTC."""
-    config = MotdConfig(
+    job = DisplayJob(
+        name="tz-test",
+        target_grid_id=uuid4(),
         schedule_enabled=True,
         display_time="08:00",
         weekday_mask=127,
         timezone="Europe/Berlin",
         generation_lead_minutes=0,
     )
-    assert not display_due(config, datetime(2026, 7, 1, 5, 55))
-    assert display_due(config, datetime(2026, 7, 1, 6, 5))
+    assert not display_due(job, datetime(2026, 7, 1, 5, 55))
+    assert display_due(job, datetime(2026, 7, 1, 6, 5))
 
 
 def _tiny_jpeg() -> bytes:
     out = BytesIO()
     Image.new("RGB", (64, 48), "#446688").save(out, format="JPEG")
     return out.getvalue()
-
-
-@pytest.mark.asyncio
-async def test_new_config_defaults_to_scene_preset(async_engine: AsyncEngine) -> None:
-    """A lazily-created config picks the seeded scene preset when present."""
-    block_id = uuid4()
-    async with AsyncSession(async_engine) as session:
-        session.add(
-            PromptPreset(
-                id=uuid4(),
-                name="e_ink_scene",
-                style_block_id=block_id,
-                palette_block_id=block_id,
-                legibility_block_id=block_id,
-                composition_block_id=block_id,
-                background_block_id=block_id,
-                is_default=False,
-            )
-        )
-        await session.commit()
-
-    async with AsyncSession(async_engine) as session:
-        config = await get_or_create_config(session)
-        preset = (await session.exec(select(PromptPreset))).one()
-        assert config.image_preset_id == preset.id
-
-
-@pytest.mark.asyncio
-async def test_new_config_without_scene_preset_falls_back_to_none(async_engine: AsyncEngine) -> None:
-    async with AsyncSession(async_engine) as session:
-        config = await get_or_create_config(session)
-        assert config.image_preset_id is None
-
-
-@pytest.mark.asyncio
-async def test_rotation_excludes_motd_claimed_devices(
-    async_engine: AsyncEngine,
-    mock_settings: MagicMock,
-    mock_mqtt: MagicMock,
-    seed_device: Device,
-) -> None:
-    """The solo rotation query must skip devices held by a MOTD session."""
-    async with AsyncSession(async_engine) as session:
-        device = (await session.exec(select(Device).where(col(Device.id) == seed_device.id))).one()
-        device.claimed_by_motd_config_id = uuid4()
-        device.scheduled_next_at = utcnow() - timedelta(seconds=10)
-        session.add(device)
-        await session.commit()
-
-    app = _make_app(async_engine, mock_settings, mock_mqtt)
-    mock_mqtt.is_connected = MagicMock(return_value=True)
-    await _rotate_due_devices(app)
-    mock_mqtt.send_command.assert_not_awaited()

@@ -125,34 +125,37 @@ class ImmichSyncService:
             logger=logger,
         )
 
-    async def sync_all_active_jobs(self, requested_only: bool = False) -> None:
+    async def sync_jobs(self, all_active: bool = False) -> None:
         """Execute sync jobs via the Display API, reporting each run.
+
+        The default mode claims due jobs from the API (per-job schedule plus
+        Run-now flags), so a single frequent cron drives all cadences. The
+        claim advances each job's schedule, and exiting early when nothing
+        is due keeps the frequent cron cheap. ``all_active`` ignores the
+        schedule and runs every active job (manual/debug invocations).
 
         Each job's ``max_images`` cap is counted against only the images that
         job uploaded (``images.sync_job_name``), so one job can never spend
         another's budget.
-
-        ``requested_only`` is the fast-cron mode behind the UI's "Run now"
-        button: it executes only flagged jobs (active or not) and skips the
-        global retention cleanup, so it stays cheap enough to run every
-        minute or two.
         """
-        if requested_only:
-            jobs = await self.api_client.get_requested_sync_jobs()
-            if not jobs:
-                self.logger.debug("No requested sync jobs")
-                return
-        else:
+        if all_active:
             jobs = await self.api_client.get_active_sync_jobs()
             if not jobs:
                 self.logger.warning("No active sync jobs found")
                 return
+        else:
+            jobs = await self.api_client.claim_due_sync_jobs()
+            if not jobs:
+                self.logger.debug("No due sync jobs")
+                return
 
         self.logger.info("Found %d sync job(s) to process", len(jobs))
 
-        # Cleanup first so expired images free up each job's budget before counting.
+        # Cleanup first so expired images free up each job's budget before
+        # counting. Runs only when jobs were handed out, so its cost is
+        # bounded by job cadence rather than cron frequency.
         deleted_by_job: dict[str, int] = {}
-        if not requested_only and self.sync_config.retention_days > 0:
+        if self.sync_config.retention_days > 0:
             _, deleted_by_job = await self._cleanup_expired_images()
 
         self.storage.ensure_bucket_exists()

@@ -40,6 +40,7 @@ export function SyncJobForm() {
   const [overfetch, setOverfetch] = useState(3)
   const [randomPick, setRandomPick] = useState(false)
   const [active, setActive] = useState(true)
+  const [intervalMinutes, setIntervalMinutes] = useState<number | ''>(60)
   const [albumIds, setAlbumIds] = useState<string[]>([])
   const [personIds, setPersonIds] = useState<string[]>([])
   const [tagIds, setTagIds] = useState<string[]>([])
@@ -66,6 +67,7 @@ export function SyncJobForm() {
     setOverfetch(job.overfetch_multiplier || 3)
     setRandomPick(job.random_pick)
     setActive(job.is_active)
+    setIntervalMinutes(typeof job.interval_minutes === 'number' ? job.interval_minutes : '')
     setAlbumIds(job.album_ids ?? [])
     setPersonIds(job.person_ids ?? [])
     setTagIds(job.tag_ids ?? [])
@@ -110,6 +112,9 @@ export function SyncJobForm() {
       return setError('Max images must be 0 (unlimited) or greater')
     }
     if (strategy === 'SMART' && !query.trim()) return setError('Query is required when strategy is SMART')
+    if (intervalMinutes !== '' && (!Number.isInteger(Number(intervalMinutes)) || Number(intervalMinutes) < 1)) {
+      return setError('Run interval must be at least 1 minute (or blank for manual runs only)')
+    }
 
     const body = {
       name,
@@ -134,6 +139,7 @@ export function SyncJobForm() {
       taken_before: takenBefore || null,
       rating: rating === '' ? null : Number(rating),
       is_active: active,
+      interval_minutes: intervalMinutes === '' ? null : Number(intervalMinutes),
     }
     try {
       if (isEdit) await api.updateSyncJob(jobId!, body)
@@ -225,6 +231,16 @@ export function SyncJobForm() {
               help="Fetches Count × this many candidates from Immich, because photos with the wrong orientation or too small for the panel are dropped afterwards. Raise it when runs deliver fewer images than requested."
             />
           </div>
+          <div className="ink-form-row items-end w-full">
+            <NumberField
+              label="Run every (minutes, blank = manual only)"
+              value={intervalMinutes}
+              onChange={setIntervalMinutes}
+              min={1}
+              step={1}
+              help="How often the worker runs this job automatically. Leave blank to only run it via the 'Run now' button."
+            />
+          </div>
           <div className="row w-full gap-4 items-center wrap">
             <Switch
               label="Random pick"
@@ -236,7 +252,7 @@ export function SyncJobForm() {
               label="Active"
               checked={active}
               onChange={setActive}
-              help="Inactive jobs are skipped by the scheduled sync but can still be started with 'Run now'."
+              help="Inactive jobs are skipped by the schedule but can still be started with 'Run now'."
             />
           </div>
         </div>

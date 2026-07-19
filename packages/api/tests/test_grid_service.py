@@ -5,7 +5,6 @@ from __future__ import annotations
 from io import BytesIO
 from uuid import uuid4
 
-import pytest
 from inky_image_display_api.services import grid_service
 from inky_image_display_shared.models import DeviceProfile, Grid, GridDevice
 from PIL import Image as PILImage
@@ -28,77 +27,17 @@ def _grid(width_cm: float = 80.0, height_cm: float = 40.0) -> Grid:
     return Grid(id=uuid4(), name=f"grid-{uuid4()}", width_cm=width_cm, height_cm=height_cm)
 
 
-class TestDeriveRect:
-    """Validate placement derivation from a bottom-left (Y-up) corner."""
+class TestOrientedDims:
+    """Physical/pixel dims swap for portrait mounts."""
 
-    def test_bottom_left_at_origin_maps_to_top(self):
-        """bottom_left=(0,0) sits at the floor of the canvas → top_left_y = grid_h - dev_h."""
-        grid = _grid(80, 40)
+    def test_portrait_swaps_physical_dims(self):
         profile = _profile(w_cm=20, h_cm=10)
-        rect = grid_service.derive_rect(
-            grid,
-            profile,
-            "landscape",
-            bottom_left_x_cm=0.0,
-            bottom_left_y_cm=0.0,
-        )
-        assert rect.top_left_x_cm == pytest.approx(0.0)
-        assert rect.top_left_y_cm == pytest.approx(30.0)
-        assert rect.width_cm == pytest.approx(20.0)
-        assert rect.height_cm == pytest.approx(10.0)
-        assert rect.bottom_left_y_cm(grid.height_cm) == pytest.approx(0.0)
+        assert grid_service.oriented_physical_dims(profile, "portrait") == (10, 20)
+        assert grid_service.oriented_physical_dims(profile, "landscape") == (20, 10)
 
-    def test_bottom_left_at_top_of_canvas(self):
-        """bottom_left_y = grid_h - dev_h puts the device flush with the top edge."""
-        grid = _grid(80, 40)
-        profile = _profile(w_cm=20, h_cm=10)
-        rect = grid_service.derive_rect(
-            grid,
-            profile,
-            "landscape",
-            bottom_left_x_cm=0.0,
-            bottom_left_y_cm=30.0,
-        )
-        assert rect.top_left_y_cm == pytest.approx(0.0)
-
-    def test_portrait_swaps_dims(self):
-        grid = _grid(40, 80)
-        profile = _profile(w_cm=20, h_cm=10)
-        rect = grid_service.derive_rect(
-            grid,
-            profile,
-            "portrait",
-            bottom_left_x_cm=0.0,
-            bottom_left_y_cm=0.0,
-        )
-        assert rect.width_cm == pytest.approx(10.0)
-        assert rect.height_cm == pytest.approx(20.0)
-
-    def test_rect_off_canvas_raises(self):
-        grid = _grid(80, 40)
-        profile = _profile(w_cm=20, h_cm=10)
-        with pytest.raises(grid_service.GridValidationError) as exc:
-            grid_service.derive_rect(
-                grid,
-                profile,
-                "landscape",
-                bottom_left_x_cm=65.0,
-                bottom_left_y_cm=0.0,
-            )
-        assert exc.value.status_code == 400
-
-    def test_negative_height_raises(self):
-        """bottom_left_y too high pushes the rect above the canvas top."""
-        grid = _grid(80, 40)
-        profile = _profile(w_cm=20, h_cm=10)
-        with pytest.raises(grid_service.GridValidationError):
-            grid_service.derive_rect(
-                grid,
-                profile,
-                "landscape",
-                bottom_left_x_cm=0.0,
-                bottom_left_y_cm=35.0,
-            )
+    def test_portrait_swaps_pixel_dims(self):
+        profile = _profile(width=1600, height=1200)
+        assert grid_service.oriented_pixel_dims(profile, "portrait") == (1200, 1600)
 
 
 def _make_jpeg(width: int, height: int) -> bytes:

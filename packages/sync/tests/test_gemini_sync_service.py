@@ -111,7 +111,7 @@ async def test_no_active_jobs_returns_empty() -> None:
     api_client.get_active_gemini_jobs.return_value = []
     service = _make_service(api_client)
 
-    assert await service.sync_all_active_jobs() == []
+    assert await service.sync_jobs(all_active=True) == []
     service.storage.ensure_bucket_exists.assert_called_once()  # ty: ignore[unresolved-attribute]
 
 
@@ -125,7 +125,7 @@ async def test_fan_out_generates_subjects_times_count_and_registers() -> None:
 
     generate_mock = AsyncMock(return_value=b"raw-image")
     with patch("inky_image_display_sync.gemini.sync_service.generate_image_bytes", generate_mock):
-        results = await service.sync_all_active_jobs()
+        results = await service.sync_jobs(all_active=True)
 
     assert len(results) == 1
     assert results[0].generated == 4  # 2 subjects x 2 images
@@ -151,7 +151,7 @@ async def test_portrait_swaps_dimensions_and_sets_expiry() -> None:
 
     generate_mock = AsyncMock(return_value=b"raw-image")
     with patch("inky_image_display_sync.gemini.sync_service.generate_image_bytes", generate_mock):
-        await service.sync_all_active_jobs()
+        await service.sync_jobs(all_active=True)
 
     # The prompt must carry the portrait flag into the Gemini call.
     prompt = generate_mock.call_args.args[1]
@@ -176,7 +176,7 @@ async def test_one_failed_generation_does_not_abort_the_batch() -> None:
 
     generate_mock = AsyncMock(side_effect=[Exception("Gemini exploded"), b"raw", b"raw"])
     with patch("inky_image_display_sync.gemini.sync_service.generate_image_bytes", generate_mock):
-        results = await service.sync_all_active_jobs()
+        results = await service.sync_jobs(all_active=True)
 
     assert results[0].generated == 2
     assert results[0].failed == 1
@@ -194,7 +194,7 @@ async def test_preset_load_failure_fails_job_but_continues_with_next() -> None:
 
     generate_mock = AsyncMock(return_value=b"raw-image")
     with patch("inky_image_display_sync.gemini.sync_service.generate_image_bytes", generate_mock):
-        results = await service.sync_all_active_jobs()
+        results = await service.sync_jobs(all_active=True)
 
     assert [(r.job_name, r.generated, r.failed) for r in results] == [("broken", 0, 1), ("healthy", 1, 0)]
     assert "preset gone" in results[0].errors[0]

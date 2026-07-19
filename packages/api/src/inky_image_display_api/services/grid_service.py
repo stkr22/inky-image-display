@@ -11,7 +11,6 @@ the normal MQTT ``DisplayCommand`` flow.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from io import BytesIO
 from typing import TYPE_CHECKING
 
@@ -42,29 +41,6 @@ pillow_heif.register_heif_opener()
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class DeviceRect:
-    """A device's stored placement.
-
-    Internal coordinates are top-left origin because PIL crop and CSS
-    positioning both want top-left. Callers translate to/from the
-    user-facing bottom-left origin at the API boundary.
-    """
-
-    top_left_x_cm: float
-    top_left_y_cm: float
-    width_cm: float
-    height_cm: float
-
-    def bottom_left_x_cm(self) -> float:
-        """Bottom-left x in user-facing (Y-up) coordinates."""
-        return self.top_left_x_cm
-
-    def bottom_left_y_cm(self, grid_height_cm: float) -> float:
-        """Bottom-left y in user-facing (Y-up) coordinates."""
-        return grid_height_cm - self.top_left_y_cm - self.height_cm
-
-
 class GridValidationError(HTTPException):
     """Raised when grid placement or claim invariants are violated."""
 
@@ -91,51 +67,89 @@ def oriented_pixel_dims(profile: DeviceProfile, orientation: str) -> tuple[int, 
     return profile.width, profile.height
 
 
-def derive_rect(
-    grid: Grid,
-    profile: DeviceProfile,
-    orientation: str,
-    *,
-    bottom_left_x_cm: float,
-    bottom_left_y_cm: float,
-) -> DeviceRect:
-    """Resolve a device placement from a bottom-left (Y-up) corner.
-
-    The persisted rectangle has dimensions snapshotted from the profile so
-    later profile-spec corrections don't silently move existing placements.
-    Validates that the rect lies fully within the canvas.
-    """
-    width_cm, height_cm = oriented_physical_dims(profile, orientation)
-
-    # Bottom-left (Y-up, user-facing) → top-left (Y-down, internal).
-    top_left_x = bottom_left_x_cm
-    top_left_y = grid.height_cm - bottom_left_y_cm - height_cm
-
-    rect = DeviceRect(
-        top_left_x_cm=top_left_x,
-        top_left_y_cm=top_left_y,
-        width_cm=width_cm,
-        height_cm=height_cm,
-    )
-    validate_rect_in_canvas(grid, rect)
-    return rect
-
-
-def validate_rect_in_canvas(grid: Grid, rect: DeviceRect) -> None:
-    """Validate that a device rectangle lies fully within the canvas."""
-    eps = 1e-6
-    if rect.top_left_x_cm < -eps or rect.top_left_y_cm < -eps:
-        raise GridValidationError(400, "Device rectangle starts outside the canvas")
-    if rect.top_left_x_cm + rect.width_cm > grid.width_cm + eps:
-        raise GridValidationError(400, "Device rectangle extends past the canvas width")
-    if rect.top_left_y_cm + rect.height_cm > grid.height_cm + eps:
-        raise GridValidationError(400, "Device rectangle extends past the canvas height")
-
-
 async def list_grid_devices(session: AsyncSession, grid_id: UUID) -> list[GridDevice]:
-    """Return all placements for a grid."""
-    result = await session.exec(select(GridDevice).where(col(GridDevice.grid_id) == grid_id))
+    """Return all placements for a grid, in slot order (top-left first)."""
+    result = await session.exec(
+        select(GridDevice).where(col(GridDevice.grid_id) == grid_id).order_by(col(GridDevice.row), col(GridDevice.col))
+    )
     return list(result.all())
+
+
+async def apply_layout(session: AsyncSession, grid: Grid, device_rows: list[list[UUID]]) -> None:
+    """Replace a grid's placements with a computed tile layout.
+
+    ``device_rows`` is the visual arrangement: rows top-down, devices
+    left-to-right. Every cm value is derived from the device profiles'
+    physical dimensions, assuming panels sit flush against each other
+    (no white space). Mixed sizes are centred: a shorter panel is centred
+    vertically within its row, a narrower row centred horizontally on the
+    canvas — the symmetric arrangement someone would hang on a wall.
+
+    Does not commit; the caller owns the transaction.
+    """
+    flat = [device_id for row in device_rows for device_id in row]
+    if not flat:
+        raise GridValidationError(400, "A grid layout needs at least one device")
+    if len(set(flat)) != len(flat):
+        raise GridValidationError(400, "A device can appear only once in the layout")
+
+    sized_rows: list[list[tuple[Device, float, float]]] = []
+    for row in device_rows:
+        sized_row: list[tuple[Device, float, float]] = []
+        for device_id in row:
+            device = await get_device_or_404(session, device_id)
+            other = await session.exec(
+                select(GridDevice).where(
+                    col(GridDevice.device_id) == device_id,
+                    col(GridDevice.grid_id) != grid.id,
+                )
+            )
+            if other.first() is not None:
+                raise GridValidationError(409, f"Device {device.device_id} is already part of another grid")
+            profile = await get_profile(session, device.device_profile_id)
+            width_cm, height_cm = oriented_physical_dims(profile, device.display_orientation)
+            sized_row.append((device, width_cm, height_cm))
+        sized_rows.append(sized_row)
+
+    row_widths = [sum(w for _, w, _ in row) for row in sized_rows]
+    row_heights = [max(h for _, _, h in row) for row in sized_rows]
+    canvas_width = max(row_widths)
+    canvas_height = sum(row_heights)
+
+    # Devices dropped from the layout stop being driven by this grid.
+    kept_ids = set(flat)
+    for placement in await list_grid_devices(session, grid.id):
+        if placement.device_id not in kept_ids:
+            device = await get_device_or_404(session, placement.device_id)
+            if device.claimed_by_grid_id == grid.id:
+                device.claimed_by_grid_id = None
+                session.add(device)
+        await session.delete(placement)
+    await session.flush()
+
+    y_offset = 0.0
+    for row_index, sized_row in enumerate(sized_rows):
+        x_offset = (canvas_width - row_widths[row_index]) / 2
+        for col_index, (device, width_cm, height_cm) in enumerate(sized_row):
+            session.add(
+                GridDevice(
+                    grid_id=grid.id,
+                    device_id=device.id,
+                    row=row_index,
+                    col=col_index,
+                    top_left_x_cm=x_offset,
+                    top_left_y_cm=y_offset + (row_heights[row_index] - height_cm) / 2,
+                    width_cm=width_cm,
+                    height_cm=height_cm,
+                )
+            )
+            x_offset += width_cm
+        y_offset += row_heights[row_index]
+
+    grid.width_cm = canvas_width
+    grid.height_cm = canvas_height
+    grid.updated_at = utcnow()
+    session.add(grid)
 
 
 async def get_grid_or_404(session: AsyncSession, grid_id: UUID) -> Grid:
@@ -297,11 +311,6 @@ async def claim_devices_and_push(  # noqa: PLR0913 — explicit deps mirror the 
             raise HTTPException(
                 status_code=409,
                 detail=f"Device {device.device_id} is already claimed by another grid",
-            )
-        if device.claimed_by_motd_config_id is not None:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Device {device.device_id} is claimed by an active message of the day",
             )
         devices.append(device)
 

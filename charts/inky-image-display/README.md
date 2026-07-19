@@ -2,8 +2,10 @@
 
 Deploys the API (which serves the operator UI and `/media` proxy), the
 persistent volume for its SQLite database, an Ingress, and the Immich /
-Gemini sync CronJobs. The MOTD feature needs no extra workload — its daily
-schedule runs inside the API process.
+Gemini sync CronJobs. The CronJobs only poll the API for *due* jobs on a
+frequent schedule — the actual per-job cadence is set in the web UI.
+Display jobs (the MOTD) need no extra workload at all — their daily
+schedules run inside the API process.
 
 The chart is published on every GitHub release, version-locked to the
 container images built from the same tag:
@@ -25,10 +27,10 @@ namespace and point `existingSecrets.*` at their names:
 | `existingSecrets.s3Writer` | `access-key-id`, `secret-access-key` | always |
 | `existingSecrets.s3Reader` | `access-key-id`, `secret-access-key` | always |
 | `existingSecrets.immich` | `apiKey` | Immich sync + browse proxy |
-| `existingSecrets.gemini` | `gemini-api-key` | GenAI generation, MOTD, gemini sync |
+| `existingSecrets.gemini` | `gemini-api-key` | GenAI generation, display jobs (MOTD), gemini sync |
 
 The Gemini reference is `optional: true` on the API deployment: without the
-Secret the GenAI/MOTD endpoints return 503 and everything else works.
+Secret the GenAI/display-job endpoints return 503 and everything else works.
 
 ## Example values
 

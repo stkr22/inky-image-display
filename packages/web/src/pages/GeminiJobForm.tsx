@@ -30,6 +30,7 @@ export function GeminiJobForm() {
   const [retentionDays, setRetentionDays] = useState<number | ''>('')
   const [subjects, setSubjects] = useState<string[]>([])
   const [active, setActive] = useState(true)
+  const [intervalMinutes, setIntervalMinutes] = useState<number | ''>(1440)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -42,6 +43,7 @@ export function GeminiJobForm() {
     setRetentionDays(typeof job.retention_days === 'number' ? job.retention_days : '')
     setSubjects(job.subjects ?? [])
     setActive(job.is_active)
+    setIntervalMinutes(typeof job.interval_minutes === 'number' ? job.interval_minutes : '')
   }, [job])
 
   useEffect(() => {
@@ -61,9 +63,13 @@ export function GeminiJobForm() {
     if (!presetId) return setError('Preset is required')
     const cleanSubjects = subjects.map((s) => s.trim()).filter(Boolean)
     if (cleanSubjects.length === 0) return setError('At least one subject is required')
+    if (intervalMinutes !== '' && (!Number.isInteger(Number(intervalMinutes)) || Number(intervalMinutes) < 1)) {
+      return setError('Run interval must be at least 1 minute (or blank for manual runs only)')
+    }
     const body = {
       name,
       is_active: active,
+      interval_minutes: intervalMinutes === '' ? null : Number(intervalMinutes),
       target_device_profile_id: targetProfile,
       prompt_preset_id: presetId,
       orientation: orientation || 'portrait',
@@ -133,6 +139,14 @@ export function GeminiJobForm() {
               onChange={setRetentionDays}
               min={0}
               step={1}
+            />
+            <NumberField
+              label="Run every (minutes, blank = manual only)"
+              value={intervalMinutes}
+              onChange={setIntervalMinutes}
+              min={1}
+              step={1}
+              help="How often the worker runs this job automatically. Gemini batches spend generation quota — daily (1440) is a sensible default."
             />
           </div>
           <ChipsInput label="Subjects" values={subjects} onChange={setSubjects} placeholder="Add a subject and press Enter…" />

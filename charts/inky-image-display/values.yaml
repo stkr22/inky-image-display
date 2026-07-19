@@ -67,8 +67,9 @@ existingSecrets:
   # Required when config.immich.baseUrl is set or sync.immich.enabled
   # (key: apiKey).
   immich: ""
-  # Optional (key: gemini-api-key): enables GenAI image generation and the
-  # message-of-the-day feature (both call the Gemini API from the API pod).
+  # Optional (key: gemini-api-key): enables GenAI image generation and
+  # display jobs like the message of the day (both call the Gemini API from
+  # the API pod).
   # When empty the endpoints return 503 and the rest of the API is
   # unaffected; when set the Secret may still be absent (the env var is
   # marked optional).
@@ -99,7 +100,7 @@ api:
     requests:
       cpu: 11m
       # The API streams images and generates thumbnails with Pillow on first
-      # request (one full-image decode at a time, in a threadpool); MOTD
+      # request (one full-image decode at a time, in a threadpool); display-job
       # rendering adds per-panel screen composition. 1Gi limit is ample.
       memory: 256M
     limits:
@@ -149,18 +150,25 @@ sync:
 
   # Pulls recent Immich assets into the S3 bucket and registers them with
   # the API. Needs config.immich.baseUrl and existingSecrets.immich.
+  #
+  # The CronJob schedule only sets how often the worker *asks* the API for
+  # due jobs (it exits immediately when nothing is due) — the actual per-job
+  # cadence is the "Run every" setting on each sync job in the web UI. Keep
+  # the schedule frequent so UI cadences and "Run now" clicks take effect
+  # promptly.
   immich:
     enabled: true
-    schedule: "0 */4 * * *"
+    schedule: "*/2 * * * *"
     maxImages: 50
 
-  # Opt-in: scheduled batch AI image generation. Gemini is billed per
-  # generated image — pick the cadence deliberately. Needs
-  # existingSecrets.gemini. (Distinct from MOTD, which the API schedules
-  # internally.)
+  # Opt-in: scheduled batch AI image generation. The frequent schedule is
+  # cheap for the same reason as above; how often images are actually
+  # generated (and billed) is each Gemini job's "Run every" setting in the
+  # UI, defaulting to daily. Needs existingSecrets.gemini. (Distinct from
+  # display jobs like the MOTD, which the API schedules internally.)
   gemini:
     enabled: false
-    schedule: "0 6 * * *"
+    schedule: "*/5 * * * *"
 
   resources:
     requests:

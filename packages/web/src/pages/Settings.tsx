@@ -74,7 +74,7 @@ export function Settings() {
 
 // E-paper refreshes flash the panel for ~30 s — unwelcome next to a bed at
 // 3 a.m. During the window automatic rotation pauses; manual pushes and the
-// MOTD's own explicit schedule still work.
+// display jobs' own explicit schedules still work.
 function QuietHoursCard({ settings }: { settings: AppSettings }) {
   const notify = useNotify()
   const queryClient = useQueryClient()
@@ -106,7 +106,7 @@ function QuietHoursCard({ settings }: { settings: AppSettings }) {
       <h3 className="ink-h3">Quiet hours</h3>
       <span className="ink-small">
         Pause automatic rotation during a daily window (e.g. overnight) so panels don't flash while you sleep. A
-        window ending before it starts spans midnight. Manual pushes and the MOTD schedule are unaffected; overdue
+        window ending before it starts spans midnight. Manual pushes and display-job schedules are unaffected; overdue
         devices refresh right after the window ends.
       </span>
       <Switch label="Enable quiet hours" checked={enabled} onChange={setEnabled} />
