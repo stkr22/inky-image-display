@@ -76,12 +76,7 @@ class TestDisplayJobCrud:
         payload = {
             "content_prompt": "Custom themes",
             "source_mode": "knowledge",
-            "schedule_enabled": True,
-            "display_time": "07:30",
-            "weekday_mask": 31,
-            "timezone": "Europe/Berlin",
-            "generation_lead_minutes": 45,
-            "display_duration_seconds": 3600,
+            "interval_minutes": 1440,
             "slots": [{"row": 0, "col": 0, "parts": ["what", "why+takeaway", "qr"]}],
         }
         response = client.put(f"/api/display-jobs/{job['id']}", json=payload)
@@ -89,16 +84,16 @@ class TestDisplayJobCrud:
         body = response.json()
         assert body["content_prompt"] == "Custom themes"
         assert body["source_mode"] == "knowledge"
-        assert body["display_time"] == "07:30"
-        assert body["timezone"] == "Europe/Berlin"
-        assert body["display_duration_seconds"] == 3600
+        assert body["interval_minutes"] == 1440
+        assert body["next_run_at"] is not None
         assert body["slots"] == [{"row": 0, "col": 0, "parts": ["what", "why+takeaway", "qr"], "rotation_index": 0}]
 
-    def test_update_clear_duration_sets_indefinite(self, client: TestClient) -> None:
+    def test_update_clear_interval_sets_manual_only(self, client: TestClient) -> None:
         job = _create_job(client)
-        client.put(f"/api/display-jobs/{job['id']}", json={"display_duration_seconds": 600})
-        response = client.put(f"/api/display-jobs/{job['id']}", json={"clear_display_duration": True})
-        assert response.json()["display_duration_seconds"] is None
+        client.put(f"/api/display-jobs/{job['id']}", json={"interval_minutes": 60})
+        response = client.put(f"/api/display-jobs/{job['id']}", json={"clear_interval": True})
+        assert response.json()["interval_minutes"] is None
+        assert response.json()["next_run_at"] is None
 
     def test_update_rejects_invalid_part(self, client: TestClient) -> None:
         job = _create_job(client)
@@ -130,10 +125,12 @@ class TestDisplayJobCrud:
         )
         assert response.status_code == 422
 
-    def test_update_rejects_bad_timezone_and_time(self, client: TestClient) -> None:
-        job = _create_job(client)
-        assert client.put(f"/api/display-jobs/{job['id']}", json={"timezone": "Mars/Olympus"}).status_code == 422
-        assert client.put(f"/api/display-jobs/{job['id']}", json={"display_time": "25:00"}).status_code == 422
+    def test_create_with_interval_is_due_immediately(self, client: TestClient) -> None:
+        response = client.post("/api/display-jobs", json={"name": "cadenced", "interval_minutes": 1440})
+        assert response.status_code == 201
+        body = response.json()
+        assert body["interval_minutes"] == 1440
+        assert body["next_run_at"] is not None
 
     def test_delete_job(self, client: TestClient) -> None:
         job = _create_job(client)
@@ -190,14 +187,12 @@ class TestDisplayJobCrud:
         command = mock_mqtt.send_command.await_args.args[1]
         assert command.image_path.endswith("takeaway_1600x1200.jpg")
         mock_s3_service.upload_image.assert_called_once()
-        status = client.get(f"/api/display-jobs/{job['id']}/status").json()
+        status = client.get(f"/api/grids/{grid_id}/display-status").json()
         assert status["slots"][0]["current_part"] == "takeaway"
 
-    def test_changing_grid_during_active_session_is_409(self, client: TestClient, seed_device: Device) -> None:
+    def test_multiple_jobs_can_target_one_grid(self, client: TestClient, seed_device: Device) -> None:
         grid_id = _create_grid(client, seed_device)
-        job = _create_job(client, grid_id)
-        client.put(f"/api/display-jobs/{job['id']}", json={"slots": [{"row": 0, "col": 0, "parts": ["what"]}]})
-        # No active session: retargeting is fine (also proves the guard is scoped).
+        _create_job(client, grid_id)
         other = client.post("/api/display-jobs", json={"name": "second"}).json()
         assert client.put(f"/api/display-jobs/{other['id']}", json={"target_grid_id": grid_id}).status_code == 200
 
@@ -233,15 +228,15 @@ class TestDisplayJobActions:
         assert response.status_code == 409
         assert "no longer exists" in response.json()["detail"]
 
-    def test_release_is_idempotent(self, client: TestClient) -> None:
-        job = _create_job(client)
-        response = client.post(f"/api/display-jobs/{job['id']}/release")
+    def test_release_session_is_idempotent(self, client: TestClient, seed_device: Device) -> None:
+        grid_id = _create_grid(client, seed_device)
+        response = client.post(f"/api/grids/{grid_id}/release-session")
         assert response.status_code == 200
         assert response.json() == {"status": "released"}
 
-    def test_status_inactive(self, client: TestClient) -> None:
-        job = _create_job(client)
-        response = client.get(f"/api/display-jobs/{job['id']}/status")
+    def test_status_inactive(self, client: TestClient, seed_device: Device) -> None:
+        grid_id = _create_grid(client, seed_device)
+        response = client.get(f"/api/grids/{grid_id}/display-status")
         assert response.status_code == 200
         body = response.json()
         assert body["active"] is False
@@ -289,5 +284,5 @@ class TestDisplayJobActions:
         assert "display job session" in response.json()["detail"]
 
         # After release, the grid is usable again (404 = empty pool, not 409).
-        client.post(f"/api/display-jobs/{job['id']}/release")
+        client.post(f"/api/grids/{grid_id}/release-session")
         assert client.post(f"/api/grids/{grid_id}/next").status_code == 404

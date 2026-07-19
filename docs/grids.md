@@ -7,9 +7,14 @@ and pushes it through the existing MQTT `DisplayCommand` flow — controllers
 need no grid-specific code.
 
 Grids are also the universal target for **display jobs** (see
-[motd.md](motd.md)): a job takes the grid's panels over for a session and
-puts generated content on its slots. A single display participates in that
-system by living in a one-panel grid.
+[motd.md](motd.md)): jobs generate content for the grid's slots on their
+own cadence, and the grid decides when to show it — each grid carries a
+daily display schedule (`display_*` columns: enabled, "HH:MM" local time,
+weekday mask, IANA timezone, duration) plus the live session state. At
+display time the grid claims its panels, shows the newest ready content
+from the jobs targeting it, and hands the panels back on expiry or manual
+release. A single display participates in that system by living in a
+one-panel grid.
 
 ## Mental model
 
@@ -105,11 +110,12 @@ The mechanism is the `devices.claimed_by_grid_id` column:
   display-job session); solo rotation skips this device until the claim is
   released.
 
-Claims end explicitly via `POST /api/grids/{id}/release`, by removing the
-device from the layout, or when a display-job session hands the grid back.
-While a display job's session is active on a grid, manual pool pushes
-(`/display`, `/next`) refuse with `409` and the background pool rotation
-pauses.
+Claims end explicitly via `POST /api/grids/{id}/release` (which also ends
+an active display-job session first), by removing the device from the
+layout, or when a display-job session ends (expiry or
+`POST /api/grids/{id}/release-session`). While a session is active on a
+grid, manual pool pushes (`/display`, `/next`) refuse with `409` and the
+background pool rotation pauses.
 
 ### Explicit image-to-grid assignment
 

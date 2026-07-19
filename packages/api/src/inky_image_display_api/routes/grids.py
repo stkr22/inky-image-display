@@ -10,7 +10,8 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from inky_image_display_shared.models import Grid, GridDevice, Image
+from inky_image_display_shared.models import Grid, GridDevice, Image, MotdMessage
+from inky_image_display_shared.schemas.responses import DisplayJobSlotStatus, DisplayJobStatusResponse
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -22,6 +23,7 @@ from inky_image_display_api.schemas import (
     GridUpdate,
 )
 from inky_image_display_api.services import display_job_service, grid_service
+from inky_image_display_api.services.display_job_service import JobStartError
 
 router = APIRouter(prefix="/api/grids", tags=["grids"])
 logger = logging.getLogger(__name__)
@@ -84,7 +86,7 @@ async def get_grid(request: Request, grid_id: UUID) -> GridResponse:
 
 @router.put("/{grid_id}")
 async def update_grid(request: Request, grid_id: UUID, body: GridUpdate) -> GridResponse:
-    """Rename a grid, change its cadence, or replace its tile layout."""
+    """Rename a grid, change its cadence or display schedule, or replace its layout."""
     async with AsyncSession(request.app.state.engine) as session:
         grid = await grid_service.get_grid_or_404(session, grid_id)
         if body.name is not None:
@@ -93,6 +95,14 @@ async def update_grid(request: Request, grid_id: UUID, body: GridUpdate) -> Grid
             grid.refresh_interval_seconds = None
         elif body.refresh_interval_seconds is not None:
             grid.refresh_interval_seconds = body.refresh_interval_seconds
+        for field_name in ("display_schedule_enabled", "display_time", "display_weekday_mask", "display_timezone"):
+            value = getattr(body, field_name)
+            if value is not None:
+                setattr(grid, field_name, value)
+        if body.clear_display_duration:
+            grid.display_duration_seconds = None
+        elif body.display_duration_seconds is not None:
+            grid.display_duration_seconds = body.display_duration_seconds
         if body.rows is not None:
             await grid_service.apply_layout(session, grid, body.rows)
 
@@ -129,7 +139,7 @@ async def display_image_on_grid(
     """Render slices for ``body.image_id`` and push them to every member device."""
     async with AsyncSession(request.app.state.engine) as session:
         grid = await grid_service.get_grid_or_404(session, grid_id)
-        await _refuse_when_job_active(session, grid_id)
+        _refuse_when_job_active(grid)
         image_result = await session.exec(select(Image).where(col(Image.id) == body.image_id))
         image = image_result.first()
         if image is None:
@@ -154,7 +164,7 @@ async def advance_grid_rotation(request: Request, grid_id: UUID) -> dict[str, st
     """Pick the next image from the grid's pool and push it."""
     async with AsyncSession(request.app.state.engine) as session:
         grid = await grid_service.get_grid_or_404(session, grid_id)
-        await _refuse_when_job_active(session, grid_id)
+        _refuse_when_job_active(grid)
         image = await grid_service.get_next_grid_image(session, grid)
         if image is None:
             raise HTTPException(status_code=404, detail="No images assigned to this grid")
@@ -170,9 +180,9 @@ async def advance_grid_rotation(request: Request, grid_id: UUID) -> dict[str, st
         return {"status": "ok", "image_id": str(image.id)}
 
 
-async def _refuse_when_job_active(session: AsyncSession, grid_id: UUID) -> None:
-    """409 when a display job currently holds this grid's panels."""
-    if await display_job_service.has_active_session(session, grid_id):
+def _refuse_when_job_active(grid: Grid) -> None:
+    """409 when a display-job session currently holds this grid's panels."""
+    if grid.active_message_id is not None:
         raise HTTPException(
             status_code=409,
             detail="A display job session is active on this grid — release it first",
@@ -181,8 +191,86 @@ async def _refuse_when_job_active(session: AsyncSession, grid_id: UUID) -> None:
 
 @router.post("/{grid_id}/release")
 async def release_grid_claims(request: Request, grid_id: UUID) -> dict[str, str]:
-    """Release every claim this grid holds; devices return to solo rotation."""
+    """Release every claim this grid holds; devices return to solo rotation.
+
+    An active display-job session is ended properly first (slot rotation
+    reset, staggered rotation rejoin) so the session state can't dangle.
+    """
     async with AsyncSession(request.app.state.engine) as session:
         grid = await grid_service.get_grid_or_404(session, grid_id)
+        if grid.active_message_id is not None:
+            await display_job_service.release_session(session, grid, request.app.state.settings)
+            await session.refresh(grid)
         await grid_service.release_grid(session, grid)
         return {"status": "ok"}
+
+
+@router.post("/{grid_id}/display-session")
+async def start_display_session(request: Request, grid_id: UUID) -> dict[str, str]:
+    """Show the latest ready display-job content on this grid now."""
+    try:
+        result = await display_job_service.start_session(
+            request.app.state.engine,
+            request.app.state.mqtt,
+            request.app.state.settings,
+            request.app.state.s3_service,
+            grid_id,
+        )
+    except JobStartError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "ok", "message_id": str(result.message_id)}
+
+
+@router.post("/{grid_id}/release-session")
+async def release_display_session(request: Request, grid_id: UUID) -> dict[str, str]:
+    """End the active display-job session; panels resume rotation staggered."""
+    async with AsyncSession(request.app.state.engine) as session:
+        grid = await grid_service.get_grid_or_404(session, grid_id)
+        if grid.active_message_id is not None:
+            await display_job_service.release_session(session, grid, request.app.state.settings)
+    return {"status": "released"}
+
+
+@router.get("/{grid_id}/display-status")
+async def get_display_status(request: Request, grid_id: UUID) -> DisplayJobStatusResponse:
+    """Report the active display-job session and what each slot is showing."""
+    async with AsyncSession(request.app.state.engine) as session:
+        grid = await grid_service.get_grid_or_404(session, grid_id)
+        headline = None
+        slot_statuses: list[DisplayJobSlotStatus] = []
+        if grid.active_message_id is not None:
+            message_result = await session.exec(
+                select(MotdMessage).where(col(MotdMessage.id) == grid.active_message_id)
+            )
+            message = message_result.first()
+            headline = message.headline if message else None
+            if message is not None:
+                screens = await display_job_service.screens_by_part(session, message.id)
+                slot_targets = await display_job_service.resolve_slot_targets(session, grid.id)
+                for slot in await display_job_service.list_slots(session, message.job_id):
+                    target = slot_targets.get((slot.row, slot.col))
+                    if target is None or target.device.claimed_by_grid_id != grid.id:
+                        continue
+                    effective = display_job_service.effective_screens(
+                        display_job_service.parse_parts(slot), target, screens
+                    )
+                    current = None
+                    if effective:
+                        current = effective[slot.rotation_index % len(effective)].part
+                    slot_statuses.append(
+                        DisplayJobSlotStatus(
+                            row=slot.row,
+                            col=slot.col,
+                            device_id=target.device.device_id,
+                            is_online=target.device.is_online,
+                            current_part=current,
+                        )
+                    )
+        return DisplayJobStatusResponse(
+            active=grid.active_message_id is not None,
+            message_id=grid.active_message_id,
+            headline=headline,
+            active_since=grid.active_since,
+            active_expires_at=grid.active_expires_at,
+            slots=slot_statuses,
+        )

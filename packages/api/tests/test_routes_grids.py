@@ -113,6 +113,34 @@ class TestGridCrud:
         resp = client.put(f"/api/grids/{grid_id}", json={"rows": [[str(second_device.id)]]})
         assert [p["device_id"] for p in resp.json()["devices"]] == [str(second_device.id)]
 
+    def test_update_display_schedule_round_trip(self, client: TestClient, seed_device: Device):
+        grid_id = client.post("/api/grids", json={"name": "g", "rows": [[str(seed_device.id)]]}).json()["id"]
+        resp = client.put(
+            f"/api/grids/{grid_id}",
+            json={
+                "display_schedule_enabled": True,
+                "display_time": "07:30",
+                "display_weekday_mask": 31,
+                "display_timezone": "Europe/Berlin",
+                "display_duration_seconds": 3600,
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["display_schedule_enabled"] is True
+        assert body["display_time"] == "07:30"
+        assert body["display_weekday_mask"] == 31
+        assert body["display_timezone"] == "Europe/Berlin"
+        assert body["display_duration_seconds"] == 3600
+
+        resp = client.put(f"/api/grids/{grid_id}", json={"clear_display_duration": True})
+        assert resp.json()["display_duration_seconds"] is None
+
+    def test_update_rejects_bad_timezone_and_time(self, client: TestClient, seed_device: Device):
+        grid_id = client.post("/api/grids", json={"name": "g-bad", "rows": [[str(seed_device.id)]]}).json()["id"]
+        assert client.put(f"/api/grids/{grid_id}", json={"display_timezone": "Mars/Olympus"}).status_code == 422
+        assert client.put(f"/api/grids/{grid_id}", json={"display_time": "25:00"}).status_code == 422
+
     def test_list_empty(self, client: TestClient):
         resp = client.get("/api/grids")
         assert resp.status_code == 200

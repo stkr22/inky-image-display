@@ -171,9 +171,9 @@ async def _rotate_single_grid(app: FastAPI, grid_id: object) -> None:
         if stuck:
             logger.debug("Grid %s paused — member(s) %s have a failed refresh", db_grid.id, ", ".join(stuck))
             return
-        # A display job holding this grid drives the panels exclusively;
-        # pool rotation resumes when the session releases the grid.
-        if await display_job_service.has_active_session(session, db_grid.id):
+        # A display-job session holding this grid drives the panels
+        # exclusively; pool rotation resumes when the session releases it.
+        if db_grid.active_message_id is not None:
             logger.debug("Grid %s paused — a display job session is active", db_grid.id)
             return
         image = await grid_service.get_next_grid_image(session, db_grid)

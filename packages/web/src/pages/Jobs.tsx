@@ -1,21 +1,22 @@
-// Unified jobs listing — Immich + Gemini in one tabbed page. The tab lives in
-// the URL (?tab=gemini) so deep links and back/forward work.
+// Unified jobs listing — Immich + Gemini + display jobs in one tabbed page.
+// The tab lives in the URL (?tab=gemini|display) so deep links and
+// back/forward work.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ConfirmDialog } from '../components/Dialog'
-import { Button, Switch } from '../components/fields'
+import { ConfirmDialog, Dialog } from '../components/Dialog'
+import { Button, Switch, TextField } from '../components/fields'
 import { useNotify } from '../components/Toast'
 import { Badge, EmptyNote, PageHeader, Spinner } from '../components/ui'
 import { api, ApiError } from '../lib/api'
 import { formatDatetime, formatRelative, humanizeSeconds } from '../lib/format'
-import type { GeminiJob, SyncJob, SyncJobRun } from '../lib/types'
+import type { DisplayJob, GeminiJob, SyncJob, SyncJobRun } from '../lib/types'
 
-function scheduleSummary(job: Pick<SyncJob, 'interval_minutes' | 'next_run_at' | 'is_active'>): string {
+function scheduleSummary(job: Pick<SyncJob, 'interval_minutes' | 'next_run_at'> & { is_active?: boolean }): string {
   if (job.interval_minutes == null) return 'Manual runs only'
   const cadence = `Runs every ${humanizeSeconds(job.interval_minutes * 60)}`
-  if (!job.is_active) return `${cadence} (paused)`
+  if (job.is_active === false) return `${cadence} (paused)`
   return job.next_run_at ? `${cadence} · next ${formatRelative(job.next_run_at)}` : cadence
 }
 
@@ -26,10 +27,14 @@ function errMessage(err: unknown): string {
 export function Jobs() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
-  const tab = searchParams.get('tab') === 'gemini' ? 'gemini' : 'immich'
+  const requested = searchParams.get('tab')
+  const tab = requested === 'gemini' || requested === 'display' ? requested : 'immich'
+  const [createDisplayOpen, setCreateDisplayOpen] = useState(false)
 
   const { data: profiles } = useQuery({ queryKey: ['device-profiles'], queryFn: api.listDeviceProfiles })
   const profileMap = new Map((profiles ?? []).map((p) => [p.id, p.name]))
+
+  const newLabels = { immich: 'New Immich job', gemini: 'New Gemini job', display: 'New display job' } as const
 
   return (
     <>
@@ -40,9 +45,12 @@ export function Jobs() {
           <Button
             primary
             icon="add"
-            onClick={() => navigate(tab === 'gemini' ? '/gemini-jobs/new' : '/sync-jobs/new')}
+            onClick={() => {
+              if (tab === 'display') setCreateDisplayOpen(true)
+              else navigate(tab === 'gemini' ? '/gemini-jobs/new' : '/sync-jobs/new')
+            }}
           >
-            {tab === 'gemini' ? 'New Gemini job' : 'New Immich job'}
+            {newLabels[tab]}
           </Button>
         }
       />
@@ -62,9 +70,20 @@ export function Jobs() {
         >
           Gemini
         </Button>
+        <Button
+          primary={tab === 'display'}
+          flat={tab !== 'display'}
+          icon="wb_sunny"
+          onClick={() => setSearchParams({ tab: 'display' })}
+        >
+          Display
+        </Button>
       </div>
 
-      {tab === 'immich' ? <ImmichList profileMap={profileMap} /> : <GeminiList profileMap={profileMap} />}
+      {tab === 'immich' && <ImmichList profileMap={profileMap} />}
+      {tab === 'gemini' && <GeminiList profileMap={profileMap} />}
+      {tab === 'display' && <DisplayList />}
+      {createDisplayOpen && <CreateDisplayJobDialog onClose={() => setCreateDisplayOpen(false)} />}
     </>
   )
 }
@@ -180,6 +199,132 @@ function GeminiRow({
       onDelete={() => api.deleteGeminiJob(job.id)}
       deleteMessage={`Delete Gemini job '${job.name}'?`}
     />
+  )
+}
+
+// --- Display jobs (generated grid content) --------------------------------------
+
+function DisplayList() {
+  const { data: jobs, isPending } = useQuery({
+    queryKey: ['display-jobs'],
+    queryFn: api.listDisplayJobs,
+    refetchInterval: 15_000,
+  })
+  const { data: grids } = useQuery({ queryKey: ['grids'], queryFn: () => api.listGrids() })
+  const gridName = new Map((grids ?? []).map((g) => [g.id, g.name]))
+  if (isPending) return <Spinner />
+  if (!jobs || jobs.length === 0) {
+    return <EmptyNote>No display jobs yet — create one and point it at a grid.</EmptyNote>
+  }
+  return (
+    <div className="col w-full gap-2">
+      {jobs.map((job) => (
+        <DisplayJobRow key={job.id} job={job} gridName={gridName} />
+      ))}
+    </div>
+  )
+}
+
+function DisplayJobRow({ job, gridName }: { job: DisplayJob; gridName: Map<string, string> }) {
+  const navigate = useNavigate()
+  const notify = useNotify()
+  const queryClient = useQueryClient()
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  const generateMutation = useMutation({
+    mutationFn: () => api.displayJobGenerate(job.id),
+    onSuccess: () => {
+      notify('Generation started — see the job page for progress', 'positive')
+      queryClient.invalidateQueries({ queryKey: ['display-jobs'] })
+    },
+    onError: (err) => notify(`Generation failed: ${errMessage(err)}`, 'negative'),
+  })
+  const deleteMutation = useMutation({
+    mutationFn: () => api.deleteDisplayJob(job.id),
+    onSuccess: () => {
+      notify('Deleted', 'positive')
+      queryClient.invalidateQueries({ queryKey: ['display-jobs'] })
+    },
+    onError: (err) => notify(`Delete failed: ${errMessage(err)}`, 'negative'),
+  })
+
+  const target = job.target_grid_id
+    ? `→ ${gridName.get(job.target_grid_id) ?? 'grid'}`
+    : 'no target grid yet'
+
+  return (
+    <div className="bento-tile w-full" style={{ padding: '16px 20px', gap: 12 }}>
+      <div className="row w-full items-center" style={{ gap: 12 }}>
+        <div className="col flex-1 gap-1">
+          <div className="row items-center gap-2 wrap">
+            <h3 className="ink-h3 truncate">{job.name}</h3>
+            {!job.target_grid_id && <Badge tone="warn">No grid</Badge>}
+          </div>
+          <span className="ink-small">
+            {job.job_type} · {target} · {job.slots.length} slot(s) mapped
+          </span>
+          <span className="ink-small">{scheduleSummary(job)}</span>
+          <span className="ink-small">
+            {job.last_run_at ? `Last generated ${formatRelative(job.last_run_at)}` : 'Nothing generated yet'}
+          </span>
+        </div>
+        <Button
+          flat
+          round
+          icon="play_arrow"
+          title="Generate now"
+          disabled={generateMutation.isPending}
+          onClick={() => generateMutation.mutate()}
+        />
+        <Button flat round icon="edit" title="Edit" onClick={() => navigate(`/display-jobs/${job.id}`)} />
+        <Button flat danger round icon="delete" title="Delete" onClick={() => setConfirmDelete(true)} />
+      </div>
+      <ConfirmDialog
+        open={confirmDelete}
+        message={`Delete display job '${job.name}'? A session showing its content is released first.`}
+        destructive
+        confirmLabel="Delete"
+        onConfirm={() => {
+          setConfirmDelete(false)
+          deleteMutation.mutate()
+        }}
+        onCancel={() => setConfirmDelete(false)}
+      />
+    </div>
+  )
+}
+
+function CreateDisplayJobDialog({ onClose }: { onClose: () => void }) {
+  const navigate = useNavigate()
+  const notify = useNotify()
+  const queryClient = useQueryClient()
+  const [name, setName] = useState('Message of the day')
+
+  const create = async () => {
+    try {
+      const job = await api.createDisplayJob({ name })
+      queryClient.invalidateQueries({ queryKey: ['display-jobs'] })
+      notify('Display job created — pick its target grid next.', 'positive')
+      navigate(`/display-jobs/${job.id}`)
+      onClose()
+    } catch (err) {
+      notify(`Create failed: ${errMessage(err)}`, 'negative')
+    }
+  }
+
+  return (
+    <Dialog open onClose={onClose}>
+      <h3 className="ink-h3">New display job</h3>
+      <TextField label="Name" value={name} onChange={setName} />
+      <div className="row w-full justify-end gap-2">
+        <Button flat onClick={onClose}>
+          Cancel
+        </Button>
+        <Button primary onClick={create} disabled={!name}>
+          Create
+        </Button>
+      </div>
+    </Dialog>
   )
 }
 

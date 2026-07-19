@@ -1,16 +1,17 @@
-// Display jobs: content jobs (message of the day today) that target a grid.
-// Configure the generated daily story (prompt, source mode, image style),
-// map one content part per grid slot, schedule/trigger the display, and
-// browse/redisplay the stories of the last seven days.
+// Display-job editor: configure the generated content (prompt, source mode,
+// image style), the generation cadence, and which grid slot shows which
+// content part; browse/redisplay the stories of the last seven days. The
+// display schedule (when a grid shows the generated content) lives on the
+// grid page — jobs only generate.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { ConfirmDialog, Dialog } from '../components/Dialog'
+import { Link, useParams } from 'react-router-dom'
 import { Button, NumberField, SelectField, Switch, TextArea, TextField } from '../components/fields'
 import { useNotify } from '../components/Toast'
-import { Badge, EmptyNote, PageHeader, Spinner } from '../components/ui'
+import { Badge, EmptyNote, ErrorNote, PageHeader, Spinner } from '../components/ui'
 import { api, ApiError } from '../lib/api'
-import { formatRelative, parseDatetime } from '../lib/format'
+import { formatRelative } from '../lib/format'
 import {
   MOTD_COMPOUND_PARTS,
   MOTD_PART_LABELS,
@@ -21,134 +22,47 @@ import {
   type MotdMessage,
 } from '../lib/types'
 
-const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const PART_CHOICES = [...MOTD_PARTS, ...MOTD_COMPOUND_PARTS]
 
 function errMessage(err: unknown): string {
   return err instanceof ApiError ? err.detail || err.message : String(err)
 }
 
-// Time-of-day in unambiguous 24h format (locale time strings may be 12h).
-function formatTime24(value: string | null | undefined): string {
-  const dt = parseDatetime(value)
-  if (!dt) return '—'
-  return dt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
-}
-
-export function DisplayJobs() {
-  const queryClient = useQueryClient()
-  const { data: jobs } = useQuery({ queryKey: ['display-jobs'], queryFn: api.listDisplayJobs })
+export function DisplayJobForm() {
+  const { jobId } = useParams<{ jobId: string }>()
+  const { data: jobs, isPending } = useQuery({ queryKey: ['display-jobs'], queryFn: api.listDisplayJobs })
   const { data: grids } = useQuery({ queryKey: ['grids', 'with-devices'], queryFn: () => api.listGrids(true) })
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [createOpen, setCreateOpen] = useState(false)
 
-  const selected = (jobs ?? []).find((job) => job.id === selectedId) ?? jobs?.[0] ?? null
+  const job = (jobs ?? []).find((entry) => entry.id === jobId) ?? null
+
+  if (isPending) return <Spinner />
+  if (!job) return <ErrorNote>Display job not found.</ErrorNote>
 
   return (
     <div className="col w-full gap-4">
-      <PageHeader
-        eyebrow="Display jobs"
-        title="Generated content on your grids"
-        actions={
-          <Button primary icon="add" onClick={() => setCreateOpen(true)}>
-            New job
-          </Button>
-        }
-      >
-        <p className="ink-body ink-muted" style={{ maxWidth: 640, margin: 0 }}>
-          A display job generates content — like the daily positive story — and shows it on a grid, one content part
-          per panel. Jobs run on their own schedule and hand the grid back when they finish.
-        </p>
+      <PageHeader eyebrow="Display job" title={job.name}>
+        <Link to="/jobs?tab=display" className="ink-small">
+          ← All jobs
+        </Link>
       </PageHeader>
-
-      {jobs && jobs.length === 0 && (
-        <EmptyNote>No display jobs yet — create one and point it at a grid.</EmptyNote>
-      )}
-      {jobs && jobs.length > 1 && (
-        <div className="row w-full gap-2 wrap">
-          {jobs.map((job) => (
-            <Button
-              key={job.id}
-              primary={selected?.id === job.id}
-              flat={selected?.id !== job.id}
-              onClick={() => setSelectedId(job.id)}
-            >
-              {job.name}
-            </Button>
-          ))}
-        </div>
-      )}
-
-      {jobs === undefined && <Spinner />}
-      {selected && (
-        <div key={selected.id} className="col w-full gap-4">
-          <JobActions job={selected} />
-          <JobConfig job={selected} grids={grids ?? []} />
-          <JobMessages job={selected} />
-        </div>
-      )}
-
-      {createOpen && (
-        <CreateJobDialog
-          onClose={() => setCreateOpen(false)}
-          onCreated={(job) => {
-            queryClient.invalidateQueries({ queryKey: ['display-jobs'] })
-            setSelectedId(job.id)
-          }}
-        />
-      )}
+      <JobActions job={job} />
+      <JobConfig key={job.updated_at} job={job} grids={grids ?? []} />
+      <JobMessages job={job} />
     </div>
   )
 }
 
-function CreateJobDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (job: DisplayJob) => void }) {
-  const notify = useNotify()
-  const [name, setName] = useState('Message of the day')
-
-  const create = async () => {
-    try {
-      const job = await api.createDisplayJob({ name })
-      notify('Display job created — pick its target grid below.', 'positive')
-      onCreated(job)
-      onClose()
-    } catch (err) {
-      notify(`Create failed: ${errMessage(err)}`, 'negative')
-    }
-  }
-
-  return (
-    <Dialog open onClose={onClose}>
-      <h3 className="ink-h3">New display job</h3>
-      <TextField label="Name" value={name} onChange={setName} />
-      <div className="row w-full justify-end gap-2">
-        <Button flat onClick={onClose}>
-          Cancel
-        </Button>
-        <Button primary onClick={create} disabled={!name}>
-          Create
-        </Button>
-      </div>
-    </Dialog>
-  )
-}
-
-// --- Actions + live status -----------------------------------------------------
+// --- Actions -------------------------------------------------------------------
 
 function JobActions({ job }: { job: DisplayJob }) {
   const notify = useNotify()
   const queryClient = useQueryClient()
-  const { data: status } = useQuery({
-    queryKey: ['display-job-status', job.id],
-    queryFn: () => api.getDisplayJobStatus(job.id),
-    refetchInterval: 15_000,
-  })
   const [busy, setBusy] = useState(false)
-  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const refresh = () => {
-    queryClient.invalidateQueries({ queryKey: ['display-job-status', job.id] })
     queryClient.invalidateQueries({ queryKey: ['display-job-messages', job.id] })
     queryClient.invalidateQueries({ queryKey: ['display-jobs'] })
+    queryClient.invalidateQueries({ queryKey: ['grid-display-status'] })
   }
 
   const generate = async () => {
@@ -181,110 +95,25 @@ function JobActions({ job }: { job: DisplayJob }) {
     }
   }
 
-  const release = async () => {
-    setBusy(true)
-    try {
-      await api.displayJobRelease(job.id)
-      notify('Released — the grid returns to normal rotation.', 'positive')
-      refresh()
-    } catch (err) {
-      notify(`Release failed: ${errMessage(err)}`, 'negative')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const doDelete = async () => {
-    setConfirmDelete(false)
-    try {
-      await api.deleteDisplayJob(job.id)
-      notify('Display job deleted', 'positive')
-      queryClient.invalidateQueries({ queryKey: ['display-jobs'] })
-    } catch (err) {
-      notify(`Delete failed: ${errMessage(err)}`, 'negative')
-    }
-  }
-
   return (
     <div className="bento-tile w-full" style={{ padding: 20 }}>
       <div className="row w-full items-center gap-3 wrap">
-        {status?.active ? (
-          <Badge tone="ok">
-            Active{status.active_expires_at ? ` until ${formatTime24(status.active_expires_at)}` : ' until released'}
-          </Badge>
-        ) : (
-          <Badge tone="muted">Idle</Badge>
-        )}
-        {status?.active && status.headline && <span className="ink-small">“{status.headline}”</span>}
+        <span className="ink-small">
+          {job.last_run_at ? `Last generated ${formatRelative(job.last_run_at)}` : 'Nothing generated yet'}
+          {job.interval_minutes != null && job.next_run_at ? ` · next run ${formatRelative(job.next_run_at)}` : ''}
+        </span>
         <div className="flex-1" />
         <Button onClick={generate} disabled={busy}>
           Generate now
         </Button>
-        <Button primary onClick={display} disabled={busy}>
+        <Button primary onClick={display} disabled={busy || !job.target_grid_id}>
           Display now
         </Button>
-        <Button danger onClick={release} disabled={busy || !status?.active}>
-          Release
-        </Button>
-        <Button flat danger round icon="delete" title="Delete job" onClick={() => setConfirmDelete(true)} />
       </div>
-      {status?.active && status.slots.length > 0 && (
-        <div className="row w-full gap-3 wrap" style={{ marginTop: 8 }}>
-          {status.slots.map((slot) => (
-            <span key={`${slot.row}:${slot.col}`} className="ink-small">
-              <Badge tone={slot.is_online ? 'ok' : 'warn'} /> {slot.device_id}:{' '}
-              {slot.current_part ? (MOTD_PART_LABELS[slot.current_part] ?? slot.current_part) : '—'}
-            </span>
-          ))}
-        </div>
-      )}
-      <ConfirmDialog
-        open={confirmDelete}
-        message={`Delete display job '${job.name}'? An active session is released first.`}
-        destructive
-        confirmLabel="Delete"
-        onConfirm={doDelete}
-        onCancel={() => setConfirmDelete(false)}
-      />
+      <span className="ink-small" style={{ opacity: 0.7 }}>
+        Sessions (status, duration, release) are controlled on the target grid's page.
+      </span>
     </div>
-  )
-}
-
-// Explicit 24h hour/minute inputs: the native time input renders 12h on
-// AM/PM-locale browsers, and the operator wants 24h everywhere.
-function DisplayTimeFields({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: string
-  onChange: (value: string) => void
-  disabled?: boolean
-}) {
-  const [hour = 8, minute = 0] = value.split(':').map((piece) => Number(piece) || 0)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const clamp = (n: number | '', max: number) => Math.min(Math.max(Number(n) || 0, 0), max)
-  return (
-    <>
-      <NumberField
-        label="Display hour (24h)"
-        value={hour}
-        onChange={(v) => onChange(`${pad(clamp(v, 23))}:${pad(minute)}`)}
-        min={0}
-        max={23}
-        disabled={disabled}
-        className="flex-1"
-      />
-      <NumberField
-        label="Minute"
-        value={minute}
-        onChange={(v) => onChange(`${pad(hour)}:${pad(clamp(v, 59))}`)}
-        min={0}
-        max={59}
-        disabled={disabled}
-        className="flex-1"
-      />
-    </>
   )
 }
 
@@ -301,15 +130,7 @@ function JobConfig({ job, grids }: { job: DisplayJob; grids: Grid[] }) {
   const [sourceMode, setSourceMode] = useState<string>(job.source_mode)
   const [presetId, setPresetId] = useState(job.image_preset_id ?? '')
   const [gridId, setGridId] = useState(job.target_grid_id ?? '')
-  const [scheduleEnabled, setScheduleEnabled] = useState(job.schedule_enabled)
-  const [displayTime, setDisplayTime] = useState(job.display_time)
-  const [weekdayMask, setWeekdayMask] = useState(job.weekday_mask)
-  const [timezone, setTimezone] = useState(job.timezone)
-  const [leadMinutes, setLeadMinutes] = useState<number | ''>(job.generation_lead_minutes)
-  const [untilReleased, setUntilReleased] = useState(job.display_duration_seconds === null)
-  const [durationMinutes, setDurationMinutes] = useState<number | ''>(
-    job.display_duration_seconds ? Math.round(job.display_duration_seconds / 60) : 60,
-  )
+  const [intervalMinutes, setIntervalMinutes] = useState<number | ''>(job.interval_minutes ?? '')
   // One part per slot (single or a "two texts on one screen" combo).
   const [slotParts, setSlotParts] = useState<Record<string, string>>(() =>
     Object.fromEntries(job.slots.map((slot) => [`${slot.row}:${slot.col}`, slot.parts[0] ?? 'what'])),
@@ -335,7 +156,7 @@ function JobConfig({ job, grids }: { job: DisplayJob; grids: Grid[] }) {
     setSaving(true)
     setError('')
     try {
-      const durationSeconds = untilReleased ? null : Math.max(Number(durationMinutes) || 0, 1) * 60
+      const interval = Number(intervalMinutes) || 0
       await api.updateDisplayJob(job.id, {
         name: name.trim() || job.name,
         content_prompt: prompt.trim(),
@@ -344,13 +165,8 @@ function JobConfig({ job, grids }: { job: DisplayJob; grids: Grid[] }) {
         clear_image_preset: !presetId,
         target_grid_id: gridId || null,
         clear_target_grid: !gridId,
-        schedule_enabled: scheduleEnabled,
-        display_time: displayTime,
-        weekday_mask: weekdayMask,
-        timezone,
-        generation_lead_minutes: Number(leadMinutes) || 0,
-        display_duration_seconds: durationSeconds,
-        clear_display_duration: untilReleased,
+        interval_minutes: interval > 0 ? interval : null,
+        clear_interval: interval <= 0,
         slots: Object.entries(slotParts).map(([key, part]) => {
           const [row, col] = key.split(':').map(Number)
           return { row, col, parts: [part] }
@@ -358,7 +174,6 @@ function JobConfig({ job, grids }: { job: DisplayJob; grids: Grid[] }) {
       })
       notify('Display job saved.', 'positive')
       queryClient.invalidateQueries({ queryKey: ['display-jobs'] })
-      queryClient.invalidateQueries({ queryKey: ['display-job-status', job.id] })
     } catch (err) {
       setError(`Save failed: ${errMessage(err)}`)
     } finally {
@@ -419,63 +234,19 @@ function JobConfig({ job, grids }: { job: DisplayJob; grids: Grid[] }) {
 
         <div className="bento-tile col gap-3 flex-1" style={{ padding: 20, minWidth: 340 }}>
           <div className="col gap-0">
-            <span className="ink-eyebrow">Schedule</span>
-            <h3 className="ink-h3">When and for how long?</h3>
+            <span className="ink-eyebrow">Generation</span>
+            <h3 className="ink-h3">How often is new content made?</h3>
           </div>
-          <Switch
-            checked={scheduleEnabled}
-            onChange={setScheduleEnabled}
-            label="Show automatically every day (content is generated ahead of time)"
+          <NumberField
+            label="Generate every (minutes, blank = manual only)"
+            value={intervalMinutes}
+            onChange={setIntervalMinutes}
+            min={1}
           />
-          <div className="row gap-3 w-full wrap">
-            <DisplayTimeFields value={displayTime} onChange={setDisplayTime} disabled={!scheduleEnabled} />
-            <TextField
-              label="Timezone (IANA)"
-              value={timezone}
-              onChange={setTimezone}
-              placeholder="Europe/Berlin"
-              disabled={!scheduleEnabled}
-              className="flex-1"
-            />
-            <NumberField
-              label="Generate ahead (minutes)"
-              value={leadMinutes}
-              onChange={setLeadMinutes}
-              min={0}
-              max={1440}
-              disabled={!scheduleEnabled}
-              className="flex-1"
-            />
-          </div>
-          <div className="row gap-2 wrap">
-            {WEEKDAYS.map((day, index) => {
-              const selected = Boolean(weekdayMask & (1 << index))
-              return (
-                <Button
-                  key={day}
-                  flat={!selected}
-                  primary={selected}
-                  disabled={!scheduleEnabled}
-                  onClick={() => setWeekdayMask((mask) => mask ^ (1 << index))}
-                >
-                  {day}
-                </Button>
-              )
-            })}
-          </div>
-          <div className="flex-1" />
-          <div className="row gap-3 w-full items-end wrap">
-            <Switch checked={untilReleased} onChange={setUntilReleased} label="Show until released manually" />
-            {!untilReleased && (
-              <NumberField
-                label="Duration (minutes)"
-                value={durationMinutes}
-                onChange={setDurationMinutes}
-                min={1}
-                className="flex-1"
-              />
-            )}
-          </div>
+          <span className="ink-small">
+            Generation and display are independent: this job produces content on its own cadence (1440 = daily), and
+            each grid decides on its own schedule when to show the latest generated story.
+          </span>
         </div>
       </div>
 
@@ -495,7 +266,7 @@ function JobConfig({ job, grids }: { job: DisplayJob; grids: Grid[] }) {
             { value: '', label: 'No grid selected' },
             ...grids.map((g) => ({ value: g.id, label: `${g.name} (${g.devices?.length ?? 0} panels)` })),
           ]}
-          help="A single display works too — put it in a one-panel grid first. While a session is active the grid cannot be changed."
+          help="A single display works too — put it in a one-panel grid first."
         />
         <span className="ink-small">
           Each panel shows one part of the story. Combined parts like “What + Why” put two short texts on one screen.
@@ -562,8 +333,9 @@ function JobMessages({ job }: { job: DisplayJob }) {
     refetchInterval: (query) => (query.state.data?.some((m) => m.status === 'generating') ? 3000 : 30_000),
   })
   const { data: status } = useQuery({
-    queryKey: ['display-job-status', job.id],
-    queryFn: () => api.getDisplayJobStatus(job.id),
+    queryKey: ['grid-display-status', job.target_grid_id],
+    queryFn: () => api.getGridDisplayStatus(job.target_grid_id!),
+    enabled: Boolean(job.target_grid_id),
   })
   const [busy, setBusy] = useState(false)
   // undefined = "no manual choice yet" → the newest story starts expanded.
@@ -577,7 +349,7 @@ function JobMessages({ job }: { job: DisplayJob }) {
         `“${message.headline ?? 'Story'}” started — ${result.displayed.length ? `showing on ${result.displayed.join(', ')}` : 'no panels pushed'}.`,
         'positive',
       )
-      queryClient.invalidateQueries({ queryKey: ['display-job-status', job.id] })
+      queryClient.invalidateQueries({ queryKey: ['grid-display-status'] })
       queryClient.invalidateQueries({ queryKey: ['display-job-messages', job.id] })
     } catch (err) {
       notify(`Display failed: ${errMessage(err)}`, 'negative')
@@ -635,7 +407,7 @@ function JobMessages({ job }: { job: DisplayJob }) {
               {message.status === 'ready' && !showing && (
                 <Button
                   flat
-                  disabled={busy}
+                  disabled={busy || !job.target_grid_id}
                   onClick={(event) => {
                     event.stopPropagation()
                     display(message)

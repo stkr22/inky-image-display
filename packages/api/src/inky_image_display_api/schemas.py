@@ -426,12 +426,22 @@ def _validate_layout_rows(rows: list[list[UUID]]) -> list[list[UUID]]:
     return rows
 
 
+def _validate_timezone(value: str | None) -> str | None:
+    if value is not None:
+        try:
+            ZoneInfo(value)
+        except (KeyError, ValueError) as exc:
+            raise ValueError(f"Unknown IANA timezone: {value}") from exc
+    return value
+
+
 class GridCreate(BaseModel):
     """Payload to create a grid.
 
     ``rows`` is the visual tile arrangement (rows top-down, devices
     left-to-right); every cm value — canvas size and placements — is
     computed server-side from the device profiles' physical dimensions.
+    The display schedule starts disabled; the UI edits it via update.
     """
 
     name: str
@@ -445,13 +455,24 @@ class GridUpdate(BaseModel):
     """Patch fields on an existing grid (all optional).
 
     ``rows`` replaces the whole layout; placements and canvas size are
-    recomputed from device profiles.
+    recomputed from device profiles. The ``display_*`` fields schedule when
+    the grid shows generated display-job content.
     """
 
     name: str | None = None
     rows: list[list[UUID]] | None = Field(default=None, min_length=1)
     refresh_interval_seconds: RefreshIntervalSeconds | None = None
     clear_refresh_interval: bool = False
+    display_schedule_enabled: bool | None = None
+    display_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    display_weekday_mask: int | None = Field(default=None, ge=1, le=127)
+    display_timezone: str | None = None
+    display_duration_seconds: RefreshIntervalSeconds | None = None
+    # Duration None means "until released"; a dedicated flag distinguishes
+    # "leave unchanged" from "set indefinite" in the partial update.
+    clear_display_duration: bool = False
+
+    _valid_timezone = field_validator("display_timezone")(_validate_timezone)
 
     @field_validator("rows")
     @classmethod
@@ -505,13 +526,15 @@ class DisplayJobSlotUpdate(BaseModel):
 class DisplayJobCreate(BaseModel):
     """Body for ``POST /api/display-jobs``.
 
-    Content/schedule fields start on the model defaults; the UI edits them
-    afterwards via the update endpoint.
+    Content fields start on the model defaults; the UI edits them
+    afterwards via the update endpoint. ``interval_minutes`` ``None`` means
+    manual generation only, matching the sync jobs.
     """
 
     name: str = Field(min_length=1, max_length=200)
     job_type: Literal["motd"] = "motd"
     target_grid_id: UUID | None = None
+    interval_minutes: SyncIntervalMinutes | None = None
 
 
 class DisplayJobDisplayRequest(BaseModel):
@@ -539,26 +562,11 @@ class DisplayJobUpdate(BaseModel):
     image_preset_id: UUID | None = None
     clear_image_preset: bool = False
     text_model_name: str | None = Field(default=None, min_length=1, max_length=100)
-    schedule_enabled: bool | None = None
-    display_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
-    weekday_mask: int | None = Field(default=None, ge=1, le=127)
-    timezone: str | None = None
-    generation_lead_minutes: int | None = Field(default=None, ge=0, le=24 * 60)
-    display_duration_seconds: RefreshIntervalSeconds | None = None
-    # Duration None means "until released"; a dedicated flag distinguishes
-    # "leave unchanged" from "set indefinite" in the partial update.
-    clear_display_duration: bool = False
+    interval_minutes: SyncIntervalMinutes | None = None
+    # Interval None means "manual generation only"; a dedicated flag
+    # distinguishes "leave unchanged" from "set manual" in the partial update.
+    clear_interval: bool = False
     slots: list[DisplayJobSlotUpdate] | None = None
-
-    @field_validator("timezone")
-    @classmethod
-    def _valid_timezone(cls, value: str | None) -> str | None:
-        if value is not None:
-            try:
-                ZoneInfo(value)
-            except (KeyError, ValueError) as exc:
-                raise ValueError(f"Unknown IANA timezone: {value}") from exc
-        return value
 
     @field_validator("slots")
     @classmethod

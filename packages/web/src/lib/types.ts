@@ -184,6 +184,11 @@ export interface Grid {
   displayed_since: string | null
   scheduled_next_at: string
   refresh_interval_seconds: number | null
+  display_schedule_enabled: boolean
+  display_time: string
+  display_weekday_mask: number
+  display_timezone: string
+  display_duration_seconds: number | null
   devices: GridPlacement[] | null
 }
 
@@ -265,17 +270,9 @@ export interface DisplayJob {
   source_mode: 'grounded' | 'knowledge'
   image_preset_id: string | null
   text_model_name: string
-  schedule_enabled: boolean
-  display_time: string
-  weekday_mask: number
-  timezone: string
-  generation_lead_minutes: number
-  display_duration_seconds: number | null
-  active_message_id: string | null
-  active_since: string | null
-  active_expires_at: string | null
-  last_generated_on: string | null
-  last_displayed_on: string | null
+  interval_minutes: number | null
+  next_run_at: string | null
+  last_run_at: string | null
   created_at: string
   updated_at: string
   slots: DisplayJobSlot[]

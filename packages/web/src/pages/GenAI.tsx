@@ -1,12 +1,11 @@
-// Unified GenAI page with the tab in the URL (?tab=jobs|prompts) so deep
-// links and back/forward work, mirroring the Jobs page. "Images" holds the
-// on-demand generation form; "Display jobs" the grid content jobs (message
-// of the day); "Prompt library" the blocks/presets both of them build
-// their image prompts from.
+// Unified GenAI page with the tab in the URL (?tab=prompts) so deep links
+// and back/forward work, mirroring the Jobs page. "Images" holds the
+// on-demand generation form; "Prompt library" the blocks/presets that
+// image prompts are built from. Display jobs live on the Jobs page.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useSearchParams } from 'react-router-dom'
 import { ConfirmDialog } from '../components/Dialog'
 import { Button, Expansion, SelectField, Switch, TextArea, TextField } from '../components/fields'
 import { useNotify } from '../components/Toast'
@@ -21,7 +20,6 @@ import {
   type PromptBlockKind,
   type PromptPreset,
 } from '../lib/types'
-import { DisplayJobs } from './DisplayJobs'
 
 const SUBJECT_MAX_CHARS = 200
 const BLOCK_PREVIEW_CHARS = 80
@@ -32,7 +30,6 @@ function errMessage(err: unknown): string {
 
 const GENAI_TABS = [
   { key: 'images', label: 'Images', icon: 'auto_awesome' },
-  { key: 'jobs', label: 'Display jobs', icon: 'wb_sunny' },
   { key: 'prompts', label: 'Prompt library', icon: 'tune' },
 ] as const
 
@@ -41,9 +38,9 @@ type GenAITab = (typeof GENAI_TABS)[number]['key']
 export function GenAI() {
   const [searchParams, setSearchParams] = useSearchParams()
   const requested = searchParams.get('tab')
-  // Old deep links used ?tab=motd; display jobs replaced the MOTD tab.
-  const normalized = requested === 'motd' ? 'jobs' : requested
-  const tab: GenAITab = normalized === 'jobs' || normalized === 'prompts' ? normalized : 'images'
+  // Old deep links pointed at the MOTD/display-jobs tab; those moved to Jobs.
+  if (requested === 'motd' || requested === 'jobs') return <Navigate to="/jobs?tab=display" replace />
+  const tab: GenAITab = requested === 'prompts' ? 'prompts' : 'images'
 
   return (
     <>
@@ -70,7 +67,6 @@ export function GenAI() {
           <RecentGenerations />
         </>
       )}
-      {tab === 'jobs' && <DisplayJobs />}
       {tab === 'prompts' && <PromptLibrarySection />}
     </>
   )

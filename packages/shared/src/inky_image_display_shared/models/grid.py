@@ -6,7 +6,7 @@ coordinates; the API pre-renders per-device crops so controllers receive an
 ordinary display command pointing at their slice.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID, uuid4
 
 from sqlmodel import Field, SQLModel
@@ -34,6 +34,30 @@ class Grid(SQLModel, table=True):
     # ``settings.default_display_duration`` (matches Device behaviour);
     # previously cadence was implicitly driven by ``image.display_duration_seconds``.
     refresh_interval_seconds: int | None = Field(default=None)
+
+    # Daily display-job schedule: when this grid shows the latest generated
+    # group from the display jobs targeting it. ``display_time`` is a local
+    # wall-clock "HH:MM" in ``display_timezone`` — the repo is otherwise
+    # UTC-everywhere, but a "show at 08:00" schedule only makes sense in the
+    # operator's local time. ``display_weekday_mask`` bit 0 = Monday.
+    display_schedule_enabled: bool = Field(default=False)
+    display_time: str = Field(default="08:00")
+    display_weekday_mask: int = Field(default=127)
+    display_timezone: str = Field(default="UTC")
+    # ``None`` shows the content until the operator releases it manually.
+    display_duration_seconds: int | None = Field(default=None)
+
+    # Live display-job session state. ``active_message_id`` is intentionally
+    # not a FK: motd_messages transitively references grids (via
+    # display_jobs), and a back-reference would create a circular FK that
+    # complicates table creation order.
+    active_message_id: UUID | None = Field(default=None)
+    active_since: datetime | None = Field(default=None)
+    active_expires_at: datetime | None = Field(default=None)
+    # Once-per-day guard for the scheduler tick, a local date in
+    # ``display_timezone`` so "today" matches the operator's calendar.
+    last_displayed_on: date | None = Field(default=None)
+
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow, sa_column_kwargs={"onupdate": utcnow})
 

@@ -13,7 +13,6 @@ const SECTIONS: Array<{ path: string; heading: string | RegExp }> = [
   { path: '/sync-jobs/new', heading: 'New sync job' },
   { path: '/gemini-jobs/new', heading: 'New Gemini job' },
   { path: '/genai', heading: 'Generate an image' },
-  { path: '/genai?tab=jobs', heading: 'Generated content on your grids' },
   { path: '/genai?tab=prompts', heading: 'Prompt library' },
   { path: '/settings', heading: 'Settings' },
 ]
@@ -47,6 +46,16 @@ test('legacy routes redirect to their new homes', async ({ page }) => {
   await expect(page).toHaveURL(/\/jobs$/)
   await page.goto('/gemini-jobs')
   await expect(page).toHaveURL(/\/jobs\?tab=gemini$/)
+  // The MOTD/display-jobs GenAI tab moved into the Jobs page.
+  await page.goto('/genai?tab=jobs')
+  await expect(page).toHaveURL(/\/jobs\?tab=display$/)
+  await page.goto('/display-jobs')
+  await expect(page).toHaveURL(/\/jobs\?tab=display$/)
+})
+
+test('display jobs tab lists jobs and links to the editor', async ({ page }) => {
+  await page.goto('/jobs?tab=display', { waitUntil: 'networkidle' })
+  await expect(page.getByRole('button', { name: 'New display job' })).toBeVisible()
 })
 
 test('jobs tab state lives in the URL', async ({ page }) => {

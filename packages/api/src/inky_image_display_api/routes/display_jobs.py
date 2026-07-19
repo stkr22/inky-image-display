@@ -1,29 +1,30 @@
 """Display-job configuration and control endpoints.
 
-A display job (MOTD today, more content types later) targets a grid and
-maps generated content parts onto the grid's layout slots. These routes
-own job CRUD, manual generate/display/release, live status, and the
-generated-message history.
+A display job (MOTD today, more content types later) generates content for
+a grid on its own interval, mapping content parts onto the grid's layout
+slots. These routes own job CRUD, manual generate/display, and the
+generated-message history; the display schedule and session control live
+on the grid routes.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from datetime import timedelta
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
-from inky_image_display_shared.models import DisplayJob, DisplayJobSlot, MotdMessage, MotdScreen, PromptPreset
+from inky_image_display_shared.models import DisplayJob, DisplayJobSlot, Grid, MotdMessage, MotdScreen, PromptPreset
 from inky_image_display_shared.motd import DEFAULT_MOTD_PROMPT
 from inky_image_display_shared.schemas.responses import (
     DisplayJobDisplayResult,
     DisplayJobResponse,
     DisplayJobSlotResponse,
-    DisplayJobSlotStatus,
-    DisplayJobStatusResponse,
     MotdMessageResponse,
     MotdScreenResponse,
 )
+from inky_image_display_shared.time import utcnow
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -89,7 +90,11 @@ async def create_display_job(request: Request, body: DisplayJobCreate) -> Displa
             job_type=body.job_type,
             target_grid_id=body.target_grid_id,
             image_preset_id=scene_preset.id if scene_preset else None,
+            interval_minutes=body.interval_minutes,
         )
+        if job.interval_minutes is not None:
+            # Due immediately: a freshly created job should deliver right away.
+            job.next_run_at = utcnow()
         session.add(job)
         await session.commit()
         await session.refresh(job)
@@ -106,47 +111,37 @@ async def get_display_job(request: Request, job_id: UUID) -> DisplayJobResponse:
 
 
 @router.put("/{job_id}")
-async def update_display_job(  # noqa: PLR0912 — one guarded branch per patchable section
-    request: Request, job_id: UUID, body: DisplayJobUpdate
-) -> DisplayJobResponse:
+async def update_display_job(request: Request, job_id: UUID, body: DisplayJobUpdate) -> DisplayJobResponse:
     """Apply a partial job update; ``slots`` replaces the full mapping.
 
-    Slot edits made while a session is active are applied to the running
-    session immediately (missing screens rendered, changed slots re-pushed)
-    — without this, edits silently do nothing until the next display start.
+    Slot edits made while a session shows this job's content are applied to
+    the running session immediately (missing screens rendered, changed slots
+    re-pushed) — without this, edits silently do nothing until the next
+    display start.
     """
     async with AsyncSession(request.app.state.engine) as session:
         job = await _get_job_or_404(session, job_id)
         previous_parts: dict[tuple[int, int], list[str]] = {}
 
-        for field_name in (
-            "name",
-            "content_prompt",
-            "source_mode",
-            "text_model_name",
-            "schedule_enabled",
-            "display_time",
-            "weekday_mask",
-            "timezone",
-            "generation_lead_minutes",
-        ):
+        for field_name in ("name", "content_prompt", "source_mode", "text_model_name"):
             value = getattr(body, field_name)
             if value is not None:
                 setattr(job, field_name, value)
         if body.clear_target_grid:
             job.target_grid_id = None
-        elif body.target_grid_id is not None and body.target_grid_id != job.target_grid_id:
-            if job.active_message_id is not None:
-                raise HTTPException(status_code=409, detail="Release the active session before changing the grid")
+        elif body.target_grid_id is not None:
             job.target_grid_id = body.target_grid_id
         if body.clear_image_preset:
             job.image_preset_id = None
         elif body.image_preset_id is not None:
             job.image_preset_id = body.image_preset_id
-        if body.clear_display_duration:
-            job.display_duration_seconds = None
-        elif body.display_duration_seconds is not None:
-            job.display_duration_seconds = body.display_duration_seconds
+        if body.clear_interval:
+            job.interval_minutes = None
+            job.next_run_at = None
+        elif body.interval_minutes is not None:
+            # Rebase the schedule on the new cadence (mirrors the sync jobs).
+            job.interval_minutes = body.interval_minutes
+            job.next_run_at = utcnow() + timedelta(minutes=body.interval_minutes)
         session.add(job)
 
         if body.slots is not None:
@@ -166,7 +161,8 @@ async def update_display_job(  # noqa: PLR0912 — one guarded branch per patcha
 
         await session.commit()
         await session.refresh(job)
-        if body.slots is not None and job.active_message_id is not None:
+        if body.slots is not None:
+            # No-op unless a grid session is currently showing this job.
             await display_job_service.resync_active_session(
                 session,
                 request.app.state.mqtt,
@@ -181,12 +177,14 @@ async def update_display_job(  # noqa: PLR0912 — one guarded branch per patcha
 
 @router.delete("/{job_id}", status_code=204)
 async def delete_display_job(request: Request, job_id: UUID) -> None:
-    """Delete a job; an active session is released first so the grid is handed back."""
+    """Delete a job; sessions showing its content are released first."""
     async with AsyncSession(request.app.state.engine) as session:
         job = await _get_job_or_404(session, job_id)
-        if job.active_message_id is not None:
-            await display_job_service.release_session(session, job, request.app.state.settings)
-            await session.refresh(job)
+        message_ids = select(col(MotdMessage.id)).where(col(MotdMessage.job_id) == job.id)
+        grids_result = await session.exec(select(Grid).where(col(Grid.active_message_id).in_(message_ids)))
+        for grid in grids_result.all():
+            await display_job_service.release_session(session, grid, request.app.state.settings)
+        job = await _get_job_or_404(session, job_id)
         await session.delete(job)
         await session.commit()
     logger.info("Deleted display job %s", job_id)
@@ -221,73 +219,42 @@ async def generate_now(request: Request, job_id: UUID, background_tasks: Backgro
 async def display_now(
     request: Request, job_id: UUID, body: DisplayJobDisplayRequest | None = None
 ) -> DisplayJobDisplayResult:
-    """Start a display session with the latest ready message.
+    """Start a session on the job's target grid with its latest ready message.
 
     Passing ``message_id`` redisplays that retained message instead —
-    the history list in the UI uses this.
+    the history list in the UI uses this. Session control (status, release)
+    lives on the grid routes; this is the job-side convenience trigger.
     """
+    async with AsyncSession(request.app.state.engine) as session:
+        job = await _get_job_or_404(session, job_id)
+        if job.target_grid_id is None:
+            raise HTTPException(status_code=409, detail="The job has no target grid — pick one first")
+        grid_id = job.target_grid_id
+        message_id = body.message_id if body else None
+        if message_id is None:
+            # This job's newest ready message — not the grid's, so with two
+            # jobs on one grid each Display button shows its own content.
+            result = await session.exec(
+                select(MotdMessage)
+                .where(col(MotdMessage.job_id) == job.id, col(MotdMessage.status) == "ready")
+                .order_by(col(MotdMessage.created_at).desc())
+                .limit(1)
+            )
+            message = result.first()
+            if message is None:
+                raise HTTPException(status_code=409, detail="No generated message is ready — generate one first")
+            message_id = message.id
     try:
         return await display_job_service.start_session(
             request.app.state.engine,
             request.app.state.mqtt,
             request.app.state.settings,
             request.app.state.s3_service,
-            job_id,
-            message_id=body.message_id if body else None,
+            grid_id,
+            message_id=message_id,
         )
     except JobStartError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-@router.post("/{job_id}/release")
-async def release(request: Request, job_id: UUID) -> dict[str, str]:
-    """End the active session; the grid resumes rotation at a staggered time."""
-    async with AsyncSession(request.app.state.engine) as session:
-        job = await _get_job_or_404(session, job_id)
-        await display_job_service.release_session(session, job, request.app.state.settings)
-    return {"status": "released"}
-
-
-@router.get("/{job_id}/status")
-async def get_status(request: Request, job_id: UUID) -> DisplayJobStatusResponse:
-    """Report the active session and what each grid slot is showing."""
-    async with AsyncSession(request.app.state.engine) as session:
-        job = await _get_job_or_404(session, job_id)
-        headline = None
-        slot_statuses: list[DisplayJobSlotStatus] = []
-        if job.active_message_id is not None and job.target_grid_id is not None:
-            message_result = await session.exec(select(MotdMessage).where(col(MotdMessage.id) == job.active_message_id))
-            message = message_result.first()
-            headline = message.headline if message else None
-            screens = await display_job_service.screens_by_part(session, job.active_message_id)
-            slot_targets = await display_job_service.resolve_slot_targets(session, job.target_grid_id)
-            for slot in await display_job_service.list_slots(session, job.id):
-                target = slot_targets.get((slot.row, slot.col))
-                if target is None or target.device.claimed_by_grid_id != job.target_grid_id:
-                    continue
-                effective = display_job_service.effective_screens(
-                    display_job_service.parse_parts(slot), target, screens
-                )
-                current = None
-                if effective:
-                    current = effective[slot.rotation_index % len(effective)].part
-                slot_statuses.append(
-                    DisplayJobSlotStatus(
-                        row=slot.row,
-                        col=slot.col,
-                        device_id=target.device.device_id,
-                        is_online=target.device.is_online,
-                        current_part=current,
-                    )
-                )
-        return DisplayJobStatusResponse(
-            active=job.active_message_id is not None,
-            message_id=job.active_message_id,
-            headline=headline,
-            active_since=job.active_since,
-            active_expires_at=job.active_expires_at,
-            slots=slot_statuses,
-        )
 
 
 def _message_response(message: MotdMessage, screens: list[MotdScreen]) -> MotdMessageResponse:

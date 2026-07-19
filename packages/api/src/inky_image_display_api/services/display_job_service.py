@@ -1,14 +1,17 @@
 """Display-job orchestration.
 
-Owns the lifecycle of grid-targeting content jobs. For the MOTD job type
-that means: generating the daily story (LLM text + AI illustration +
-pre-rendered per-slot screens in S3), starting a display session (claiming
-the target grid's panels and pushing each slot's first part), rotating
-multi-part slots, expiring or manually releasing the session, and the
-once-per-tick scheduler hook called from the rotation loop.
+Two decoupled clocks drive generated content:
+
+* The *job* generates on its own interval (LLM text + AI illustration +
+  pre-rendered per-slot screens in S3), just like the sync jobs — it can
+  produce content long before anything shows it.
+* The *grid* owns the display schedule and session state: at its display
+  time it claims its panels, pushes the latest ready message from the jobs
+  targeting it (one slot part per panel), rotates multi-part slots, and
+  releases the panels on expiry or manual release.
 
 Jobs address content by grid slot (row/col of the grid layout), so the
-grid remains the single claim/push mechanism — a job session simply takes
+grid remains the single claim/push mechanism — a session simply takes
 over the grid's panels and hands them back when it ends.
 """
 
@@ -119,45 +122,44 @@ async def list_slots(session: AsyncSession, job_id: UUID) -> list[DisplayJobSlot
     return list(result.all())
 
 
-def _local_now(job: DisplayJob, now: datetime) -> datetime:
-    """Lift stored naive-UTC ``now`` into the job's timezone."""
-    return now.replace(tzinfo=UTC).astimezone(ZoneInfo(job.timezone))
+def _local_now(grid: Grid, now: datetime) -> datetime:
+    """Lift stored naive-UTC ``now`` into the grid's display timezone."""
+    return now.replace(tzinfo=UTC).astimezone(ZoneInfo(grid.display_timezone))
 
 
-def _display_at_utc(job: DisplayJob, now: datetime) -> datetime | None:
-    """Today's display time (job-local) as naive UTC, or None off-schedule days."""
-    local = _local_now(job, now)
-    if not job.weekday_mask & (1 << local.weekday()):
+def _display_at_utc(grid: Grid, now: datetime) -> datetime | None:
+    """Today's display time (grid-local) as naive UTC, or None off-schedule days."""
+    local = _local_now(grid, now)
+    if not grid.display_weekday_mask & (1 << local.weekday()):
         return None
-    hour, minute = (int(piece) for piece in job.display_time.split(":"))
+    hour, minute = (int(piece) for piece in grid.display_time.split(":"))
     local_display = datetime.combine(local.date(), time(hour, minute), tzinfo=local.tzinfo)
     return local_display.astimezone(UTC).replace(tzinfo=None)
 
 
-def _local_today(job: DisplayJob, now: datetime) -> date:
-    return _local_now(job, now).date()
+def _local_today(grid: Grid, now: datetime) -> date:
+    return _local_now(grid, now).date()
 
 
 def generation_due(job: DisplayJob, now: datetime) -> bool:
-    """Report whether the daily auto-generation should run."""
-    if not job.schedule_enabled or job.target_grid_id is None:
+    """Report whether the interval generation should run.
+
+    Mirrors the sync jobs' due predicate; a job without a target grid has
+    nothing to render for, so its schedule idles until it is re-targeted.
+    """
+    if job.interval_minutes is None or job.next_run_at is None or job.target_grid_id is None:
         return False
-    display_at = _display_at_utc(job, now)
-    if display_at is None:
-        return False
-    if job.last_generated_on == _local_today(job, now):
-        return False
-    return now >= display_at - timedelta(minutes=job.generation_lead_minutes)
+    return job.next_run_at <= now
 
 
-def display_due(job: DisplayJob, now: datetime) -> bool:
-    """Report whether the scheduled display should start."""
-    if not job.schedule_enabled or job.target_grid_id is None or job.active_message_id is not None:
+def display_due(grid: Grid, now: datetime) -> bool:
+    """Report whether the grid's scheduled display should start."""
+    if not grid.display_schedule_enabled or grid.active_message_id is not None:
         return False
-    display_at = _display_at_utc(job, now)
+    display_at = _display_at_utc(grid, now)
     if display_at is None:
         return False
-    if job.last_displayed_on == _local_today(job, now):
+    if grid.last_displayed_on == _local_today(grid, now):
         return False
     return now >= display_at
 
@@ -197,11 +199,18 @@ async def resolve_slot_targets(session: AsyncSession, grid_id: UUID) -> dict[tup
     return targets
 
 
-async def _render_targets(session: AsyncSession, job: DisplayJob) -> set[tuple[str, int, int, bool]]:
-    """Collect the distinct (part, width, height, is_portrait) screens needed."""
-    if job.target_grid_id is None:
+async def _render_targets(
+    session: AsyncSession, job: DisplayJob, grid_id: UUID | None
+) -> set[tuple[str, int, int, bool]]:
+    """Collect the distinct (part, width, height, is_portrait) screens needed.
+
+    ``grid_id`` is the job's target at generation time, but the *session*
+    grid during display/resync — a job re-targeted mid-session keeps
+    rendering for the grid it is actually showing on.
+    """
+    if grid_id is None:
         return set()
-    slot_targets = await resolve_slot_targets(session, job.target_grid_id)
+    slot_targets = await resolve_slot_targets(session, grid_id)
     targets: set[tuple[str, int, int, bool]] = set()
     for slot in await list_slots(session, job.id):
         target = slot_targets.get((slot.row, slot.col))
@@ -254,9 +263,8 @@ async def generate_message(  # noqa: PLR0912, PLR0913, PLR0915 — sequential pi
             source_mode = job.source_mode
             text_model = job.text_model_name
             image_preset_id = job.image_preset_id
-            timezone_today = _local_today(job, utcnow())
 
-            targets = await _render_targets(session, job)
+            targets = await _render_targets(session, job, job.target_grid_id)
             if not targets:
                 raise JobStartError("The job has no grid slots with content parts configured")
 
@@ -325,7 +333,7 @@ async def generate_message(  # noqa: PLR0912, PLR0913, PLR0915 — sequential pi
             session.add(message)
             job_result = await session.exec(select(DisplayJob).where(col(DisplayJob.id) == job_id))
             job = job_result.one()
-            job.last_generated_on = timezone_today
+            job.last_run_at = utcnow()
             session.add(job)
             await session.commit()
 
@@ -353,14 +361,16 @@ async def _prune_old_messages(engine: AsyncEngine, s3: S3Service, job_id: UUID) 
     """Delete messages beyond the retention window, including S3 screens."""
     cutoff = utcnow() - timedelta(days=_RETENTION_DAYS)
     async with AsyncSession(engine) as session:
-        job = await session.get(DisplayJob, job_id)
-        active_id = job.active_message_id if job else None
+        active_result = await session.exec(
+            select(Grid.active_message_id).where(col(Grid.active_message_id).is_not(None))
+        )
+        active_ids = set(active_result.all())
         result = await session.exec(
             select(MotdMessage).where(col(MotdMessage.job_id) == job_id).order_by(col(MotdMessage.created_at).desc())
         )
         messages = list(result.all())
         latest_ready_id = next((m.id for m in messages if m.status == "ready"), None)
-        stale = [m for m in messages if m.created_at < cutoff and m.id not in (active_id, latest_ready_id)]
+        stale = [m for m in messages if m.created_at < cutoff and m.id not in active_ids and m.id != latest_ready_id]
         for message in stale:
             screens = await session.exec(select(MotdScreen).where(col(MotdScreen.message_id) == message.id))
             for screen in screens.all():
@@ -374,10 +384,16 @@ async def _prune_old_messages(engine: AsyncEngine, s3: S3Service, job_id: UUID) 
             await session.commit()
 
 
-async def _latest_ready_message(session: AsyncSession, job_id: UUID) -> MotdMessage | None:
+async def latest_ready_message_for_grid(session: AsyncSession, grid_id: UUID) -> MotdMessage | None:
+    """Return the newest ready message across all jobs targeting this grid.
+
+    With several jobs feeding one grid the newest content wins — the grid
+    schedule needs no per-job arbitration config.
+    """
     result = await session.exec(
         select(MotdMessage)
-        .where(col(MotdMessage.job_id) == job_id, col(MotdMessage.status) == "ready")
+        .join(DisplayJob, col(MotdMessage.job_id) == col(DisplayJob.id))
+        .where(col(DisplayJob.target_grid_id) == grid_id, col(MotdMessage.status) == "ready")
         .order_by(col(MotdMessage.created_at).desc())
         .limit(1)
     )
@@ -432,6 +448,7 @@ async def ensure_screens(
     s3: S3Service,
     message: MotdMessage,
     job: DisplayJob,
+    grid_id: UUID,
 ) -> dict[tuple[str, int, int], MotdScreen]:
     """Return the message's screens, rendering any the job's slots now need.
 
@@ -445,7 +462,7 @@ async def ensure_screens(
     session and ride on the caller's commit.
     """
     screens = await screens_by_part(session, message.id)
-    for part, width, height, is_portrait in sorted(await _render_targets(session, job)):
+    for part, width, height, is_portrait in sorted(await _render_targets(session, job, grid_id)):
         if (part, width, height) in screens:
             continue
         ai_bytes = _illustration_source(s3, screens, is_portrait) if part == "image" else None
@@ -504,70 +521,52 @@ def _claim_schedule(
         device.scheduled_next_at = expires_at or now + _FAR_FUTURE
 
 
-async def has_active_session(session: AsyncSession, grid_id: UUID) -> bool:
-    """Whether any display job is currently holding this grid."""
-    result = await session.exec(
-        select(DisplayJob).where(
-            col(DisplayJob.target_grid_id) == grid_id,
-            col(DisplayJob.active_message_id).is_not(None),
-        )
-    )
-    return result.first() is not None
-
-
 async def start_session(  # noqa: PLR0913, PLR0915 — one transaction spanning grid, slots, and transport
     engine: AsyncEngine,
     mqtt: MQTTService,
     settings: Settings,
     s3: S3Service,
-    job_id: UUID,
+    grid_id: UUID,
     message_id: UUID | None = None,
 ) -> DisplayJobDisplayResult:
-    """Claim the target grid's panels and push each slot's first part.
+    """Claim the grid's panels and push each slot's first part.
 
-    Displays the latest ready message, or — for a redisplay from the history
-    list — the explicitly requested one. Screens the current slots need but
-    the message lacks (slots edited after generation) are rendered on demand
-    first. Slots without content leave their panel untouched. Offline
-    devices are claimed but receive their first push from the rotation tick
-    once they reconnect.
+    Displays the latest ready message from the jobs targeting the grid, or —
+    for a redisplay from the history list — the explicitly requested one.
+    Screens the current slots need but the message lacks (slots edited after
+    generation) are rendered on demand first. Slots without content leave
+    their panel untouched. Offline devices are claimed but receive their
+    first push from the rotation tick once they reconnect. Starting on a
+    grid with a running session replaces that session's content.
     """
     now = utcnow()
     async with AsyncSession(engine) as session:
-        job = await session.get(DisplayJob, job_id)
-        if job is None:
-            raise JobStartError("The display job no longer exists")
-        if job.target_grid_id is None:
-            raise JobStartError("The job has no target grid — pick one first")
-        grid_result = await session.exec(select(Grid).where(col(Grid.id) == job.target_grid_id))
-        grid = grid_result.first()
+        grid = await session.get(Grid, grid_id)
         if grid is None:
-            raise JobStartError("The job's target grid no longer exists")
+            raise JobStartError("The grid no longer exists")
 
         if message_id is not None:
-            message_result = await session.exec(
-                select(MotdMessage).where(
-                    col(MotdMessage.id) == message_id,
-                    col(MotdMessage.job_id) == job.id,
-                )
-            )
-            message = message_result.first()
+            message = await session.get(MotdMessage, message_id)
             if message is None:
                 raise JobStartError("The requested message no longer exists")
             if message.status != "ready":
                 raise JobStartError("The requested message is not ready to display")
         else:
-            message = await _latest_ready_message(session, job.id)
+            message = await latest_ready_message_for_grid(session, grid.id)
             if message is None:
                 raise JobStartError("No generated message is ready — generate one first")
+
+        job = await session.get(DisplayJob, message.job_id)
+        if job is None:
+            raise JobStartError("The display job no longer exists")
 
         slots = {(slot.row, slot.col): slot for slot in await list_slots(session, job.id)}
         if not slots:
             raise JobStartError("The job has no grid slots with content parts configured")
 
-        screens = await ensure_screens(session, s3, message, job)
-        slot_targets = await resolve_slot_targets(session, job.target_grid_id)
-        expires_at = now + timedelta(seconds=job.display_duration_seconds) if job.display_duration_seconds else None
+        screens = await ensure_screens(session, s3, message, job, grid.id)
+        slot_targets = await resolve_slot_targets(session, grid.id)
+        expires_at = now + timedelta(seconds=grid.display_duration_seconds) if grid.display_duration_seconds else None
         default_seconds = await get_default_refresh_seconds(session, settings)
         result = DisplayJobDisplayResult(
             message_id=message.id, headline=message.headline, displayed=[], offline=[], skipped_no_content=[]
@@ -601,11 +600,12 @@ async def start_session(  # noqa: PLR0913, PLR0915 — one transaction spanning 
             await session.rollback()
             raise JobStartError("No grid slot has content to display")
 
-        job.active_message_id = message.id
-        job.active_since = now
-        job.active_expires_at = expires_at
-        job.last_displayed_on = _local_today(job, now)
-        session.add(job)
+        grid.active_message_id = message.id
+        grid.active_since = now
+        grid.active_expires_at = expires_at
+        grid.last_displayed_on = _local_today(grid, now)
+        grid.updated_at = now
+        session.add(grid)
         message.displayed_at = now
         session.add(message)
         await session.commit()
@@ -617,8 +617,8 @@ def _staggered_rejoin_at(interval_seconds: int, now: datetime) -> datetime:
     return now + timedelta(seconds=random.uniform(0, min(interval_seconds, _RELEASE_JITTER_CAP_SECONDS)))
 
 
-async def release_session(session: AsyncSession, job: DisplayJob, settings: Settings) -> None:
-    """End the session and hand the grid back; commits.
+async def release_session(session: AsyncSession, grid: Grid, settings: Settings) -> None:
+    """End the grid's session and hand the panels back; commits.
 
     If the grid has an image pool, the grid resumes pool rotation (devices
     stay claimed) at a jittered time — several grids released together must
@@ -629,41 +629,39 @@ async def release_session(session: AsyncSession, job: DisplayJob, settings: Sett
     now = utcnow()
     default_seconds = await get_default_refresh_seconds(session, settings)
 
-    if job.target_grid_id is not None:
-        grid_result = await session.exec(select(Grid).where(col(Grid.id) == job.target_grid_id))
-        grid = grid_result.first()
-        if grid is not None:
-            pool_result = await session.exec(
-                select(Image)
-                .where(
-                    col(Image.target_grid_id) == grid.id,
-                    col(Image.excluded_from_rotation).is_(False),
-                )
-                .limit(1)
-            )
-            has_pool = pool_result.first() is not None
-            if has_pool:
-                interval = grid.refresh_interval_seconds or default_seconds
-                grid.scheduled_next_at = _staggered_rejoin_at(interval, now)
-                grid.updated_at = now
-                session.add(grid)
-            else:
-                devices = await session.exec(select(Device).where(col(Device.claimed_by_grid_id) == grid.id))
-                for device in devices.all():
-                    device.claimed_by_grid_id = None
-                    device.scheduled_next_at = _staggered_rejoin_at(
-                        device.refresh_interval_seconds or default_seconds, now
-                    )
-                    device.updated_at = now
-                    session.add(device)
+    pool_result = await session.exec(
+        select(Image)
+        .where(
+            col(Image.target_grid_id) == grid.id,
+            col(Image.excluded_from_rotation).is_(False),
+        )
+        .limit(1)
+    )
+    has_pool = pool_result.first() is not None
+    if has_pool:
+        interval = grid.refresh_interval_seconds or default_seconds
+        grid.scheduled_next_at = _staggered_rejoin_at(interval, now)
+    else:
+        devices = await session.exec(select(Device).where(col(Device.claimed_by_grid_id) == grid.id))
+        for device in devices.all():
+            device.claimed_by_grid_id = None
+            device.scheduled_next_at = _staggered_rejoin_at(device.refresh_interval_seconds or default_seconds, now)
+            device.updated_at = now
+            session.add(device)
 
-    for slot in await list_slots(session, job.id):
-        slot.rotation_index = 0
-        session.add(slot)
-    job.active_message_id = None
-    job.active_since = None
-    job.active_expires_at = None
-    session.add(job)
+    # Reset the shown job's slot rotation for the next session. The message
+    # can be gone (job deleted mid-session) — then there is nothing to reset.
+    if grid.active_message_id is not None:
+        message = await session.get(MotdMessage, grid.active_message_id)
+        if message is not None:
+            for slot in await list_slots(session, message.job_id):
+                slot.rotation_index = 0
+                session.add(slot)
+    grid.active_message_id = None
+    grid.active_since = None
+    grid.active_expires_at = None
+    grid.updated_at = now
+    session.add(grid)
     await session.commit()
 
 
@@ -675,7 +673,7 @@ async def resync_active_session(  # noqa: PLR0913 — session resync spans job, 
     job: DisplayJob,
     previous_parts: dict[tuple[int, int], list[str]],
 ) -> None:
-    """Apply slot edits to a running session; commits.
+    """Apply slot edits to any session currently showing this job; commits.
 
     Slots whose part list is unchanged keep their screen and schedule (no
     wasted e-ink refreshes). Changed or newly mapped slots get any missing
@@ -683,20 +681,22 @@ async def resync_active_session(  # noqa: PLR0913 — session resync spans job, 
     from the mapping — or left with nothing renderable — release their
     panel back to rotation instead of freezing on stale content.
     """
-    if job.active_message_id is None or job.target_grid_id is None:
+    message_ids = select(col(MotdMessage.id)).where(col(MotdMessage.job_id) == job.id)
+    grid_result = await session.exec(select(Grid).where(col(Grid.active_message_id).in_(message_ids)))
+    grid = grid_result.first()
+    if grid is None or grid.active_message_id is None:
         return
-    message_result = await session.exec(select(MotdMessage).where(col(MotdMessage.id) == job.active_message_id))
-    message = message_result.first()
+    message = await session.get(MotdMessage, grid.active_message_id)
     if message is None:
         return
 
     now = utcnow()
-    screens = await ensure_screens(session, s3, message, job)
-    slot_targets = await resolve_slot_targets(session, job.target_grid_id)
+    screens = await ensure_screens(session, s3, message, job, grid.id)
+    slot_targets = await resolve_slot_targets(session, grid.id)
     slots = {(slot.row, slot.col): slot for slot in await list_slots(session, job.id)}
     default_seconds = await get_default_refresh_seconds(session, settings)
-    expires_at = job.active_expires_at
-    grid_id = job.target_grid_id
+    expires_at = grid.active_expires_at
+    grid_id = grid.id
 
     for key, target in sorted(slot_targets.items()):
         slot = slots.get(key)
@@ -725,34 +725,37 @@ async def resync_active_session(  # noqa: PLR0913 — session resync spans job, 
 
 
 async def advance_due_slots(app: FastAPI) -> None:
-    """Rotate each active job's due multi-part slots to their next part."""
+    """Rotate each active session's due multi-part slots to their next part."""
     now = utcnow()
     async with AsyncSession(app.state.engine) as session:
-        jobs_result = await session.exec(select(DisplayJob).where(col(DisplayJob.active_message_id).is_not(None)))
-        jobs = list(jobs_result.all())
-        if not jobs:
+        grids_result = await session.exec(select(Grid).where(col(Grid.active_message_id).is_not(None)))
+        grids = list(grids_result.all())
+        if not grids:
             return
         default_seconds = await get_default_refresh_seconds(session, app.state.settings)
-        for job in jobs:
+        for grid in grids:
             try:
-                await _advance_job_slots(session, app, job, default_seconds, now)
+                await _advance_grid_slots(session, app, grid, default_seconds, now)
             except Exception:
-                logger.exception("Failed to advance slots for display job %s", job.id)
+                logger.exception("Failed to advance display-job slots on grid %s", grid.id)
         await session.commit()
 
 
-async def _advance_job_slots(
+async def _advance_grid_slots(
     session: AsyncSession,
     app: FastAPI,
-    job: DisplayJob,
+    grid: Grid,
     default_seconds: int,
     now: datetime,
 ) -> None:
-    if job.target_grid_id is None or job.active_message_id is None:
+    if grid.active_message_id is None:
+        return
+    message = await session.get(MotdMessage, grid.active_message_id)
+    if message is None:
         return
     due_result = await session.exec(
         select(Device).where(
-            col(Device.claimed_by_grid_id) == job.target_grid_id,
+            col(Device.claimed_by_grid_id) == grid.id,
             Device.is_online == True,  # noqa: E712 — SQLModel comparison
             Device.scheduled_next_at <= now,
             dispatch_allowed_clause(now, app.state.settings.refresh_error_backoff_seconds),
@@ -762,9 +765,9 @@ async def _advance_job_slots(
     if not due_devices:
         return
 
-    screens = await screens_by_part(session, job.active_message_id)
-    slot_targets = await resolve_slot_targets(session, job.target_grid_id)
-    slots = {(slot.row, slot.col): slot for slot in await list_slots(session, job.id)}
+    screens = await screens_by_part(session, message.id)
+    slot_targets = await resolve_slot_targets(session, grid.id)
+    slots = {(slot.row, slot.col): slot for slot in await list_slots(session, message.job_id)}
 
     for key, target in slot_targets.items():
         device = due_devices.get(target.device.id)
@@ -774,7 +777,7 @@ async def _advance_job_slots(
         effective = effective_screens(parse_parts(slot), target, screens) if slot else []
         if slot is None or len(effective) <= 1:
             # Nothing to rotate — park until expiry/release.
-            device.scheduled_next_at = job.active_expires_at or now + _FAR_FUTURE
+            device.scheduled_next_at = grid.active_expires_at or now + _FAR_FUTURE
             session.add(device)
             continue
         if not app.state.mqtt.is_connected(device.device_id):
@@ -802,41 +805,51 @@ def _inflight_jobs(app: FastAPI) -> set[UUID]:
 async def tick(app: FastAPI) -> None:
     """Scheduler hook, called from the rotation loop every ~30s.
 
-    Order matters per job: expiry first (frees the grid before anything
-    else wants it), then generation, then the scheduled display, then part
-    rotation across all active jobs.
+    Order matters: session expiry first (frees the grid before anything
+    else wants it), then interval generation, then the grids' scheduled
+    displays, then part rotation across all active sessions.
     """
     now = utcnow()
     to_generate: list[UUID] = []
     to_display: list[UUID] = []
     async with AsyncSession(app.state.engine) as session:
-        for job in await list_jobs(session):
-            if job.active_message_id is not None and job.active_expires_at and job.active_expires_at <= now:
-                logger.info("Display job %s session expired; releasing grid", job.id)
-                await release_session(session, job, app.state.settings)
-                await session.refresh(job)
+        expired_result = await session.exec(
+            select(Grid).where(col(Grid.active_message_id).is_not(None), col(Grid.active_expires_at) <= now)
+        )
+        for grid in expired_result.all():
+            logger.info("Display session on grid %s expired; releasing panels", grid.id)
+            await release_session(session, grid, app.state.settings)
 
-            job_id = job.id
+        for job in await list_jobs(session):
             if (
                 generation_due(job, now)
-                and job_id not in _inflight_jobs(app)
-                and not await _generation_already_running(session, job_id, now)
+                and job.id not in _inflight_jobs(app)
+                and not await _generation_already_running(session, job.id, now)
             ):
-                to_generate.append(job_id)
+                # Advancing the schedule at spawn doubles as a lease, exactly
+                # like the sync jobs' claim — a slow generation must not be
+                # started again by the next tick.
+                assert job.interval_minutes is not None  # implied by generation_due
+                job.next_run_at = now + timedelta(minutes=job.interval_minutes)
+                session.add(job)
+                to_generate.append(job.id)
+        await session.commit()
 
-            if display_due(job, now) and await _latest_ready_message(session, job_id) is not None:
-                to_display.append(job_id)
+        grids_result = await session.exec(select(Grid).where(col(Grid.display_schedule_enabled).is_(True)))
+        for grid in grids_result.all():
+            if display_due(grid, now) and await latest_ready_message_for_grid(session, grid.id) is not None:
+                to_display.append(grid.id)
 
     for job_id in to_generate:
         _inflight_jobs(app).add(job_id)
         asyncio.create_task(_run_scheduled_generation(app, job_id, uuid4()))  # noqa: RUF006 — fire-and-forget by design
 
-    for job_id in to_display:
+    for grid_id in to_display:
         try:
-            await start_session(app.state.engine, app.state.mqtt, app.state.settings, app.state.s3_service, job_id)
-            logger.info("Display job %s scheduled display started", job_id)
+            await start_session(app.state.engine, app.state.mqtt, app.state.settings, app.state.s3_service, grid_id)
+            logger.info("Grid %s scheduled display started", grid_id)
         except JobStartError as exc:
-            logger.warning("Display job %s scheduled display could not start: %s", job_id, exc)
+            logger.warning("Grid %s scheduled display could not start: %s", grid_id, exc)
 
     await advance_due_slots(app)
 
