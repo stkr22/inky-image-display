@@ -50,7 +50,7 @@ a QR code — put the QR on the table and every guest who scans it gets a
 are multi-use and expire after `API_GUEST_INVITE_TTL_MINUTES` (default 12 h).
 
 Guests can browse images, use GenAI generation and push a result to a
-display; they cannot upload, delete, or touch devices, jobs, grids, MOTD or
+display; they cannot upload, delete, or touch devices, jobs, grids, display jobs or
 settings. The allowlist lives in
 `packages/api/src/inky_image_display_api/auth/policy.py`.
 

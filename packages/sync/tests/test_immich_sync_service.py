@@ -171,7 +171,7 @@ class TestCleanupInSyncFlow:
         service = _make_service(api_client=api_client, retention_days=0)
 
         with patch.object(service, "_cleanup_expired_images", new_callable=AsyncMock) as mock_cleanup:
-            await service.sync_all_active_jobs()
+            await service.sync_jobs(all_active=True)
 
         mock_cleanup.assert_not_called()
 
@@ -190,7 +190,7 @@ class TestCleanupInSyncFlow:
         with patch.object(service, "_cleanup_expired_images", new_callable=AsyncMock) as mock_cleanup:
             mock_cleanup.return_value = (CleanupResult(), {})
             with patch.object(service, "_count_job_images", new_callable=AsyncMock, return_value=10):
-                await service.sync_all_active_jobs()
+                await service.sync_jobs(all_active=True)
 
         mock_cleanup.assert_called_once()
 
@@ -221,7 +221,7 @@ async def test_cleanup_called_before_capacity_check() -> None:
         patch.object(service, "_cleanup_expired_images", side_effect=mock_cleanup),
         patch.object(service, "_count_job_images", side_effect=mock_count),
     ):
-        await service.sync_all_active_jobs()
+        await service.sync_jobs(all_active=True)
 
     assert call_order[0] == "cleanup"
     assert "count" in call_order

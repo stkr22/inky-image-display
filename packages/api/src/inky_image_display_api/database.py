@@ -7,14 +7,14 @@ from alembic import command
 from alembic.config import Config
 from inky_image_display_shared.models import (
     Device,
+    DisplayJob,
+    DisplayJobSlot,
     GeminiSyncJob,
     GenerationTask,
     Grid,
     GridDevice,
     Image,
     ImmichSyncJob,
-    MotdConfig,
-    MotdDeviceAssignment,
     MotdMessage,
     MotdScreen,
     PromptBlock,
@@ -64,14 +64,14 @@ async def create_tables(engine: AsyncEngine) -> None:
             Grid.__table__,  # ty: ignore[unresolved-attribute]
             PromptBlock.__table__,  # ty: ignore[unresolved-attribute]
             PromptPreset.__table__,  # ty: ignore[unresolved-attribute]
-            # motd_configs precedes devices: the device claim column carries
-            # a FK to it, and Postgres checks referenced tables at DDL time.
-            MotdConfig.__table__,  # ty: ignore[unresolved-attribute]
             Device.__table__,  # ty: ignore[unresolved-attribute]
             GridDevice.__table__,  # ty: ignore[unresolved-attribute]
             ImmichSyncJob.__table__,  # ty: ignore[unresolved-attribute]
             GeminiSyncJob.__table__,  # ty: ignore[unresolved-attribute]
-            MotdDeviceAssignment.__table__,  # ty: ignore[unresolved-attribute]
+            # display_jobs precedes motd_messages: the message FK references
+            # it, and referenced tables must exist at DDL time.
+            DisplayJob.__table__,  # ty: ignore[unresolved-attribute]
+            DisplayJobSlot.__table__,  # ty: ignore[unresolved-attribute]
             MotdMessage.__table__,  # ty: ignore[unresolved-attribute]
             MotdScreen.__table__,  # ty: ignore[unresolved-attribute]
             SyncJobRun.__table__,  # ty: ignore[unresolved-attribute]

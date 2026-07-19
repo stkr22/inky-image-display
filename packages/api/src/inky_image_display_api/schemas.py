@@ -41,14 +41,16 @@ __all__ = [
     "DeviceResponse",
     "DeviceUpdate",
     "DisplayCommandRequest",
+    "DisplayJobCreate",
+    "DisplayJobDisplayRequest",
+    "DisplayJobSlotUpdate",
+    "DisplayJobUpdate",
     "GeminiSyncJobCreate",
     "GeminiSyncJobResponse",
     "GeminiSyncJobUpdate",
     "GenerationTaskResponse",
     "GridCreate",
-    "GridDeviceAdd",
     "GridDeviceResponse",
-    "GridDeviceUpdate",
     "GridDisplayRequest",
     "GridResponse",
     "GridUpdate",
@@ -62,9 +64,6 @@ __all__ = [
     "ImageSummary",
     "ImageUpdate",
     "ImmichBrowseItem",
-    "MotdAssignmentUpdate",
-    "MotdConfigUpdate",
-    "MotdDisplayRequest",
     "NextImageResponse",
     "PromptBlockCreate",
     "PromptBlockResponse",
@@ -85,6 +84,9 @@ __all__ = [
 # Range guard for refresh interval inputs: 1 second through 1 week.
 _MAX_REFRESH_SECONDS = 7 * 24 * 3600
 RefreshIntervalSeconds = Annotated[int, Field(ge=1, le=_MAX_REFRESH_SECONDS)]
+
+# Range guard for sync-job cadence: 1 minute through 4 weeks.
+SyncIntervalMinutes = Annotated[int, Field(ge=1, le=28 * 24 * 60)]
 
 # --- Images ---
 
@@ -200,6 +202,9 @@ class SyncJobCreate(BaseModel):
 
     name: str
     is_active: bool = True
+    # None = manual runs only (Run-now button); a value auto-runs the job
+    # on that cadence via the worker's due-claim polling.
+    interval_minutes: SyncIntervalMinutes | None = 60
     target_device_profile_id: UUID
     orientation: str | None = None
     strategy: str = "RANDOM"
@@ -223,10 +228,15 @@ class SyncJobCreate(BaseModel):
 
 
 class SyncJobUpdate(BaseModel):
-    """Fields accepted when updating a sync job (all optional)."""
+    """Fields accepted when updating a sync job (all optional).
+
+    ``interval_minutes`` uses ``exclude_unset`` semantics: sending an
+    explicit ``null`` switches the job to manual-only runs.
+    """
 
     name: str | None = None
     is_active: bool | None = None
+    interval_minutes: SyncIntervalMinutes | None = None
     target_device_profile_id: UUID | None = None
     orientation: str | None = None
     strategy: str | None = None
@@ -328,6 +338,8 @@ class GeminiSyncJobCreate(BaseModel):
 
     name: str
     is_active: bool = True
+    # Daily default: Gemini batches spend real generation quota.
+    interval_minutes: SyncIntervalMinutes | None = 1440
     target_device_profile_id: UUID
     prompt_preset_id: UUID
     orientation: str = "portrait"
@@ -337,10 +349,14 @@ class GeminiSyncJobCreate(BaseModel):
 
 
 class GeminiSyncJobUpdate(BaseModel):
-    """Patch fields on an existing Gemini sync job (all optional)."""
+    """Patch fields on an existing Gemini sync job (all optional).
+
+    ``interval_minutes``: explicit ``null`` switches to manual-only runs.
+    """
 
     name: str | None = None
     is_active: bool | None = None
+    interval_minutes: SyncIntervalMinutes | None = None
     target_device_profile_id: UUID | None = None
     prompt_preset_id: UUID | None = None
     orientation: str | None = None
@@ -404,45 +420,45 @@ class ImmichBrowseItem(BaseModel):
 # --- Grids ---
 
 
+def _validate_layout_rows(rows: list[list[UUID]]) -> list[list[UUID]]:
+    if any(len(row) == 0 for row in rows):
+        raise ValueError("Layout rows must not be empty")
+    return rows
+
+
 class GridCreate(BaseModel):
-    """Payload to create a grid."""
+    """Payload to create a grid.
+
+    ``rows`` is the visual tile arrangement (rows top-down, devices
+    left-to-right); every cm value — canvas size and placements — is
+    computed server-side from the device profiles' physical dimensions.
+    """
 
     name: str
-    width_cm: float
-    height_cm: float
+    rows: list[list[UUID]] = Field(min_length=1)
+    refresh_interval_seconds: RefreshIntervalSeconds | None = None
+
+    _rows_not_empty = field_validator("rows")(_validate_layout_rows)
 
 
 class GridUpdate(BaseModel):
     """Patch fields on an existing grid (all optional).
 
-    Resizing a grid re-validates every member device rectangle.
+    ``rows`` replaces the whole layout; placements and canvas size are
+    recomputed from device profiles.
     """
 
     name: str | None = None
-    width_cm: float | None = None
-    height_cm: float | None = None
+    rows: list[list[UUID]] | None = Field(default=None, min_length=1)
     refresh_interval_seconds: RefreshIntervalSeconds | None = None
     clear_refresh_interval: bool = False
 
-
-class GridDeviceAdd(BaseModel):
-    """Place a device on a grid.
-
-    Coordinates are the device's bottom-left corner on the canvas, with
-    the canvas origin at the bottom-left of the grid and Y growing
-    upward — the orientation a user reads off a tape measure on a wall.
-    """
-
-    device_id: UUID
-    bottom_left_x_cm: float
-    bottom_left_y_cm: float
-
-
-class GridDeviceUpdate(BaseModel):
-    """Move a placed device on a grid (bottom-left corner, Y-up)."""
-
-    bottom_left_x_cm: float
-    bottom_left_y_cm: float
+    @field_validator("rows")
+    @classmethod
+    def _rows_not_empty(cls, value: list[list[UUID]] | None) -> list[list[UUID]] | None:
+        if value is not None:
+            _validate_layout_rows(value)
+        return value
 
 
 class GridDisplayRequest(BaseModel):
@@ -465,13 +481,14 @@ class AppSettingsUpdate(BaseModel):
     quiet_hours: QuietHoursSettings | None = None
 
 
-# --- Message of the day ---
+# --- Display jobs ---
 
 
-class MotdAssignmentUpdate(BaseModel):
-    """One device's ordered part list inside a config update."""
+class DisplayJobSlotUpdate(BaseModel):
+    """One grid slot's ordered part list inside a job update."""
 
-    device_id: UUID
+    row: int = Field(ge=0)
+    col: int = Field(ge=0)
     parts: list[str] = Field(min_length=1)
 
     @field_validator("parts")
@@ -485,8 +502,20 @@ class MotdAssignmentUpdate(BaseModel):
         return value
 
 
-class MotdDisplayRequest(BaseModel):
-    """Optional body for ``POST /api/motd/display``.
+class DisplayJobCreate(BaseModel):
+    """Body for ``POST /api/display-jobs``.
+
+    Content/schedule fields start on the model defaults; the UI edits them
+    afterwards via the update endpoint.
+    """
+
+    name: str = Field(min_length=1, max_length=200)
+    job_type: Literal["motd"] = "motd"
+    target_grid_id: UUID | None = None
+
+
+class DisplayJobDisplayRequest(BaseModel):
+    """Optional body for ``POST /api/display-jobs/{id}/display``.
 
     ``message_id`` redisplays a specific retained message from the history
     list; omitted (or an empty body) displays the latest ready one.
@@ -495,13 +524,16 @@ class MotdDisplayRequest(BaseModel):
     message_id: UUID | None = None
 
 
-class MotdConfigUpdate(BaseModel):
-    """Body for ``PUT /api/motd/config``.
+class DisplayJobUpdate(BaseModel):
+    """Body for ``PUT /api/display-jobs/{id}``.
 
     All fields optional so the UI can save one section at a time;
-    ``assignments`` replaces the full device list when present.
+    ``slots`` replaces the full slot mapping when present.
     """
 
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    target_grid_id: UUID | None = None
+    clear_target_grid: bool = False
     content_prompt: str | None = Field(default=None, min_length=1, max_length=4000)
     source_mode: Literal["grounded", "knowledge"] | None = None
     image_preset_id: UUID | None = None
@@ -516,7 +548,7 @@ class MotdConfigUpdate(BaseModel):
     # Duration None means "until released"; a dedicated flag distinguishes
     # "leave unchanged" from "set indefinite" in the partial update.
     clear_display_duration: bool = False
-    assignments: list[MotdAssignmentUpdate] | None = None
+    slots: list[DisplayJobSlotUpdate] | None = None
 
     @field_validator("timezone")
     @classmethod
@@ -526,6 +558,15 @@ class MotdConfigUpdate(BaseModel):
                 ZoneInfo(value)
             except (KeyError, ValueError) as exc:
                 raise ValueError(f"Unknown IANA timezone: {value}") from exc
+        return value
+
+    @field_validator("slots")
+    @classmethod
+    def _unique_slots(cls, value: list[DisplayJobSlotUpdate] | None) -> list[DisplayJobSlotUpdate] | None:
+        if value is not None:
+            keys = [(slot.row, slot.col) for slot in value]
+            if len(set(keys)) != len(keys):
+                raise ValueError("Each grid slot can be mapped only once")
         return value
 
 

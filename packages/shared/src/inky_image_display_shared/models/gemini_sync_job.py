@@ -48,9 +48,25 @@ class GeminiSyncJob(SQLModel, table=True):
         description="If set, generated images expire after this many days.",
     )
 
-    # Set by the "Run now" endpoint; the worker's --requested-only mode
-    # (run on a frequent cron) picks up flagged jobs and the run report
-    # clears the flag. Regular scheduled runs ignore it.
+    # Scheduling lives on the job row (see ImmichSyncJob for the rationale
+    # and why the defaults are None). The API create schema defaults Gemini
+    # batches to daily — generation costs real quota.
+    interval_minutes: int | None = Field(
+        default=None,
+        ge=1,
+        description="Auto-run cadence in minutes; None = manual runs only",
+    )
+    next_run_at: datetime | None = Field(
+        default=None,
+        description="When the job is next due; advanced by the claim-due hand-out",
+    )
+    last_run_at: datetime | None = Field(
+        default=None,
+        description="Finish time of the most recent reported run",
+    )
+
+    # Set by the "Run now" endpoint; makes the job due immediately (active
+    # or not) and the run report clears the flag.
     run_requested_at: datetime | None = Field(default=None)
 
     created_at: datetime = Field(default_factory=utcnow)

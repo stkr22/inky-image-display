@@ -18,8 +18,10 @@ This chart creates no Secrets. Make sure these exist in {{ .Release.Namespace }}
   {{ .Values.existingSecrets.immich }} (key: apiKey)
 {{- end }}
 {{- if .Values.existingSecrets.gemini }}
-  {{ .Values.existingSecrets.gemini }} (key: gemini-api-key) — optional; powers GenAI generation and MOTD
+  {{ .Values.existingSecrets.gemini }} (key: gemini-api-key) — optional; powers GenAI generation and display jobs (MOTD)
 {{- end }}
 
-MOTD scheduling runs inside the API pod (no CronJob needed); configure it in
-the web UI under GenAI → "Message of the day".
+Display-job scheduling (the message of the day) runs inside the API pod (no
+CronJob needed); configure it in the web UI under GenAI → "Display jobs".
+Sync-job cadence is also set in the UI ("Run every" per job) — the sync
+CronJobs just poll for due jobs on a frequent schedule.

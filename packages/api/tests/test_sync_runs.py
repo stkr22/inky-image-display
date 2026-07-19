@@ -51,12 +51,16 @@ class TestSyncRunReporting:
         assert body[0]["images_added"] == 3
         assert body[0]["status"] == "success"
 
-    async def test_report_clears_run_request_flag(self, client: TestClient, async_engine, seed_profile) -> None:
+    async def test_report_clears_run_request_flag_and_sets_last_run(
+        self, client: TestClient, async_engine, seed_profile
+    ) -> None:
         job = await _seed_job(async_engine, seed_profile, run_requested_at=utcnow() - timedelta(minutes=1))
         client.post("/api/sync-runs", json=_report(job.id))
         async with AsyncSession(async_engine) as session:
             result = await session.exec(select(ImmichSyncJob).where(col(ImmichSyncJob.id) == job.id))
-            assert result.one().run_requested_at is None
+            refreshed = result.one()
+            assert refreshed.run_requested_at is None
+            assert refreshed.last_run_at is not None
 
     async def test_stale_report_does_not_clear_newer_request(
         self, client: TestClient, async_engine, seed_profile
@@ -78,19 +82,72 @@ class TestSyncRunReporting:
 
 
 class TestRunNow:
-    async def test_run_now_flags_job_and_requested_filter_finds_it(
-        self, client: TestClient, async_engine, seed_profile
-    ) -> None:
+    async def test_run_now_makes_paused_job_due(self, client: TestClient, async_engine, seed_profile) -> None:
+        """Run-now must work on inactive jobs — that is the point of the button."""
         job = await _seed_job(async_engine, seed_profile, is_active=False)
 
-        assert client.get("/api/sync-jobs", params={"requested": "true"}).json() == []
+        assert client.get("/api/sync-jobs", params={"due": "true"}).json() == []
 
         response = client.post(f"/api/sync-jobs/{job.id}/run-now")
         assert response.status_code == 200
         assert response.json()["run_requested_at"] is not None
 
-        requested = client.get("/api/sync-jobs", params={"requested": "true"}).json()
-        assert [j["id"] for j in requested] == [str(job.id)]
+        due = client.get("/api/sync-jobs", params={"due": "true"}).json()
+        assert [j["id"] for j in due] == [str(job.id)]
 
     def test_run_now_unknown_job_is_404(self, client: TestClient) -> None:
         assert client.post(f"/api/sync-jobs/{uuid4()}/run-now").status_code == 404
+
+
+class TestDueScheduling:
+    async def test_interval_job_is_due_and_claim_advances_schedule(
+        self, client: TestClient, async_engine, seed_profile
+    ) -> None:
+        job = await _seed_job(async_engine, seed_profile, interval_minutes=30, next_run_at=utcnow())
+
+        claimed = client.post("/api/sync-jobs/claim-due").json()
+        assert [j["id"] for j in claimed] == [str(job.id)]
+
+        # The hand-out leases the job: an immediately following claim gets nothing.
+        assert client.post("/api/sync-jobs/claim-due").json() == []
+        async with AsyncSession(async_engine) as session:
+            result = await session.exec(select(ImmichSyncJob).where(col(ImmichSyncJob.id) == job.id))
+            next_run_at = result.one().next_run_at
+            assert next_run_at is not None
+            assert next_run_at > utcnow() + timedelta(minutes=29)
+
+    async def test_claim_keeps_run_now_flag_for_crash_safety(
+        self, client: TestClient, async_engine, seed_profile
+    ) -> None:
+        """Only the run report clears the flag, so a dead worker leaves it armed."""
+        job = await _seed_job(async_engine, seed_profile)
+        client.post(f"/api/sync-jobs/{job.id}/run-now")
+
+        claimed = client.post("/api/sync-jobs/claim-due").json()
+        assert [j["id"] for j in claimed] == [str(job.id)]
+        assert claimed[0]["run_requested_at"] is not None
+
+    async def test_manual_only_job_never_auto_due(self, client: TestClient, seed_profile) -> None:
+        created = client.post(
+            "/api/sync-jobs",
+            json={
+                "name": "manual-job",
+                "target_device_profile_id": str(seed_profile.id),
+                "interval_minutes": None,
+            },
+        ).json()
+        assert created["interval_minutes"] is None
+        assert created["next_run_at"] is None
+        assert client.get("/api/sync-jobs", params={"due": "true"}).json() == []
+
+    async def test_update_interval_rebases_next_run(self, client: TestClient, async_engine, seed_profile) -> None:
+        job = await _seed_job(async_engine, seed_profile, interval_minutes=30, next_run_at=utcnow())
+
+        updated = client.put(f"/api/sync-jobs/{job.id}", json={"interval_minutes": 120}).json()
+        assert updated["interval_minutes"] == 120
+        assert updated["next_run_at"] is not None
+
+        # Explicit null switches to manual-only and clears the schedule.
+        updated = client.put(f"/api/sync-jobs/{job.id}", json={"interval_minutes": None}).json()
+        assert updated["interval_minutes"] is None
+        assert updated["next_run_at"] is None

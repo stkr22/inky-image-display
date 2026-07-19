@@ -98,7 +98,12 @@ export interface SyncJob {
   taken_after: string | null
   taken_before: string | null
   rating: number | null
-  // Set while a "Run now" click is waiting for the worker's requested-only cron.
+  // null = manual runs only; a value auto-runs the job on that cadence via
+  // the worker's due-claim polling.
+  interval_minutes: number | null
+  next_run_at: string | null
+  last_run_at: string | null
+  // Set while a "Run now" click is waiting for the worker's next due-claim.
   run_requested_at: string | null
   created_at: string
   updated_at: string
@@ -150,6 +155,9 @@ export interface GeminiJob {
   subjects: string[]
   images_per_subject: number
   retention_days: number | null
+  interval_minutes: number | null
+  next_run_at: string | null
+  last_run_at: string | null
   run_requested_at: string | null
   created_at: string
   updated_at: string
@@ -158,6 +166,9 @@ export interface GeminiJob {
 export interface GridPlacement {
   grid_id: string
   device_id: string
+  // Layout slot: row 0 is the top row, col 0 the leftmost panel in it.
+  row: number
+  col: number
   bottom_left_x_cm: number
   bottom_left_y_cm: number
   width_cm: number
@@ -235,16 +246,20 @@ export interface ImmichRef {
   name: string
 }
 
-// --- Message of the day ---
+// --- Display jobs (MOTD and future content types on grids) ---
 
-export interface MotdAssignment {
-  device_id: string
+export interface DisplayJobSlot {
+  row: number
+  col: number
   parts: string[]
   rotation_index: number
 }
 
-export interface MotdConfig {
+export interface DisplayJob {
   id: string
+  name: string
+  job_type: 'motd'
+  target_grid_id: string | null
   content_prompt: string
   default_prompt: string
   source_mode: 'grounded' | 'knowledge'
@@ -263,7 +278,7 @@ export interface MotdConfig {
   last_displayed_on: string | null
   created_at: string
   updated_at: string
-  assignments: MotdAssignment[]
+  slots: DisplayJobSlot[]
 }
 
 export interface MotdScreen {
@@ -294,27 +309,28 @@ export interface MotdMessage {
   screens: MotdScreen[]
 }
 
-export interface MotdDeviceStatus {
+export interface DisplayJobSlotStatus {
+  row: number
+  col: number
   device_id: string
   is_online: boolean
   current_part: string | null
 }
 
-export interface MotdStatus {
+export interface DisplayJobStatus {
   active: boolean
   message_id: string | null
   headline: string | null
   active_since: string | null
   active_expires_at: string | null
-  devices: MotdDeviceStatus[]
+  slots: DisplayJobSlotStatus[]
 }
 
-export interface MotdDisplayResult {
+export interface DisplayJobDisplayResult {
   message_id: string
   headline: string | null
   displayed: string[]
   offline: string[]
-  skipped_grid_claimed: string[]
   skipped_no_content: string[]
 }
 

@@ -56,13 +56,18 @@ class ImmichDisplayAPIClient(DisplayAPIClient):
     """Display API client with Immich-specific methods added."""
 
     async def get_active_sync_jobs(self) -> list[SyncJobItem]:
-        """Fetch all active Immich sync jobs."""
+        """Fetch all active Immich sync jobs (schedule ignored — for --all runs)."""
         response = await self._request("GET", "/api/sync-jobs", params={"is_active": "true"})
         return [SyncJobItem.model_validate(j) for j in response.json()]
 
-    async def get_requested_sync_jobs(self) -> list[SyncJobItem]:
-        """Fetch jobs flagged by "Run now" (regardless of is_active)."""
-        response = await self._request("GET", "/api/sync-jobs", params={"requested": "true"})
+    async def get_due_sync_jobs(self) -> list[SyncJobItem]:
+        """Preview due jobs without claiming them (dry-run mode)."""
+        response = await self._request("GET", "/api/sync-jobs", params={"due": "true"})
+        return [SyncJobItem.model_validate(j) for j in response.json()]
+
+    async def claim_due_sync_jobs(self) -> list[SyncJobItem]:
+        """Claim due jobs: the API advances their schedules on hand-out."""
+        response = await self._request("POST", "/api/sync-jobs/claim-due")
         return [SyncJobItem.model_validate(j) for j in response.json()]
 
 

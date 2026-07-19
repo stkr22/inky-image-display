@@ -66,20 +66,20 @@ class GeminiSyncService:
             logger=logger,
         )
 
-    async def sync_all_active_jobs(self, requested_only: bool = False) -> list[GeminiSyncResult]:
+    async def sync_jobs(self, all_active: bool = False) -> list[GeminiSyncResult]:
         """Fetch Gemini jobs and run each one in sequence, reporting each run.
 
-        ``requested_only`` is the fast-cron mode behind the UI's "Run now"
-        button: only jobs flagged via ``run_requested_at`` are executed,
-        active or not.
+        The default mode claims due jobs from the API (per-job schedule plus
+        Run-now flags); ``all_active`` ignores the schedule and runs every
+        active job (manual/debug invocations).
         """
         self.storage.ensure_bucket_exists()
-        if requested_only:
-            jobs = await self.api_client.get_requested_gemini_jobs()
-        else:
+        if all_active:
             jobs = await self.api_client.get_active_gemini_jobs()
+        else:
+            jobs = await self.api_client.claim_due_gemini_jobs()
         if not jobs:
-            self.logger.info("No %s Gemini sync jobs", "requested" if requested_only else "active")
+            self.logger.info("No %s Gemini sync jobs", "active" if all_active else "due")
             return []
 
         # Cache blocks so we only fetch them once per run.

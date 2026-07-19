@@ -3,6 +3,10 @@
 Defaults to running the Immich sync (back-compat with the original
 single-command invocation) but also exposes a ``gemini`` subcommand for
 AI-generated batches.
+
+Job cadence lives on the job rows in the API's database: the default mode
+claims whatever is due (per-job interval plus Run-now flags), so a single
+frequent cron — e.g. every minute — drives all schedules.
 """
 
 import asyncio
@@ -20,43 +24,40 @@ from inky_image_display_sync.immich.config import APIClientConfig
 app = typer.Typer(help="Sync service for Inky Image Display (Immich + Gemini)")
 
 
-_REQUESTED_ONLY_HELP = (
-    "Process only jobs flagged via the UI's 'Run now' button. Intended for a "
-    "frequent (e.g. every-minute) cron next to the regular schedule."
-)
+_ALL_HELP = "Ignore per-job schedules and run every active job (manual/debug). Default: run only due jobs."
 
 
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show jobs that would be synced")] = False,
-    requested_only: Annotated[bool, typer.Option("--requested-only", help=_REQUESTED_ONLY_HELP)] = False,
+    all_active: Annotated[bool, typer.Option("--all", help=_ALL_HELP)] = False,
 ) -> None:
     """Default action: run Immich sync (back-compat). Use ``gemini`` for AI batch."""
     if ctx.invoked_subcommand is not None:
         return
-    asyncio.run(run_immich_sync(dry_run, requested_only=requested_only))
+    asyncio.run(run_immich_sync(dry_run, all_active=all_active))
 
 
 @app.command()
 def immich(
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show jobs that would be synced")] = False,
-    requested_only: Annotated[bool, typer.Option("--requested-only", help=_REQUESTED_ONLY_HELP)] = False,
+    all_active: Annotated[bool, typer.Option("--all", help=_ALL_HELP)] = False,
 ) -> None:
-    """Run Immich sync for all active sync jobs."""
-    asyncio.run(run_immich_sync(dry_run, requested_only=requested_only))
+    """Run Immich sync for due sync jobs (or all active with --all)."""
+    asyncio.run(run_immich_sync(dry_run, all_active=all_active))
 
 
 @app.command()
 def gemini(
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show jobs that would be generated")] = False,
-    requested_only: Annotated[bool, typer.Option("--requested-only", help=_REQUESTED_ONLY_HELP)] = False,
+    all_active: Annotated[bool, typer.Option("--all", help=_ALL_HELP)] = False,
 ) -> None:
-    """Run Gemini batch generation for all active Gemini sync jobs."""
-    asyncio.run(run_gemini_sync(dry_run, requested_only=requested_only))
+    """Run Gemini batch generation for due Gemini jobs (or all active with --all)."""
+    asyncio.run(run_gemini_sync(dry_run, all_active=all_active))
 
 
-async def run_immich_sync(dry_run: bool, requested_only: bool = False) -> None:
+async def run_immich_sync(dry_run: bool, all_active: bool = False) -> None:
     """Run the Immich sync operation for the selected jobs."""
     setup_logging()
     logger = logging.getLogger("inky_image_display_sync")
@@ -66,11 +67,9 @@ async def run_immich_sync(dry_run: bool, requested_only: bool = False) -> None:
 
     try:
         if dry_run:
-            jobs = (
-                await api_client.get_requested_sync_jobs()
-                if requested_only
-                else await api_client.get_active_sync_jobs()
-            )
+            # Preview via the pure due=true read so the dry run never
+            # advances any job's schedule.
+            jobs = await api_client.get_active_sync_jobs() if all_active else await api_client.get_due_sync_jobs()
             if not jobs:
                 logger.warning("No matching sync jobs found")
                 return
@@ -83,12 +82,12 @@ async def run_immich_sync(dry_run: bool, requested_only: bool = False) -> None:
             api_client=api_client,
             logger=logger,
         )
-        await sync_service.sync_all_active_jobs(requested_only=requested_only)
+        await sync_service.sync_jobs(all_active=all_active)
     finally:
         await api_client.aclose()
 
 
-async def run_gemini_sync(dry_run: bool, requested_only: bool = False) -> None:
+async def run_gemini_sync(dry_run: bool, all_active: bool = False) -> None:
     """Run Gemini batch generation for the selected jobs."""
     setup_logging()
     logger = logging.getLogger("inky_image_display_sync")
@@ -98,11 +97,7 @@ async def run_gemini_sync(dry_run: bool, requested_only: bool = False) -> None:
 
     try:
         if dry_run:
-            jobs = (
-                await api_client.get_requested_gemini_jobs()
-                if requested_only
-                else await api_client.get_active_gemini_jobs()
-            )
+            jobs = await api_client.get_active_gemini_jobs() if all_active else await api_client.get_due_gemini_jobs()
             if not jobs:
                 logger.warning("No matching Gemini sync jobs found")
                 return
@@ -119,7 +114,7 @@ async def run_gemini_sync(dry_run: bool, requested_only: bool = False) -> None:
             return
 
         service = GeminiSyncService(api_client=api_client, logger=logger)
-        await service.sync_all_active_jobs(requested_only=requested_only)
+        await service.sync_jobs(all_active=all_active)
     finally:
         await api_client.aclose()
 

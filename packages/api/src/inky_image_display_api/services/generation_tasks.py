@@ -23,11 +23,25 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 if TYPE_CHECKING:
     from uuid import UUID
 
+    from fastapi import Request
     from sqlalchemy.ext.asyncio import AsyncEngine
 
 # Bounded so a long-running deployment can't grow the table without limit;
 # 200 entries comfortably covers "what happened recently" for a household.
 _MAX_TASKS = 200
+
+
+def task_registry(request: Request) -> GenerationTaskStore:
+    """Return the app-wide task store, creating it lazily.
+
+    Lazy creation keeps test apps (which assemble ``app.state`` by hand)
+    working without extra fixtures.
+    """
+    registry = getattr(request.app.state, "generation_tasks", None)
+    if registry is None:
+        registry = GenerationTaskStore(request.app.state.engine)
+        request.app.state.generation_tasks = registry
+    return registry
 
 
 class GenerationTaskStore:

@@ -41,15 +41,20 @@ class Grid(SQLModel, table=True):
 class GridDevice(SQLModel, table=True):
     """A device's placement on a grid canvas.
 
-    The rect is persisted explicitly so crops don't need to recompute
-    geometry on every render and so later profile-dim corrections do not
-    silently shift existing placements.
+    Placements are computed from a tile layout: ``row``/``col`` are the
+    device's slot in that layout (row 0 = top). Slots are the stable,
+    user-facing address for a panel — display jobs map content onto slots.
+    The cm-rect is still persisted explicitly so crops don't need to
+    recompute geometry on every render and so later profile-dim corrections
+    do not silently shift existing placements.
     """
 
     __tablename__ = "grid_devices"
 
     grid_id: UUID = Field(foreign_key="grids.id", primary_key=True, ondelete="CASCADE")
     device_id: UUID = Field(foreign_key="devices.id", primary_key=True, ondelete="CASCADE")
+    row: int = Field(default=0, description="Layout row (0 = top)")
+    col: int = Field(default=0, description="Position within the row (0 = left)")
     top_left_x_cm: float
     top_left_y_cm: float
     width_cm: float

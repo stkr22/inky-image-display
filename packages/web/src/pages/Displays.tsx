@@ -5,7 +5,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ConfirmDialog, Dialog } from '../components/Dialog'
-import { Button, Icon, IntervalInputs, NumberField, Switch, TextField, totalSeconds } from '../components/fields'
+import { Button, Icon, IntervalInputs, Switch, TextField, totalSeconds } from '../components/fields'
+import { GridLayoutEditor, type LayoutRows } from '../components/GridLayoutEditor'
 import { useNotify } from '../components/Toast'
 import { Badge, EmptyNote, PageHeader, Spinner } from '../components/ui'
 import { api, ApiError, DeviceNotConnectedError } from '../lib/api'
@@ -398,12 +399,13 @@ function GridRow({ grid }: { grid: Grid }) {
 
 function CreateGridDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const notify = useNotify()
+  const { data: devices } = useQuery({ queryKey: ['devices'], queryFn: api.listDevices })
+  const { data: profiles } = useQuery({ queryKey: ['device-profiles'], queryFn: api.listDeviceProfiles })
   const [name, setName] = useState('')
-  const [width, setWidth] = useState<number | ''>(80)
-  const [height, setHeight] = useState<number | ''>(40)
+  const [rows, setRows] = useState<LayoutRows>([[]])
 
   const mutation = useMutation({
-    mutationFn: () => api.createGrid({ name, width_cm: width, height_cm: height }),
+    mutationFn: () => api.createGrid({ name, rows: rows.filter((row) => row.length > 0) }),
     onSuccess: () => {
       notify('Grid created', 'positive')
       onCreated()
@@ -412,17 +414,21 @@ function CreateGridDialog({ onClose, onCreated }: { onClose: () => void; onCreat
     onError: (err) => notify(`Create failed: ${errMessage(err)}`, 'negative'),
   })
 
+  const deviceCount = rows.flat().length
+
   return (
     <Dialog open onClose={onClose}>
       <h3 className="ink-h3">New grid</h3>
       <TextField label="Name" value={name} onChange={setName} />
-      <NumberField label="Width (cm)" value={width} onChange={setWidth} min={1} step={1} />
-      <NumberField label="Height (cm)" value={height} onChange={setHeight} min={1} step={1} />
+      <span className="ink-small">
+        Arrange the panels as they hang on the wall — size and positions are computed from the device profiles.
+      </span>
+      <GridLayoutEditor rows={rows} onChange={setRows} devices={devices ?? []} profiles={profiles ?? []} />
       <div className="row w-full justify-end gap-2">
         <Button flat onClick={onClose}>
           Cancel
         </Button>
-        <Button primary onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+        <Button primary onClick={() => mutation.mutate()} disabled={mutation.isPending || !name || deviceCount === 0}>
           Create
         </Button>
       </div>

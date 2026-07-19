@@ -12,14 +12,14 @@ FastAPI service running at `:8000`. Responsibilities:
 - **Device profiles**: `/api/device-profiles` exposes a fixed lineup of supported panels (4" / 7.3" / 13.3" Spectra 6) seeded by migration. One row is marked `is_default` and feeds the genai default-target dropdown; name is editable from the UI, panel dims/model are immutable.
 - **Image library**: Images are stored as metadata in the `images` table and as files in S3-compatible storage. List responses carry an `X-Total-Count` header for real pagination. Per-image curation flags: `excluded_from_rotation` (operator veto — never picked automatically, manual sends still work) and an optional `display_duration_seconds` hold that overrides the device interval while that image is up.
 - **E-ink render preview**: `GET /api/images/{id}/eink-preview` (and a `POST /api/images/eink-preview` twin for not-yet-uploaded bytes) returns a PNG simulating the Spectra 6 panel rendering — the same saturation-blended palette + Floyd-Steinberg dither the Inky driver applies on-device — so operators see the six-ink result before a 30-second refresh burns it onto the wall. Results are cached under `thumbs/eink/` in the bucket.
-- **Sync job management**: CRUD REST API for `immich_sync_jobs` records which drive the Sync service, plus `POST /api/sync-jobs/{id}/run-now` (and the Gemini twin) to flag a job for the worker's `--requested-only` cron, and `POST/GET /api/sync-runs` where workers report per-run outcomes (shown as "Last run" in the UI; pruned to ~20 rows per job).
+- **Sync job management**: CRUD REST API for `immich_sync_jobs` records which drive the Sync service. Each job carries its own schedule (`interval_minutes`, `next_run_at`) so cadence is set in the UI, not in deployment cron specs: the worker runs on one frequent cron and calls `POST /api/sync-jobs/claim-due` (and the Gemini twin), which hands out due jobs and advances their schedules. `POST /api/sync-jobs/{id}/run-now` makes a job due immediately (active or not), and `POST/GET /api/sync-runs` is where workers report per-run outcomes (shown as "Last run" in the UI; pruned to ~20 rows per job) — the report also clears the run-now flag and stamps `last_run_at`.
 - **AI generation**: `/api/genai/*` endpoints expose the prompt library (blocks + presets), Gemini batch jobs, and on-demand generation. `POST /api/genai/generate` runs the Gemini call in a FastAPI background task and pushes the result to a matching online device over MQTT as soon as it's ready — no polling. Task status lives in the `generation_tasks` table (bounded, pruned on insert), so `GET /api/genai/tasks` history survives API restarts.
-- **Display control**: REST endpoints publish commands (display, clear) to connected devices over MQTT. Manual sends validate pixel dimensions: an exact match sends as-is, `fit="auto"` cover-crops a derived copy to the panel size server-side (cached under `derived/` in the bucket), and a mismatch without auto-fit is rejected with 409 — the controller cannot rescale and would ack a failure. A background rotation loop periodically advances the displayed image: candidates are the 5 least-recently-shown compatible images with a random pick among them (LRU fairness without replaying the identical sequence every cycle). Devices can be **pinned** (hold the current image; rotation skips them) and a global **quiet hours** window (app settings) pauses automatic rotation daily — manual pushes and the MOTD schedule are unaffected. Refresh-health transitions can push a notification to `API_NOTIFY_URL` (ntfy-style).
-- **Grids**: `/api/grids/*` groups devices into a shared physical canvas (cm) so they jointly display slices of a larger image. The API pre-renders per-device crops to S3 and pushes ordinary display commands; controllers need no grid-aware code. See [grids.md](grids.md).
-- **Message of the day**: `/api/motd/*` generates a daily positive story with Gemini (optionally grounded in Google Search for real recent news), renders its parts (What/Why/When, AI image, QR source link, takeaway) as exact-size screens, and shows them as a scheduled or manual takeover across assigned displays. See [motd.md](motd.md).
+- **Display control**: REST endpoints publish commands (display, clear) to connected devices over MQTT. Manual sends validate pixel dimensions: an exact match sends as-is, `fit="auto"` cover-crops a derived copy to the panel size server-side (cached under `derived/` in the bucket), and a mismatch without auto-fit is rejected with 409 — the controller cannot rescale and would ack a failure. A background rotation loop periodically advances the displayed image: candidates are the 5 least-recently-shown compatible images with a random pick among them (LRU fairness without replaying the identical sequence every cycle). Devices can be **pinned** (hold the current image; rotation skips them) and a global **quiet hours** window (app settings) pauses automatic rotation daily — manual pushes and display-job schedules are unaffected. Refresh-health transitions can push a notification to `API_NOTIFY_URL` (ntfy-style).
+- **Grids**: `/api/grids/*` groups devices into a shared physical canvas so they jointly display slices of a larger image. Grids are defined as a tile layout (rows of devices); the canvas size and every cm placement are computed from the device profiles' physical dimensions, and each placement carries a stable slot address (`row`/`col`). The API pre-renders per-device crops to S3 and pushes ordinary display commands; controllers need no grid-aware code. See [grids.md](grids.md).
+- **Display jobs**: `/api/display-jobs/*` are content jobs that target a grid — the MOTD (daily positive story generated with Gemini, optionally grounded in Google Search) is the first job type. A job maps content parts (What/Why/When, AI image, QR source link, takeaway) onto grid slots, renders exact-size screens, and takes the grid over for a scheduled or manual session; on release the grid resumes rotation at jittered times so panels don't flash in lockstep. A single display participates by living in a one-panel grid. See [motd.md](motd.md).
 - **Online tracking**: The API subscribes to retained MQTT status topics. Devices publish `online` on connect and configure an MQTT Last-Will-and-Testament with `offline`, so the broker announces unexpected disconnects automatically.
 
-On startup the API auto-creates the `device_profiles`, `devices`, `images`, `grids`, `grid_devices`, `immich_sync_jobs`, `prompt_blocks`, `prompt_presets`, `gemini_sync_jobs`, and `motd_*` tables, applies any pending Alembic migrations (the AI tables get seeded with a default prompt library on first run; `device_profiles` gets the three-panel Inky Impression Spectra 6 lineup plus physical-area dimensions used by grids), and connects to the MQTT broker.
+On startup the API auto-creates the `device_profiles`, `devices`, `images`, `grids`, `grid_devices`, `immich_sync_jobs`, `prompt_blocks`, `prompt_presets`, `gemini_sync_jobs`, `display_jobs`, `display_job_slots`, and `motd_*` tables, applies any pending Alembic migrations (the AI tables get seeded with a default prompt library on first run; `device_profiles` gets the three-panel Inky Impression Spectra 6 lineup plus physical-area dimensions used by grids), and connects to the MQTT broker.
 
 ### Controller (`inky-image-display-controller`)
 
@@ -38,9 +38,14 @@ React single-page app (Vite + TypeScript) served as static files by the API (`AP
 
 ### Sync (`inky-image-display-sync`)
 
-CLI with two subcommands, both intended to run as cron jobs:
+CLI with two subcommands, both intended to run from a single frequent cron
+(e.g. every minute). By default each invocation claims *due* jobs from the
+API — jobs whose stored `interval_minutes` schedule has elapsed, or that were
+flagged with the UI's "Run now" button — and exits immediately when nothing
+is due, so the frequent cron stays cheap. `--all` ignores the schedule and
+runs every active job (manual/debug); `--dry-run` previews without claiming.
 
-**`inky-image-display-sync immich`** (default) — for each active `ImmichSyncJob`:
+**`inky-image-display-sync immich`** (default) — for each due `ImmichSyncJob`:
 
 1. Reads the target panel dimensions from the job's `target_device_profile_id` (and the job's optional `orientation` override).
 2. Queries Immich using the job's filter criteria (albums, people, tags, dates, etc.).
@@ -49,9 +54,9 @@ CLI with two subcommands, both intended to run as cron jobs:
 5. Persists image metadata to the `images` table.
 6. Enforces each job's `max_images` cap (counted against only that job's own uploads) and the `retention_days` expiry by deleting old Immich-sourced images.
 
-After each job run (either subcommand), the worker POSTs a run report to `/api/sync-runs` — status, images added/skipped/deleted, errors — which the UI surfaces per job and which clears the job's "Run now" flag. Both subcommands accept `--requested-only` for a frequent cron that executes only UI-flagged jobs (see [configuration.md](configuration.md)).
+After each job run (either subcommand), the worker POSTs a run report to `/api/sync-runs` — status, images added/skipped/deleted, errors — which the UI surfaces per job and which clears the job's "Run now" flag (see [configuration.md](configuration.md)).
 
-**`inky-image-display-sync gemini`** — for each active `GeminiSyncJob`:
+**`inky-image-display-sync gemini`** — for each due `GeminiSyncJob`:
 
 1. Resolves the job's `prompt_preset_id` (which carries the model name and the five prompt blocks) via the API.
 2. Iterates `subjects × images_per_subject`, calling the configured Gemini image model.

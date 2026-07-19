@@ -121,9 +121,28 @@ class ImmichSyncJob(SQLModel, table=True):
     taken_before: datetime | None = Field(default=None, description="Photos taken before")
     rating: int | None = Field(default=None, ge=0, le=5, description="Minimum rating")
 
-    # Set by the "Run now" endpoint; the worker's --requested-only mode
-    # (run on a frequent cron) picks up flagged jobs and the run report
-    # clears the flag. Regular scheduled runs ignore it.
+    # Scheduling lives on the job row so cadence is operator-tunable from
+    # the UI instead of baked into deployment cron specs. The worker runs on
+    # one frequent cron and claims whatever is due via POST /claim-due.
+    # Defaults stay None here (a SQLAlchemy column default would silently
+    # override an explicit None at INSERT); the API create schema supplies
+    # the default cadence and the route stamps the first next_run_at.
+    interval_minutes: int | None = Field(
+        default=None,
+        ge=1,
+        description="Auto-run cadence in minutes; None = manual runs only",
+    )
+    next_run_at: datetime | None = Field(
+        default=None,
+        description="When the job is next due; advanced by the claim-due hand-out",
+    )
+    last_run_at: datetime | None = Field(
+        default=None,
+        description="Finish time of the most recent reported run",
+    )
+
+    # Set by the "Run now" endpoint; makes the job due immediately (active
+    # or not) and the run report clears the flag.
     run_requested_at: datetime | None = Field(default=None)
 
     # Timestamps

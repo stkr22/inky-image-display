@@ -131,7 +131,7 @@ kind: CronJob
 metadata:
   name: inky-immich-sync
 spec:
-  schedule: "0 * * * *"   # hourly
+  schedule: "*/2 * * * *"   # frequent; per-job cadence is set in the UI
   jobTemplate:
     spec:
       template:
@@ -155,6 +155,11 @@ spec:
                   value: inky-images
 ```
 
-For the Gemini batch sync, deploy a second `CronJob` with `args: ["gemini"]`,
-add `GEMINI_API_KEY` to the secret, and pick a slower cadence — Gemini is
-billed per generated image.
+The CronJob only needs to fire frequently — each invocation asks the API for
+*due* jobs (per-job "Run every" intervals plus UI "Run now" flags) and exits
+immediately when nothing is due, so the frequent schedule stays cheap and no
+per-cadence CronJobs are needed.
+
+For the Gemini batch sync, deploy a second `CronJob` with `args: ["gemini"]`
+and add `GEMINI_API_KEY` to the secret; cadence is likewise per job in the
+UI (Gemini jobs default to daily — generation is billed per image).

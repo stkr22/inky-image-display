@@ -1,9 +1,11 @@
-// Message of the day: configure the generated daily story (prompt, source
-// mode, image style), assign one content part per device, schedule/trigger
-// the display, and browse/redisplay the stories of the last seven days.
+// Display jobs: content jobs (message of the day today) that target a grid.
+// Configure the generated daily story (prompt, source mode, image style),
+// map one content part per grid slot, schedule/trigger the display, and
+// browse/redisplay the stories of the last seven days.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { ConfirmDialog, Dialog } from '../components/Dialog'
 import { Button, NumberField, SelectField, Switch, TextArea, TextField } from '../components/fields'
 import { useNotify } from '../components/Toast'
 import { Badge, EmptyNote, PageHeader, Spinner } from '../components/ui'
@@ -14,8 +16,8 @@ import {
   MOTD_PART_LABELS,
   MOTD_PARTS,
   mediaUrl,
-  type Device,
-  type MotdConfig,
+  type DisplayJob,
+  type Grid,
   type MotdMessage,
 } from '../lib/types'
 
@@ -33,47 +35,126 @@ function formatTime24(value: string | null | undefined): string {
   return dt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
-export function Motd() {
-  const { data: config } = useQuery({ queryKey: ['motd-config'], queryFn: api.getMotdConfig })
+export function DisplayJobs() {
+  const queryClient = useQueryClient()
+  const { data: jobs } = useQuery({ queryKey: ['display-jobs'], queryFn: api.listDisplayJobs })
+  const { data: grids } = useQuery({ queryKey: ['grids', 'with-devices'], queryFn: () => api.listGrids(true) })
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [createOpen, setCreateOpen] = useState(false)
+
+  const selected = (jobs ?? []).find((job) => job.id === selectedId) ?? jobs?.[0] ?? null
 
   return (
     <div className="col w-full gap-4">
-      <PageHeader eyebrow="Message of the day" title="Daily positive story">
+      <PageHeader
+        eyebrow="Display jobs"
+        title="Generated content on your grids"
+        actions={
+          <Button primary icon="add" onClick={() => setCreateOpen(true)}>
+            New job
+          </Button>
+        }
+      >
         <p className="ink-body ink-muted" style={{ maxWidth: 640, margin: 0 }}>
-          Every day one uplifting story — science, community achievements, everyday heroism — is generated and split
-          into short screens (What? Why? When? plus an AI illustration and a QR code with the source) across your
-          displays.
+          A display job generates content — like the daily positive story — and shows it on a grid, one content part
+          per panel. Jobs run on their own schedule and hand the grid back when they finish.
         </p>
       </PageHeader>
-      <ActionsSection />
-      {config ? <ConfigSection config={config} /> : <Spinner />}
-      <MessagesSection />
+
+      {jobs && jobs.length === 0 && (
+        <EmptyNote>No display jobs yet — create one and point it at a grid.</EmptyNote>
+      )}
+      {jobs && jobs.length > 1 && (
+        <div className="row w-full gap-2 wrap">
+          {jobs.map((job) => (
+            <Button
+              key={job.id}
+              primary={selected?.id === job.id}
+              flat={selected?.id !== job.id}
+              onClick={() => setSelectedId(job.id)}
+            >
+              {job.name}
+            </Button>
+          ))}
+        </div>
+      )}
+
+      {jobs === undefined && <Spinner />}
+      {selected && (
+        <div key={selected.id} className="col w-full gap-4">
+          <JobActions job={selected} />
+          <JobConfig job={selected} grids={grids ?? []} />
+          <JobMessages job={selected} />
+        </div>
+      )}
+
+      {createOpen && (
+        <CreateJobDialog
+          onClose={() => setCreateOpen(false)}
+          onCreated={(job) => {
+            queryClient.invalidateQueries({ queryKey: ['display-jobs'] })
+            setSelectedId(job.id)
+          }}
+        />
+      )}
     </div>
+  )
+}
+
+function CreateJobDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (job: DisplayJob) => void }) {
+  const notify = useNotify()
+  const [name, setName] = useState('Message of the day')
+
+  const create = async () => {
+    try {
+      const job = await api.createDisplayJob({ name })
+      notify('Display job created — pick its target grid below.', 'positive')
+      onCreated(job)
+      onClose()
+    } catch (err) {
+      notify(`Create failed: ${errMessage(err)}`, 'negative')
+    }
+  }
+
+  return (
+    <Dialog open onClose={onClose}>
+      <h3 className="ink-h3">New display job</h3>
+      <TextField label="Name" value={name} onChange={setName} />
+      <div className="row w-full justify-end gap-2">
+        <Button flat onClick={onClose}>
+          Cancel
+        </Button>
+        <Button primary onClick={create} disabled={!name}>
+          Create
+        </Button>
+      </div>
+    </Dialog>
   )
 }
 
 // --- Actions + live status -----------------------------------------------------
 
-function ActionsSection() {
+function JobActions({ job }: { job: DisplayJob }) {
   const notify = useNotify()
   const queryClient = useQueryClient()
   const { data: status } = useQuery({
-    queryKey: ['motd-status'],
-    queryFn: api.getMotdStatus,
+    queryKey: ['display-job-status', job.id],
+    queryFn: () => api.getDisplayJobStatus(job.id),
     refetchInterval: 15_000,
   })
   const [busy, setBusy] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const refresh = () => {
-    queryClient.invalidateQueries({ queryKey: ['motd-status'] })
-    queryClient.invalidateQueries({ queryKey: ['motd-messages'] })
-    queryClient.invalidateQueries({ queryKey: ['motd-config'] })
+    queryClient.invalidateQueries({ queryKey: ['display-job-status', job.id] })
+    queryClient.invalidateQueries({ queryKey: ['display-job-messages', job.id] })
+    queryClient.invalidateQueries({ queryKey: ['display-jobs'] })
   }
 
   const generate = async () => {
     setBusy(true)
     try {
-      await api.motdGenerate()
+      await api.displayJobGenerate(job.id)
       notify('Generation started — watch its progress in the story list below.', 'positive')
       refresh()
     } catch (err) {
@@ -86,13 +167,12 @@ function ActionsSection() {
   const display = async () => {
     setBusy(true)
     try {
-      const result = await api.motdDisplay()
+      const result = await api.displayJobDisplay(job.id)
       const notes: string[] = []
       if (result.displayed.length) notes.push(`showing on ${result.displayed.join(', ')}`)
       if (result.offline.length) notes.push(`offline: ${result.offline.join(', ')}`)
-      if (result.skipped_grid_claimed.length) notes.push(`grid-claimed: ${result.skipped_grid_claimed.join(', ')}`)
       if (result.skipped_no_content.length) notes.push(`nothing to show: ${result.skipped_no_content.join(', ')}`)
-      notify(`Message of the day started — ${notes.join('; ') || 'no devices pushed'}.`, 'positive')
+      notify(`Session started — ${notes.join('; ') || 'no panels pushed'}.`, 'positive')
       refresh()
     } catch (err) {
       notify(`Display failed: ${errMessage(err)}`, 'negative')
@@ -104,13 +184,24 @@ function ActionsSection() {
   const release = async () => {
     setBusy(true)
     try {
-      await api.motdRelease()
-      notify('Released — displays return to normal rotation.', 'positive')
+      await api.displayJobRelease(job.id)
+      notify('Released — the grid returns to normal rotation.', 'positive')
       refresh()
     } catch (err) {
       notify(`Release failed: ${errMessage(err)}`, 'negative')
     } finally {
       setBusy(false)
+    }
+  }
+
+  const doDelete = async () => {
+    setConfirmDelete(false)
+    try {
+      await api.deleteDisplayJob(job.id)
+      notify('Display job deleted', 'positive')
+      queryClient.invalidateQueries({ queryKey: ['display-jobs'] })
+    } catch (err) {
+      notify(`Delete failed: ${errMessage(err)}`, 'negative')
     }
   }
 
@@ -135,17 +226,26 @@ function ActionsSection() {
         <Button danger onClick={release} disabled={busy || !status?.active}>
           Release
         </Button>
+        <Button flat danger round icon="delete" title="Delete job" onClick={() => setConfirmDelete(true)} />
       </div>
-      {status?.active && status.devices.length > 0 && (
+      {status?.active && status.slots.length > 0 && (
         <div className="row w-full gap-3 wrap" style={{ marginTop: 8 }}>
-          {status.devices.map((device) => (
-            <span key={device.device_id} className="ink-small">
-              <Badge tone={device.is_online ? 'ok' : 'warn'} /> {device.device_id}:{' '}
-              {device.current_part ? (MOTD_PART_LABELS[device.current_part] ?? device.current_part) : '—'}
+          {status.slots.map((slot) => (
+            <span key={`${slot.row}:${slot.col}`} className="ink-small">
+              <Badge tone={slot.is_online ? 'ok' : 'warn'} /> {slot.device_id}:{' '}
+              {slot.current_part ? (MOTD_PART_LABELS[slot.current_part] ?? slot.current_part) : '—'}
             </span>
           ))}
         </div>
       )}
+      <ConfirmDialog
+        open={confirmDelete}
+        message={`Delete display job '${job.name}'? An active session is released first.`}
+        destructive
+        confirmLabel="Delete"
+        onConfirm={doDelete}
+        onCancel={() => setConfirmDelete(false)}
+      />
     </div>
   )
 }
@@ -190,36 +290,42 @@ function DisplayTimeFields({
 
 // --- Configuration --------------------------------------------------------------
 
-function ConfigSection({ config }: { config: MotdConfig }) {
+function JobConfig({ job, grids }: { job: DisplayJob; grids: Grid[] }) {
   const notify = useNotify()
   const queryClient = useQueryClient()
   const { data: presets } = useQuery({ queryKey: ['prompt-presets'], queryFn: api.listPromptPresets })
   const { data: devices } = useQuery({ queryKey: ['devices'], queryFn: api.listDevices })
 
-  const [prompt, setPrompt] = useState(config.content_prompt)
-  const [sourceMode, setSourceMode] = useState<string>(config.source_mode)
-  const [presetId, setPresetId] = useState(config.image_preset_id ?? '')
-  const [scheduleEnabled, setScheduleEnabled] = useState(config.schedule_enabled)
-  const [displayTime, setDisplayTime] = useState(config.display_time)
-  const [weekdayMask, setWeekdayMask] = useState(config.weekday_mask)
-  const [timezone, setTimezone] = useState(config.timezone)
-  const [leadMinutes, setLeadMinutes] = useState<number | ''>(config.generation_lead_minutes)
-  const [untilReleased, setUntilReleased] = useState(config.display_duration_seconds === null)
+  const [name, setName] = useState(job.name)
+  const [prompt, setPrompt] = useState(job.content_prompt)
+  const [sourceMode, setSourceMode] = useState<string>(job.source_mode)
+  const [presetId, setPresetId] = useState(job.image_preset_id ?? '')
+  const [gridId, setGridId] = useState(job.target_grid_id ?? '')
+  const [scheduleEnabled, setScheduleEnabled] = useState(job.schedule_enabled)
+  const [displayTime, setDisplayTime] = useState(job.display_time)
+  const [weekdayMask, setWeekdayMask] = useState(job.weekday_mask)
+  const [timezone, setTimezone] = useState(job.timezone)
+  const [leadMinutes, setLeadMinutes] = useState<number | ''>(job.generation_lead_minutes)
+  const [untilReleased, setUntilReleased] = useState(job.display_duration_seconds === null)
   const [durationMinutes, setDurationMinutes] = useState<number | ''>(
-    config.display_duration_seconds ? Math.round(config.display_duration_seconds / 60) : 60,
+    job.display_duration_seconds ? Math.round(job.display_duration_seconds / 60) : 60,
   )
-  // One part per display (single or a "two texts on one screen" combo).
-  const [assignments, setAssignments] = useState<Record<string, string>>(() =>
-    Object.fromEntries(config.assignments.map((a) => [a.device_id, a.parts[0] ?? 'what'])),
+  // One part per slot (single or a "two texts on one screen" combo).
+  const [slotParts, setSlotParts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(job.slots.map((slot) => [`${slot.row}:${slot.col}`, slot.parts[0] ?? 'what'])),
   )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  const toggleDevice = (device: Device, participating: boolean) => {
-    setAssignments((prev) => {
+  const grid = grids.find((g) => g.id === gridId) ?? null
+  const deviceById = new Map((devices ?? []).map((d) => [d.id, d]))
+  const placements = [...(grid?.devices ?? [])].sort((a, b) => a.row - b.row || a.col - b.col)
+
+  const toggleSlot = (key: string, participating: boolean) => {
+    setSlotParts((prev) => {
       const next = { ...prev }
-      if (participating) next[device.id] = next[device.id] ?? 'what'
-      else delete next[device.id]
+      if (participating) next[key] = next[key] ?? 'what'
+      else delete next[key]
       return next
     })
   }
@@ -230,11 +336,14 @@ function ConfigSection({ config }: { config: MotdConfig }) {
     setError('')
     try {
       const durationSeconds = untilReleased ? null : Math.max(Number(durationMinutes) || 0, 1) * 60
-      await api.updateMotdConfig({
+      await api.updateDisplayJob(job.id, {
+        name: name.trim() || job.name,
         content_prompt: prompt.trim(),
         source_mode: sourceMode,
         image_preset_id: presetId || null,
         clear_image_preset: !presetId,
+        target_grid_id: gridId || null,
+        clear_target_grid: !gridId,
         schedule_enabled: scheduleEnabled,
         display_time: displayTime,
         weekday_mask: weekdayMask,
@@ -242,11 +351,14 @@ function ConfigSection({ config }: { config: MotdConfig }) {
         generation_lead_minutes: Number(leadMinutes) || 0,
         display_duration_seconds: durationSeconds,
         clear_display_duration: untilReleased,
-        assignments: Object.entries(assignments).map(([device_id, part]) => ({ device_id, parts: [part] })),
+        slots: Object.entries(slotParts).map(([key, part]) => {
+          const [row, col] = key.split(':').map(Number)
+          return { row, col, parts: [part] }
+        }),
       })
-      notify('Message of the day configuration saved.', 'positive')
-      queryClient.invalidateQueries({ queryKey: ['motd-config'] })
-      queryClient.invalidateQueries({ queryKey: ['motd-status'] })
+      notify('Display job saved.', 'positive')
+      queryClient.invalidateQueries({ queryKey: ['display-jobs'] })
+      queryClient.invalidateQueries({ queryKey: ['display-job-status', job.id] })
     } catch (err) {
       setError(`Save failed: ${errMessage(err)}`)
     } finally {
@@ -262,6 +374,7 @@ function ConfigSection({ config }: { config: MotdConfig }) {
             <span className="ink-eyebrow">Content</span>
             <h3 className="ink-h3">What kind of story?</h3>
           </div>
+          <TextField label="Job name" value={name} onChange={setName} />
           <TextArea
             label="Story themes prompt"
             value={prompt}
@@ -271,7 +384,7 @@ function ConfigSection({ config }: { config: MotdConfig }) {
             maxLength={4000}
           />
           <div className="row gap-2">
-            <Button flat onClick={() => setPrompt(config.default_prompt)}>
+            <Button flat onClick={() => setPrompt(job.default_prompt)}>
               Reset to default
             </Button>
           </div>
@@ -368,32 +481,55 @@ function ConfigSection({ config }: { config: MotdConfig }) {
 
       <div className="bento-tile w-full col gap-3" style={{ padding: 20 }}>
         <div className="col gap-0">
-          <span className="ink-eyebrow">Screens</span>
-          <h3 className="ink-h3">Which display shows which part?</h3>
+          <span className="ink-eyebrow">Target</span>
+          <h3 className="ink-h3">Which grid slot shows which part?</h3>
         </div>
+        <SelectField
+          label="Target grid"
+          value={gridId}
+          onChange={(id) => {
+            setGridId(id)
+            setSlotParts({})
+          }}
+          options={[
+            { value: '', label: 'No grid selected' },
+            ...grids.map((g) => ({ value: g.id, label: `${g.name} (${g.devices?.length ?? 0} panels)` })),
+          ]}
+          help="A single display works too — put it in a one-panel grid first. While a session is active the grid cannot be changed."
+        />
         <span className="ink-small">
-          Each display shows one part of the story. Combined parts like “What + Why” put two short texts on one
-          screen.
+          Each panel shows one part of the story. Combined parts like “What + Why” put two short texts on one screen.
+          Unmapped panels are left alone.
         </span>
-        {!devices?.length && <EmptyNote>No devices registered yet.</EmptyNote>}
-        {(devices ?? []).map((device) => {
-          const participating = device.id in assignments
+        {!grid && <EmptyNote>Pick a target grid to map its panels.</EmptyNote>}
+        {grid && placements.length === 0 && <EmptyNote>The selected grid has no panels yet.</EmptyNote>}
+        {placements.map((placement) => {
+          const key = `${placement.row}:${placement.col}`
+          const device = deviceById.get(placement.device_id)
+          const participating = key in slotParts
           return (
             <div
-              key={device.id}
+              key={key}
               className="row w-full items-center gap-3 wrap"
               style={{ borderTop: '1px solid var(--ink-border)', paddingTop: 12 }}
             >
-              <Switch checked={participating} onChange={(v) => toggleDevice(device, v)} label={device.device_id} />
-              <Badge tone={device.is_online ? 'ok' : 'muted'}>{device.is_online ? 'online' : 'offline'}</Badge>
+              <Switch
+                checked={participating}
+                onChange={(v) => toggleSlot(key, v)}
+                label={device?.device_id ?? placement.device_id.slice(0, 8)}
+              />
+              {device && (
+                <Badge tone={device.is_online ? 'ok' : 'muted'}>{device.is_online ? 'online' : 'offline'}</Badge>
+              )}
               <span className="ink-small">
-                {device.room ?? ''} · {device.display_orientation}
+                Row {placement.row + 1}, position {placement.col + 1}
+                {device?.room ? ` · ${device.room}` : ''} · {device?.display_orientation ?? ''}
               </span>
               <div className="flex-1" />
               {participating && (
                 <SelectField
-                  value={assignments[device.id]}
-                  onChange={(part) => setAssignments((prev) => ({ ...prev, [device.id]: part }))}
+                  value={slotParts[key]}
+                  onChange={(part) => setSlotParts((prev) => ({ ...prev, [key]: part }))}
                   className="motd-part-select"
                   options={PART_CHOICES.map((part) => ({ value: part, label: MOTD_PART_LABELS[part] }))}
                 />
@@ -416,16 +552,19 @@ function ConfigSection({ config }: { config: MotdConfig }) {
 
 // --- Story history (last 7 days) --------------------------------------------------
 
-function MessagesSection() {
+function JobMessages({ job }: { job: DisplayJob }) {
   const notify = useNotify()
   const queryClient = useQueryClient()
   const { data: messages } = useQuery({
-    queryKey: ['motd-messages'],
-    queryFn: () => api.listMotdMessages(10),
+    queryKey: ['display-job-messages', job.id],
+    queryFn: () => api.listDisplayJobMessages(job.id, 10),
     // Poll quickly while a generation is running so the progress row updates.
     refetchInterval: (query) => (query.state.data?.some((m) => m.status === 'generating') ? 3000 : 30_000),
   })
-  const { data: status } = useQuery({ queryKey: ['motd-status'], queryFn: api.getMotdStatus })
+  const { data: status } = useQuery({
+    queryKey: ['display-job-status', job.id],
+    queryFn: () => api.getDisplayJobStatus(job.id),
+  })
   const [busy, setBusy] = useState(false)
   // undefined = "no manual choice yet" → the newest story starts expanded.
   const [expandedId, setExpandedId] = useState<string | null | undefined>(undefined)
@@ -433,13 +572,13 @@ function MessagesSection() {
   const display = async (message: MotdMessage) => {
     setBusy(true)
     try {
-      const result = await api.motdDisplay(message.id)
+      const result = await api.displayJobDisplay(job.id, message.id)
       notify(
-        `“${message.headline ?? 'Story'}” started — ${result.displayed.length ? `showing on ${result.displayed.join(', ')}` : 'no devices pushed'}.`,
+        `“${message.headline ?? 'Story'}” started — ${result.displayed.length ? `showing on ${result.displayed.join(', ')}` : 'no panels pushed'}.`,
         'positive',
       )
-      queryClient.invalidateQueries({ queryKey: ['motd-status'] })
-      queryClient.invalidateQueries({ queryKey: ['motd-messages'] })
+      queryClient.invalidateQueries({ queryKey: ['display-job-status', job.id] })
+      queryClient.invalidateQueries({ queryKey: ['display-job-messages', job.id] })
     } catch (err) {
       notify(`Display failed: ${errMessage(err)}`, 'negative')
     } finally {

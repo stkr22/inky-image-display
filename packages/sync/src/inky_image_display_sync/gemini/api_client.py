@@ -57,13 +57,18 @@ class GeminiDisplayAPIClient(DisplayAPIClient):
     """Display API client with Gemini-specific methods added."""
 
     async def get_active_gemini_jobs(self) -> list[GeminiSyncJobItem]:
-        """Fetch all active Gemini sync jobs."""
+        """Fetch all active Gemini sync jobs (schedule ignored — for --all runs)."""
         response = await self._request("GET", "/api/genai/jobs", params={"is_active": "true"})
         return [GeminiSyncJobItem.model_validate(j) for j in response.json()]
 
-    async def get_requested_gemini_jobs(self) -> list[GeminiSyncJobItem]:
-        """Fetch jobs flagged by "Run now" (regardless of is_active)."""
-        response = await self._request("GET", "/api/genai/jobs", params={"requested": "true"})
+    async def get_due_gemini_jobs(self) -> list[GeminiSyncJobItem]:
+        """Preview due jobs without claiming them (dry-run mode)."""
+        response = await self._request("GET", "/api/genai/jobs", params={"due": "true"})
+        return [GeminiSyncJobItem.model_validate(j) for j in response.json()]
+
+    async def claim_due_gemini_jobs(self) -> list[GeminiSyncJobItem]:
+        """Claim due jobs: the API advances their schedules on hand-out."""
+        response = await self._request("POST", "/api/genai/jobs/claim-due")
         return [GeminiSyncJobItem.model_validate(j) for j in response.json()]
 
     async def get_prompt_preset(self, preset_id: UUID) -> PromptPresetItem:
