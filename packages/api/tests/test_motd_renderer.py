@@ -8,17 +8,17 @@ the target exactly at all supported panel sizes and orientations.
 from __future__ import annotations
 
 from io import BytesIO
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from inky_image_display_api.services.motd_renderer import render_part, render_text_screen
-from inky_image_display_shared.models import MotdMessage
 from PIL import Image
 
 PANEL_DIMS = [(640, 400), (800, 480), (1600, 1200), (400, 640), (480, 800), (1200, 1600)]
 
 
-def _message(**overrides: object) -> MotdMessage:
+def _message(**overrides: object) -> SimpleNamespace:
     fields: dict = {
         "config_id": uuid4(),
         "headline": "Village builds its own bridge",
@@ -30,7 +30,7 @@ def _message(**overrides: object) -> MotdMessage:
         "source_title": "Example News",
     }
     fields.update(overrides)
-    return MotdMessage(**fields)
+    return SimpleNamespace(**fields)
 
 
 def _open(data: bytes) -> Image.Image:

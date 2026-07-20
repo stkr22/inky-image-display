@@ -164,9 +164,16 @@ sync:
   # Opt-in: scheduled batch AI image generation. The frequent schedule is
   # cheap for the same reason as above; how often images are actually
   # generated (and billed) is each Gemini job's "Run every" setting in the
-  # UI, defaulting to daily. Needs existingSecrets.gemini. (Distinct from
-  # display jobs like the MOTD, which the API schedules internally.)
+  # UI, defaulting to daily. Needs existingSecrets.gemini.
   gemini:
+    enabled: false
+    schedule: "*/5 * * * *"
+
+  # Opt-in: display-job content generation (MOTD stories + screens). The
+  # worker claims due display jobs from the API — same due-claim model as
+  # the other workers, so the frequent schedule is cheap. Needs
+  # existingSecrets.gemini.
+  display:
     enabled: false
     schedule: "*/5 * * * *"
 

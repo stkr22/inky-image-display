@@ -8,6 +8,7 @@ import { ConfirmDialog, Dialog } from '../components/Dialog'
 import { Button, Icon, SelectField, TextField } from '../components/fields'
 import { useNotify } from '../components/Toast'
 import { EmptyNote, ErrorNote, PageHeader, Spinner } from '../components/ui'
+import { GridMiniPreview } from '../components/GridMiniPreview'
 import { api, type ImageListFilters } from '../lib/api'
 import { imageTitle, mediaUrl, type Grid, type Image } from '../lib/types'
 
@@ -29,6 +30,7 @@ export function Images() {
   const queryClient = useQueryClient()
   const [source, setSource] = useState('')
   const [gridFilter, setGridFilter] = useState('')
+  const [groupFilter, setGroupFilter] = useState('')
   const [orientation, setOrientation] = useState('')
   const [excludedFilter, setExcludedFilter] = useState('')
   const [searchInput, setSearchInput] = useState('')
@@ -46,12 +48,15 @@ export function Images() {
   }, [searchInput])
 
   const { data: grids } = useQuery({ queryKey: ['grids'], queryFn: () => api.listGrids() })
+  const { data: groups } = useQuery({ queryKey: ['image-groups'], queryFn: () => api.listImageGroups() })
 
   const filters: ImageListFilters = {
     source_name: source || undefined,
     is_portrait: orientation === '' ? undefined : orientation === 'portrait',
     target_grid_id: gridFilter && gridFilter !== '__solo__' ? gridFilter : undefined,
     solo_only: gridFilter === '__solo__' || undefined,
+    group_id: groupFilter && !groupFilter.startsWith('__') ? groupFilter : undefined,
+    in_group: groupFilter === '__grouped__' ? true : groupFilter === '__ungrouped__' ? false : undefined,
     excluded: excludedFilter === '' ? undefined : excludedFilter === 'excluded',
     search: search || undefined,
     limit: PAGE_SIZE,
@@ -154,6 +159,14 @@ export function Images() {
     ...(grids ?? []).map((g) => ({ value: g.id, label: `Grid: ${g.name}` })),
   ]
 
+  const groupOptions = [
+    { value: '', label: 'All' },
+    { value: '__grouped__', label: 'In a group' },
+    { value: '__ungrouped__', label: 'Not grouped' },
+    ...(groups ?? []).map((g) => ({ value: g.id, label: `Group: ${g.name}` })),
+  ]
+  const groupNameById = new Map((groups ?? []).map((g) => [g.id, g.name]))
+
   return (
     <>
       <PageHeader
@@ -186,6 +199,7 @@ export function Images() {
           ]}
         />
         <SelectField label="Grid" value={gridFilter} onChange={(v) => resetAnd(() => setGridFilter(v))} options={gridOptions} />
+        <SelectField label="Group" value={groupFilter} onChange={(v) => resetAnd(() => setGroupFilter(v))} options={groupOptions} />
         <SelectField
           label="Orientation"
           value={orientation}
@@ -243,6 +257,7 @@ export function Images() {
             <GalleryTile
               key={image.id}
               image={image}
+              groupName={image.group_id ? (groupNameById.get(image.group_id) ?? 'Group') : null}
               selecting={selecting}
               selected={selected.has(image.id)}
               onToggle={() => toggleSelected(image.id)}
@@ -272,11 +287,13 @@ export function Images() {
 
 function GalleryTile({
   image,
+  groupName,
   selecting,
   selected,
   onToggle,
 }: {
   image: Image
+  groupName: string | null
   selecting: boolean
   selected: boolean
   onToggle: () => void
@@ -285,7 +302,15 @@ function GalleryTile({
     <>
       <img src={mediaUrl(image.storage_path, 480)} loading="lazy" alt={imageTitle(image)} />
       <span className="ink-thumb-caption">{imageTitle(image)}</span>
-      {image.excluded_from_rotation && <span className="ink-badge muted ink-thumb-flag">Excluded</span>}
+      {groupName ? (
+        // Grouped images are out of regular rotation — the group's grid
+        // queue shows them instead; say so instead of a bare "Excluded".
+        <span className="ink-badge muted ink-thumb-flag" title="Shown via its group's grid queue">
+          {groupName}
+        </span>
+      ) : (
+        image.excluded_from_rotation && <span className="ink-badge muted ink-thumb-flag">Excluded</span>
+      )}
       {selecting && (
         <span
           className="material-icons"
@@ -343,6 +368,7 @@ function BulkActionBar({
   const queryClient = useQueryClient()
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [gridDialog, setGridDialog] = useState(false)
+  const [groupDialog, setGroupDialog] = useState(false)
   const [targetGrid, setTargetGrid] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -373,6 +399,9 @@ function BulkActionBar({
       <Button ghost icon="grid_view" disabled={busy} onClick={() => setGridDialog(true)}>
         Set grid…
       </Button>
+      <Button ghost icon="collections" disabled={busy} onClick={() => setGroupDialog(true)}>
+        Group…
+      </Button>
       <Button flat danger icon="delete" disabled={busy} onClick={() => setConfirmDelete(true)}>
         Delete
       </Button>
@@ -385,6 +414,18 @@ function BulkActionBar({
         onConfirm={bulkDelete}
         onCancel={() => setConfirmDelete(false)}
       />
+      {groupDialog && (
+        <CreateGroupDialog
+          selectedIds={selectedIds}
+          onClose={() => setGroupDialog(false)}
+          onCreated={() => {
+            setGroupDialog(false)
+            queryClient.invalidateQueries({ queryKey: ['images'] })
+            queryClient.invalidateQueries({ queryKey: ['image-groups'] })
+            onDone()
+          }}
+        />
+      )}
       <Dialog open={gridDialog} onClose={() => setGridDialog(false)}>
         <h3 className="ink-h3">Set target grid</h3>
         <span className="ink-small">Applies to {selectedIds.length} image(s). "(solo rotation)" clears the assignment.</span>
@@ -407,5 +448,92 @@ function BulkActionBar({
         </div>
       </Dialog>
     </div>
+  )
+}
+
+// Bundle the selected images into a group targeting a grid. Grouped images
+// leave regular rotation; the group plays as a unit in the grid's queue,
+// one image per refresh in selection order.
+function CreateGroupDialog({
+  selectedIds,
+  onClose,
+  onCreated,
+}: {
+  selectedIds: string[]
+  onClose: () => void
+  onCreated: () => void
+}) {
+  const notify = useNotify()
+  const { data: grids } = useQuery({ queryKey: ['grids', 'with-devices'], queryFn: () => api.listGrids(true) })
+  const [name, setName] = useState('')
+  const [gridId, setGridId] = useState('')
+  const [busy, setBusy] = useState(false)
+  // '' = create a new group; otherwise the id of an existing group to extend.
+  const [existingId, setExistingId] = useState('')
+  const { data: groups } = useQuery({ queryKey: ['image-groups'], queryFn: () => api.listImageGroups() })
+  // Generated groups are ephemeral worker output (pruned after 7 days) —
+  // only curated groups are offered as an add target.
+  const curated = (groups ?? []).filter((g) => g.display_job_id === null)
+  const existing = curated.find((g) => g.id === existingId) ?? null
+  const grid = (grids ?? []).find((g) => g.id === (existing ? existing.target_grid_id : gridId)) ?? null
+
+  const submit = async () => {
+    setBusy(true)
+    try {
+      if (existing) {
+        const memberIds = existing.images.map((img) => img.id)
+        const added = selectedIds.filter((id) => !memberIds.includes(id))
+        await api.updateImageGroup(existing.id, { image_ids: [...memberIds, ...added] })
+        notify(`${added.length} image(s) added to '${existing.name}'.`, 'positive')
+      } else {
+        await api.createImageGroup({ name: name.trim(), target_grid_id: gridId || null, image_ids: selectedIds })
+        notify(`Group '${name.trim()}' created with ${selectedIds.length} image(s).`, 'positive')
+      }
+      onCreated()
+    } catch (err) {
+      notify(`Save failed: ${err instanceof Error ? err.message : String(err)}`, 'negative')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open onClose={onClose}>
+      <h3 className="ink-h3">Group {selectedIds.length} image(s)</h3>
+      <span className="ink-small">
+        Grouped images leave regular rotation and play together in the grid's queue, one per refresh.
+      </span>
+      {curated.length > 0 && (
+        <SelectField
+          label="Group"
+          value={existingId}
+          onChange={setExistingId}
+          options={[
+            { value: '', label: 'New group…' },
+            ...curated.map((g) => ({ value: g.id, label: `Add to: ${g.name} (${g.images.length} images)` })),
+          ]}
+        />
+      )}
+      {!existing && <TextField label="Group name" value={name} onChange={setName} placeholder="Summer holiday" />}
+      {!existing && (
+        <SelectField
+          label="Show on grid"
+          value={gridId}
+          onChange={setGridId}
+          options={[
+            { value: '', label: 'No grid yet (assign later)' },
+            ...(grids ?? []).map((g) => ({ value: g.id, label: g.name })),
+          ]}
+        />
+      )}
+      {grid && <GridMiniPreview grid={grid} />}
+      <div className="row w-full justify-end gap-2">
+        <Button flat onClick={onClose}>
+          Cancel
+        </Button>
+        <Button primary onClick={submit} disabled={busy || (!existing && !name.trim())}>
+          {existing ? 'Add to group' : 'Create group'}
+        </Button>
+      </div>
+    </Dialog>
   )
 }

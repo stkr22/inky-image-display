@@ -8,8 +8,8 @@ from .gemini_sync_job import GeminiSyncJob
 from .generation_task import GenerationTask
 from .grid import Grid, GridDevice
 from .image import Image
+from .image_group import ImageGroup
 from .immich_sync_job import ImmichSyncJob, SyncStrategy
-from .motd import MotdMessage, MotdScreen
 from .prompt_block import PromptBlock
 from .prompt_preset import PromptPreset
 from .sync_job_run import SyncJobRun
@@ -26,9 +26,8 @@ __all__ = [
     "Grid",
     "GridDevice",
     "Image",
+    "ImageGroup",
     "ImmichSyncJob",
-    "MotdMessage",
-    "MotdScreen",
     "PromptBlock",
     "PromptPreset",
     "SyncJobRun",

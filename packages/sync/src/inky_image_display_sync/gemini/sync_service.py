@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from inky_image_display_shared.ai import RenderedPrompt, generate_image_bytes
 from inky_image_display_shared.time import utcnow
@@ -144,7 +144,7 @@ class GeminiSyncService:
         else:
             target_width, target_height = profile.width, profile.height
 
-        prompt = self._build_prompt(preset, blocks_by_id, is_portrait)
+        prompt = build_prompt(preset, blocks_by_id, is_portrait)
         expires_at = (
             datetime.now() + timedelta(days=job.retention_days)
             if job.retention_days is not None and job.retention_days > 0
@@ -169,21 +169,6 @@ class GeminiSyncService:
                     result.failed += 1
                     result.errors.append(f"{subject}: {exc}")
         return result
-
-    def _build_prompt(
-        self,
-        preset: PromptPresetItem,
-        blocks_by_id: dict[object, PromptBlockItem],
-        is_portrait: bool,
-    ) -> RenderedPrompt:
-        return RenderedPrompt(
-            style=blocks_by_id[preset.style_block_id].text,
-            palette=blocks_by_id[preset.palette_block_id].text,
-            legibility=blocks_by_id[preset.legibility_block_id].text,
-            composition=blocks_by_id[preset.composition_block_id].text,
-            background=blocks_by_id[preset.background_block_id].text,
-            is_portrait=is_portrait,
-        )
 
     async def _generate_one(  # noqa: PLR0913
         self,
@@ -235,3 +220,23 @@ class GeminiSyncService:
                 expires_at=expires_at,
             )
         )
+
+
+def build_prompt(
+    preset: PromptPresetItem,
+    blocks_by_id: dict[UUID, PromptBlockItem],
+    is_portrait: bool,
+) -> RenderedPrompt:
+    """Assemble the image prompt from a preset's blocks.
+
+    Shared with the display worker, whose illustrations use the same
+    preset machinery.
+    """
+    return RenderedPrompt(
+        style=blocks_by_id[preset.style_block_id].text,
+        palette=blocks_by_id[preset.palette_block_id].text,
+        legibility=blocks_by_id[preset.legibility_block_id].text,
+        composition=blocks_by_id[preset.composition_block_id].text,
+        background=blocks_by_id[preset.background_block_id].text,
+        is_portrait=is_portrait,
+    )

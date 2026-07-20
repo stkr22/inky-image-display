@@ -88,6 +88,25 @@ class Image(SQLModel, table=True):
         index=True,
     )
 
+    # Group membership. Grouped images leave solo and grid-pool rotation —
+    # the group is displayed as a unit via the grid's queue. SET NULL on
+    # group deletion returns the image to the library rather than deleting
+    # curated content.
+    group_id: UUID | None = Field(
+        default=None,
+        foreign_key="image_groups.id",
+        ondelete="SET NULL",
+        index=True,
+    )
+    # Slot address within the group's target grid (row/col of the grid
+    # layout). Set for worker-generated per-panel screens; None means the
+    # image is a full-canvas frame cropped across the whole grid.
+    group_slot_row: int | None = Field(default=None)
+    group_slot_col: int | None = Field(default=None)
+    # Ordering within the image's container: the grid queue for loose pool
+    # images, the frame/slot sequence for grouped images.
+    queue_position: int = Field(default=0)
+
     # Timestamps
     last_displayed_at: datetime | None = Field(default=None, description="Last display time for FIFO")
     expires_at: datetime | None = Field(default=None, description="Expiration time for cleanup")

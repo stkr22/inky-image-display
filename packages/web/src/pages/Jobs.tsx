@@ -1,12 +1,12 @@
-// Unified jobs listing — Immich + Gemini + display jobs in one tabbed page.
-// The tab lives in the URL (?tab=gemini|display) so deep links and
-// back/forward work.
+// Unified jobs listing — Immich + Gemini + display jobs in one tabbed page,
+// with an overview of upcoming and recent runs at the top. The tab lives in
+// the URL (?tab=gemini|display) so deep links and back/forward work.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ConfirmDialog, Dialog } from '../components/Dialog'
-import { Button, Switch, TextField } from '../components/fields'
+import { Button, NumberField, Switch, TextField } from '../components/fields'
 import { useNotify } from '../components/Toast'
 import { Badge, EmptyNote, PageHeader, Spinner } from '../components/ui'
 import { api, ApiError } from '../lib/api'
@@ -22,6 +22,18 @@ function scheduleSummary(job: Pick<SyncJob, 'interval_minutes' | 'next_run_at'> 
 
 function errMessage(err: unknown): string {
   return err instanceof ApiError ? err.detail || err.message : String(err)
+}
+
+// A job is waiting for a worker when it is due (Run-now flagged, or
+// on-schedule and past its next-run time) — the claim happens on the
+// worker cron's next tick.
+function isDue(job: { run_requested_at: string | null; is_active: boolean; next_run_at: string | null }): boolean {
+  if (job.run_requested_at != null) return true
+  return job.is_active && job.next_run_at != null && new Date(job.next_run_at).getTime() <= Date.now()
+}
+
+function InlineSpinner() {
+  return <div className="ink-spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
 }
 
 export function Jobs() {
@@ -54,6 +66,8 @@ export function Jobs() {
           </Button>
         }
       />
+
+      <JobsOverview />
 
       <div
         className="row w-full gap-2 items-center"
@@ -88,9 +102,107 @@ export function Jobs() {
   )
 }
 
+// --- Overview: upcoming runs and recent executions across all job types ----------
+
+const JOB_TYPE_LABELS = { immich: 'Immich', gemini: 'Gemini', display: 'Display' } as const
+
+function JobsOverview() {
+  const { data: runs } = useQuery({
+    queryKey: ['sync-runs', 'all'],
+    queryFn: () => api.listSyncRuns({ limit: 60 }),
+    refetchInterval: 10_000,
+  })
+  const { data: syncJobs } = useQuery({ queryKey: ['sync-jobs'], queryFn: api.listSyncJobs, refetchInterval: 15_000 })
+  const { data: geminiJobs } = useQuery({
+    queryKey: ['gemini-jobs'],
+    queryFn: api.listGeminiJobs,
+    refetchInterval: 15_000,
+  })
+  const { data: displayJobs } = useQuery({
+    queryKey: ['display-jobs'],
+    queryFn: api.listDisplayJobs,
+    refetchInterval: 15_000,
+  })
+
+  const allJobs: Array<{ type: 'immich' | 'gemini' | 'display'; job: SyncJob | GeminiJob | DisplayJob }> = [
+    ...(syncJobs ?? []).map((job) => ({ type: 'immich' as const, job })),
+    ...(geminiJobs ?? []).map((job) => ({ type: 'gemini' as const, job })),
+    ...(displayJobs ?? []).map((job) => ({ type: 'display' as const, job })),
+  ]
+
+  const running = (runs ?? []).filter((run) => run.status === 'running')
+  const runningJobIds = new Set(running.map((run) => run.job_id))
+  const waiting = allJobs.filter(({ job }) => isDue(job) && !runningJobIds.has(job.id))
+  const upcoming = allJobs
+    .filter(
+      ({ job }) =>
+        job.is_active && job.next_run_at != null && new Date(job.next_run_at).getTime() > Date.now(),
+    )
+    .sort((a, b) => new Date(a.job.next_run_at!).getTime() - new Date(b.job.next_run_at!).getTime())
+    .slice(0, 6)
+  const recent = (runs ?? []).filter((run) => run.status !== 'running').slice(0, 8)
+
+  if (!running.length && !waiting.length && !upcoming.length && !recent.length) return null
+
+  return (
+    <div className="ink-card w-full" style={{ gap: 10 }}>
+      <h3 className="ink-h3">Overview</h3>
+      {(running.length > 0 || waiting.length > 0) && (
+        <div className="col w-full gap-1">
+          {running.map((run) => (
+            <div key={run.id} className="row w-full items-center gap-2 wrap">
+              <InlineSpinner />
+              <Badge tone="accent">In progress</Badge>
+              <span className="ink-body">{run.job_name}</span>
+              <span className="ink-small">
+                {JOB_TYPE_LABELS[run.job_type]} · started {formatRelative(run.started_at)}
+              </span>
+            </div>
+          ))}
+          {waiting.map(({ type, job }) => (
+            <div key={job.id} className="row w-full items-center gap-2 wrap">
+              <Badge tone="warn">Waiting for worker</Badge>
+              <span className="ink-body">{job.name}</span>
+              <span className="ink-small">{JOB_TYPE_LABELS[type]} · due, not picked up yet</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {upcoming.length > 0 && (
+        <div className="col w-full gap-1" style={{ borderTop: '1px solid var(--ink-border)', paddingTop: 8 }}>
+          <span className="ink-eyebrow">Upcoming</span>
+          {upcoming.map(({ type, job }) => (
+            <div key={job.id} className="row w-full items-center gap-2 wrap">
+              <span className="ink-body">{job.name}</span>
+              <span className="ink-small">
+                {JOB_TYPE_LABELS[type]} · next run {formatRelative(job.next_run_at!)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {recent.length > 0 && (
+        <div className="col w-full gap-1" style={{ borderTop: '1px solid var(--ink-border)', paddingTop: 8 }}>
+          <span className="ink-eyebrow">Recent runs</span>
+          {recent.map((run) => (
+            <div key={run.id} className="row w-full items-center gap-2 wrap">
+              <Badge tone={run.status === 'error' ? 'danger' : 'ok'}>{run.status}</Badge>
+              <span className="ink-body">{run.job_name}</span>
+              <span className="ink-small">
+                {JOB_TYPE_LABELS[run.job_type]} · {run.finished_at ? formatRelative(run.finished_at) : ''} ·{' '}
+                {lastRunSummary(run)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // Runs per job (newest first), from one bulk fetch — the list is pruned
 // server-side to ~20 runs per job, so 200 rows covers every job's history.
-function useRunsByJob(jobType: 'immich' | 'gemini'): Map<string, SyncJobRun[]> {
+function useRunsByJob(jobType: 'immich' | 'gemini' | 'display'): Map<string, SyncJobRun[]> {
   const { data: runs } = useQuery({
     queryKey: ['sync-runs', jobType],
     queryFn: () => api.listSyncRuns({ job_type: jobType, limit: 200 }),
@@ -143,6 +255,7 @@ function ImmichRow({
       isActive={job.is_active}
       runs={runs}
       runRequestedAt={job.run_requested_at}
+      nextRunAt={job.next_run_at}
       queryKey={['sync-jobs']}
       onToggle={(value) => api.updateSyncJob(job.id, { is_active: value })}
       onRunNow={() => api.runSyncJobNow(job.id)}
@@ -192,6 +305,7 @@ function GeminiRow({
       isActive={job.is_active}
       runs={runs}
       runRequestedAt={job.run_requested_at}
+      nextRunAt={job.next_run_at}
       queryKey={['gemini-jobs']}
       onToggle={(value) => api.updateGeminiJob(job.id, { is_active: value })}
       onRunNow={() => api.runGeminiJobNow(job.id)}
@@ -211,6 +325,7 @@ function DisplayList() {
     refetchInterval: 15_000,
   })
   const { data: grids } = useQuery({ queryKey: ['grids'], queryFn: () => api.listGrids() })
+  const runsByJob = useRunsByJob('display')
   const gridName = new Map((grids ?? []).map((g) => [g.id, g.name]))
   if (isPending) return <Spinner />
   if (!jobs || jobs.length === 0) {
@@ -219,78 +334,94 @@ function DisplayList() {
   return (
     <div className="col w-full gap-2">
       {jobs.map((job) => (
-        <DisplayJobRow key={job.id} job={job} gridName={gridName} />
+        <DisplayJobRow key={job.id} job={job} gridName={gridName} runs={runsByJob.get(job.id) ?? []} />
       ))}
     </div>
   )
 }
 
-function DisplayJobRow({ job, gridName }: { job: DisplayJob; gridName: Map<string, string> }) {
+function DisplayJobRow({
+  job,
+  gridName,
+  runs,
+}: {
+  job: DisplayJob
+  gridName: Map<string, string>
+  runs: SyncJobRun[]
+}) {
   const navigate = useNavigate()
-  const notify = useNotify()
-  const queryClient = useQueryClient()
-  const [confirmDelete, setConfirmDelete] = useState(false)
-
-  const generateMutation = useMutation({
-    mutationFn: () => api.displayJobGenerate(job.id),
-    onSuccess: () => {
-      notify('Generation started — see the job page for progress', 'positive')
-      queryClient.invalidateQueries({ queryKey: ['display-jobs'] })
-    },
-    onError: (err) => notify(`Generation failed: ${errMessage(err)}`, 'negative'),
-  })
-  const deleteMutation = useMutation({
-    mutationFn: () => api.deleteDisplayJob(job.id),
-    onSuccess: () => {
-      notify('Deleted', 'positive')
-      queryClient.invalidateQueries({ queryKey: ['display-jobs'] })
-    },
-    onError: (err) => notify(`Delete failed: ${errMessage(err)}`, 'negative'),
-  })
-
-  const target = job.target_grid_id
-    ? `→ ${gridName.get(job.target_grid_id) ?? 'grid'}`
-    : 'no target grid yet'
+  const [scheduleOpen, setScheduleOpen] = useState(false)
+  const target = job.target_grid_id ? `→ ${gridName.get(job.target_grid_id) ?? 'grid'}` : 'no target grid yet'
 
   return (
-    <div className="bento-tile w-full" style={{ padding: '16px 20px', gap: 12 }}>
-      <div className="row w-full items-center" style={{ gap: 12 }}>
-        <div className="col flex-1 gap-1">
-          <div className="row items-center gap-2 wrap">
-            <h3 className="ink-h3 truncate">{job.name}</h3>
-            {!job.target_grid_id && <Badge tone="warn">No grid</Badge>}
-          </div>
-          <span className="ink-small">
-            {job.job_type} · {target} · {job.slots.length} slot(s) mapped
-          </span>
-          <span className="ink-small">{scheduleSummary(job)}</span>
-          <span className="ink-small">
-            {job.last_run_at ? `Last generated ${formatRelative(job.last_run_at)}` : 'Nothing generated yet'}
-          </span>
-        </div>
-        <Button
-          flat
-          round
-          icon="play_arrow"
-          title="Generate now"
-          disabled={generateMutation.isPending}
-          onClick={() => generateMutation.mutate()}
-        />
-        <Button flat round icon="edit" title="Edit" onClick={() => navigate(`/display-jobs/${job.id}`)} />
-        <Button flat danger round icon="delete" title="Delete" onClick={() => setConfirmDelete(true)} />
-      </div>
-      <ConfirmDialog
-        open={confirmDelete}
-        message={`Delete display job '${job.name}'? A session showing its content is released first.`}
-        destructive
-        confirmLabel="Delete"
-        onConfirm={() => {
-          setConfirmDelete(false)
-          deleteMutation.mutate()
-        }}
-        onCancel={() => setConfirmDelete(false)}
+    <>
+      <JobRow
+        name={job.name}
+        nameBadge={!job.target_grid_id ? <Badge tone="warn">No grid</Badge> : null}
+        summary={`${job.job_type} · ${target} · ${job.slots.length} slot(s) mapped`}
+        schedule={scheduleSummary(job)}
+        updatedAt={job.updated_at}
+        isActive={job.is_active}
+        runs={runs}
+        runRequestedAt={job.run_requested_at}
+        nextRunAt={job.next_run_at}
+        queryKey={['display-jobs']}
+        onToggle={(value) => api.updateDisplayJob(job.id, { is_active: value })}
+        onRunNow={() => api.runDisplayJobNow(job.id)}
+        runNowDisabled={!job.target_grid_id}
+        onSchedule={() => setScheduleOpen(true)}
+        onEdit={() => navigate(`/display-jobs/${job.id}`)}
+        onDelete={() => api.deleteDisplayJob(job.id)}
+        deleteMessage={`Delete display job '${job.name}'? Generated groups stay in the library.`}
       />
-    </div>
+      {scheduleOpen && <DisplayJobScheduleDialog job={job} onClose={() => setScheduleOpen(false)} />}
+    </>
+  )
+}
+
+// Quick cadence editor straight from the job row — the full form still
+// offers it, but "how often does this run?" shouldn't require a page hop.
+function DisplayJobScheduleDialog({ job, onClose }: { job: DisplayJob; onClose: () => void }) {
+  const notify = useNotify()
+  const queryClient = useQueryClient()
+  const [intervalMinutes, setIntervalMinutes] = useState<number | ''>(job.interval_minutes ?? '')
+
+  const save = async () => {
+    const interval = Number(intervalMinutes) || 0
+    try {
+      await api.updateDisplayJob(job.id, {
+        interval_minutes: interval > 0 ? interval : null,
+        clear_interval: interval <= 0,
+      })
+      notify('Schedule saved.', 'positive')
+      queryClient.invalidateQueries({ queryKey: ['display-jobs'] })
+      onClose()
+    } catch (err) {
+      notify(`Save failed: ${errMessage(err)}`, 'negative')
+    }
+  }
+
+  return (
+    <Dialog open onClose={onClose}>
+      <h3 className="ink-h3">Schedule '{job.name}'</h3>
+      <NumberField
+        label="Generate every (minutes, blank = manual only)"
+        value={intervalMinutes}
+        onChange={setIntervalMinutes}
+        min={1}
+      />
+      <span className="ink-small">
+        1440 = daily. The grid's own display schedule decides when generated content is shown.
+      </span>
+      <div className="row w-full justify-end gap-2">
+        <Button flat onClick={onClose}>
+          Cancel
+        </Button>
+        <Button primary onClick={save}>
+          Save
+        </Button>
+      </div>
+    </Dialog>
   )
 }
 
@@ -330,6 +461,7 @@ function CreateDisplayJobDialog({ onClose }: { onClose: () => void }) {
 
 function lastRunSummary(run: SyncJobRun): string {
   if (run.status === 'error') return run.error || 'failed'
+  if (run.status === 'running') return 'in progress'
   const parts = [`${run.images_added} added`]
   if (run.images_skipped > 0) parts.push(`${run.images_skipped} skipped`)
   if (run.images_deleted > 0) parts.push(`${run.images_deleted} expired`)
@@ -338,29 +470,37 @@ function lastRunSummary(run: SyncJobRun): string {
 
 function JobRow({
   name,
+  nameBadge,
   summary,
   schedule,
   updatedAt,
   isActive,
   runs,
   runRequestedAt,
+  nextRunAt,
   queryKey,
   onToggle,
   onRunNow,
+  runNowDisabled,
+  onSchedule,
   onEdit,
   onDelete,
   deleteMessage,
 }: {
   name: string
+  nameBadge?: React.ReactNode
   summary: string
   schedule: string
   updatedAt: string
   isActive: boolean
   runs: SyncJobRun[]
   runRequestedAt: string | null
+  nextRunAt: string | null
   queryKey: string[]
   onToggle: (value: boolean) => Promise<unknown>
   onRunNow: () => Promise<unknown>
+  runNowDisabled?: boolean
+  onSchedule?: () => void
   onEdit: () => void
   onDelete: () => Promise<unknown>
   deleteMessage: string
@@ -373,6 +513,8 @@ function JobRow({
   const [optimisticActive, setOptimisticActive] = useState<boolean | null>(null)
   const shownActive = optimisticActive ?? isActive
   const lastRun = runs[0] ?? null
+  const inProgress = lastRun?.status === 'running'
+  const waitingForWorker = !inProgress && isDue({ run_requested_at: runRequestedAt, is_active: isActive, next_run_at: nextRunAt })
 
   const toggleMutation = useMutation({
     mutationFn: onToggle,
@@ -411,20 +553,30 @@ function JobRow({
         <div className="col flex-1 gap-1">
           <div className="row items-center gap-2 wrap">
             <h3 className="ink-h3 truncate">{name}</h3>
-            {runQueued && <Badge tone="accent">Run queued</Badge>}
+            {nameBadge}
+            {inProgress && (
+              <span className="row items-center gap-2">
+                <InlineSpinner />
+                <Badge tone="accent">In progress</Badge>
+              </span>
+            )}
+            {!inProgress && waitingForWorker && <Badge tone="warn">Waiting for worker</Badge>}
             {lastRun?.status === 'error' && <Badge tone="danger">Last run failed</Badge>}
           </div>
           <span className="ink-small">{summary}</span>
           <span className="ink-small">{schedule}</span>
-        {lastRun ? (
-          <span className="ink-small" style={lastRun.status === 'error' ? { color: 'var(--ink-danger)' } : undefined}>
-            Last run {formatRelative(lastRun.finished_at)}: {lastRunSummary(lastRun)}
-          </span>
-        ) : (
-          <span className="ink-small" style={{ opacity: 0.7 }}>
-            No runs recorded yet
-          </span>
-        )}
+          {lastRun && lastRun.status !== 'running' ? (
+            <span
+              className="ink-small"
+              style={lastRun.status === 'error' ? { color: 'var(--ink-danger)' } : undefined}
+            >
+              Last run {formatRelative(lastRun.finished_at ?? lastRun.started_at)}: {lastRunSummary(lastRun)}
+            </span>
+          ) : !lastRun ? (
+            <span className="ink-small" style={{ opacity: 0.7 }}>
+              No runs recorded yet
+            </span>
+          ) : null}
           <span className="ink-small">Updated {formatDatetime(updatedAt)}</span>
         </div>
         <Button
@@ -435,12 +587,13 @@ function JobRow({
           disabled={runs.length === 0}
           onClick={() => setHistoryOpen((open) => !open)}
         />
+        {onSchedule && <Button flat round icon="schedule" title="Edit schedule" onClick={onSchedule} />}
         <Button
           flat
           round
           icon="play_arrow"
           title={runQueued ? 'Run already queued' : 'Run now'}
-          disabled={runQueued || runNowMutation.isPending}
+          disabled={runQueued || runNowDisabled || runNowMutation.isPending}
           onClick={() => runNowMutation.mutate()}
         />
         <Switch
@@ -457,15 +610,17 @@ function JobRow({
         <div className="col w-full gap-1" style={{ borderTop: '1px solid var(--ink-border)', paddingTop: 10 }}>
           {runs.map((run) => (
             <div key={run.id} className="row w-full items-center gap-2 wrap">
-              <Badge tone={run.status === 'error' ? 'danger' : 'ok'}>{run.status}</Badge>
-              <span className="ink-small">{formatDatetime(run.finished_at)}</span>
+              <Badge tone={run.status === 'error' ? 'danger' : run.status === 'running' ? 'accent' : 'ok'}>
+                {run.status}
+              </Badge>
+              <span className="ink-small">{formatDatetime(run.finished_at ?? run.started_at)}</span>
               <span
                 className="ink-small"
                 style={run.status === 'error' ? { color: 'var(--ink-danger)' } : undefined}
               >
                 {lastRunSummary(run)}
               </span>
-              {run.detail && run.status !== 'error' && (
+              {run.detail && run.status === 'success' && (
                 <span className="ink-small truncate" style={{ opacity: 0.7, flex: '1 1 auto' }}>
                   {run.detail}
                 </span>

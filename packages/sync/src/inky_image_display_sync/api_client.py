@@ -84,6 +84,12 @@ class ImageRegisterPayload(BaseModel):
     # would silently pin every synced image to a 10-minute cadence.
     display_duration_seconds: int | None = None
     expires_at: datetime | None = None
+    # Group membership: the display worker registers each rendered screen
+    # into its run's image group with the grid slot it belongs to.
+    group_id: UUID | None = None
+    group_slot_row: int | None = None
+    group_slot_col: int | None = None
+    queue_position: int = 0
 
 
 class ImageUpdatePayload(BaseModel):

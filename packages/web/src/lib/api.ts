@@ -8,16 +8,17 @@ import type {
   Device,
   DeviceProfile,
   DisplayJob,
-  DisplayJobDisplayResult,
-  DisplayJobStatus,
   GeminiJob,
   GenerationTask,
   Grid,
+  GridContentStatus,
+  GridQueueEntry,
+  GroupDisplayResult,
   GuestInvite,
   Image,
+  ImageGroup,
   ImageStats,
   ImmichRef,
-  MotdMessage,
   PromptBlock,
   PromptPreset,
   ScheduleEntry,
@@ -95,6 +96,8 @@ export interface ImageListFilters {
   is_portrait?: boolean
   target_grid_id?: string
   solo_only?: boolean
+  group_id?: string
+  in_group?: boolean
   excluded?: boolean
   search?: string
   limit?: number
@@ -174,7 +177,7 @@ export const api = {
   runSyncJobNow: (id: string) => request<SyncJob>(`/api/sync-jobs/${id}/run-now`, { method: 'POST' }),
 
   // --- Sync run history (both job types) ---
-  listSyncRuns: (params: { job_type?: 'immich' | 'gemini'; job_id?: string; limit?: number } = {}) =>
+  listSyncRuns: (params: { job_type?: 'immich' | 'gemini' | 'display'; job_id?: string; limit?: number } = {}) =>
     request<SyncJobRun[]>('/api/sync-runs', { params }),
 
   // --- Prompt blocks / presets ---
@@ -231,20 +234,37 @@ export const api = {
   updateDisplayJob: (id: string, body: Record<string, unknown>) =>
     request<DisplayJob>(`/api/display-jobs/${id}`, { method: 'PUT', body }),
   deleteDisplayJob: (id: string) => request<void>(`/api/display-jobs/${id}`, { method: 'DELETE' }),
-  displayJobGenerate: (id: string) =>
-    request<{ task_id: string; status: string }>(`/api/display-jobs/${id}/generate`, { method: 'POST' }),
-  displayJobDisplay: (id: string, messageId?: string) =>
-    request<DisplayJobDisplayResult>(`/api/display-jobs/${id}/display`, {
+  runDisplayJobNow: (id: string) => request<DisplayJob>(`/api/display-jobs/${id}/run-now`, { method: 'POST' }),
+  displayJobDisplay: (id: string, groupId?: string) =>
+    request<GroupDisplayResult>(`/api/display-jobs/${id}/display`, {
       method: 'POST',
-      body: messageId ? { message_id: messageId } : {},
+      body: groupId ? { group_id: groupId } : {},
     }),
-  listDisplayJobMessages: (id: string, limit = 10) =>
-    request<MotdMessage[]>(`/api/display-jobs/${id}/messages`, { params: { limit } }),
-  startGridSession: (gridId: string) =>
-    request<{ status: string; message_id: string }>(`/api/grids/${gridId}/display-session`, { method: 'POST' }),
-  releaseGridSession: (gridId: string) =>
-    request<{ status: string }>(`/api/grids/${gridId}/release-session`, { method: 'POST' }),
-  getGridDisplayStatus: (gridId: string) => request<DisplayJobStatus>(`/api/grids/${gridId}/display-status`),
+  listDisplayJobGroups: (id: string, limit = 10) =>
+    request<ImageGroup[]>(`/api/display-jobs/${id}/groups`, { params: { limit } }),
+
+  // --- Image groups ---
+  listImageGroups: (targetGridId?: string) =>
+    request<ImageGroup[]>('/api/image-groups', { params: targetGridId ? { target_grid_id: targetGridId } : {} }),
+  createImageGroup: (body: Record<string, unknown>) =>
+    request<ImageGroup>('/api/image-groups', { method: 'POST', body }),
+  updateImageGroup: (id: string, body: Record<string, unknown>) =>
+    request<ImageGroup>(`/api/image-groups/${id}`, { method: 'PUT', body }),
+  deleteImageGroup: (id: string, deleteImages = false) =>
+    request<void>(`/api/image-groups/${id}`, { method: 'DELETE', params: { delete_images: deleteImages } }),
+
+  // --- Grid content queue ---
+  getGridQueue: (gridId: string) => request<GridQueueEntry[]>(`/api/grids/${gridId}/queue`),
+  reorderGridQueue: (gridId: string, entries: Array<{ kind: 'group' | 'image'; id: string }>) =>
+    request<GridQueueEntry[]>(`/api/grids/${gridId}/queue`, { method: 'PUT', body: { entries } }),
+  nextGridContent: (gridId: string) =>
+    request<{ status: string }>(`/api/grids/${gridId}/next`, { method: 'POST' }),
+  displayGridGroup: (gridId: string, groupId: string) =>
+    request<GroupDisplayResult>(`/api/grids/${gridId}/display-group`, {
+      method: 'POST',
+      body: { group_id: groupId },
+    }),
+  getGridDisplayStatus: (gridId: string) => request<GridContentStatus>(`/api/grids/${gridId}/display-status`),
 
   // --- Immich browse proxy (503 when not configured server-side) ---
   listImmichAlbums: () => request<ImmichRef[]>('/api/immich/albums'),

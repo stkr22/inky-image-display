@@ -5,7 +5,7 @@ so every consumer (UI service, sync service) validates against the same
 wire contract; they are re-exported here for backwards compatibility.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -127,6 +127,13 @@ class ImageRegister(BaseModel):
     is_portrait: bool = False
     display_duration_seconds: RefreshIntervalSeconds | None = None
     expires_at: datetime | None = None
+    # Group membership for worker-generated screens: the display worker
+    # registers each rendered panel image into its run's group with the
+    # grid slot it belongs to.
+    group_id: UUID | None = None
+    group_slot_row: int | None = Field(default=None, ge=0)
+    group_slot_col: int | None = Field(default=None, ge=0)
+    queue_position: int = Field(default=0, ge=0)
 
 
 class ImageUpdate(BaseModel):
@@ -260,9 +267,19 @@ class SyncJobUpdate(BaseModel):
 
 
 class SyncJobRunReport(BaseModel):
-    """Worker-posted summary of one completed sync job run."""
+    """Worker-posted summary of one completed job run."""
 
-    job_type: Literal["immich", "gemini"]
+    job_type: Literal["immich", "gemini", "display"]
+
+    @field_validator("started_at", "finished_at", check_fields=False)
+    @classmethod
+    def _to_naive_utc(cls, value: datetime) -> datetime:
+        # Stored datetimes are naive UTC by convention; normalize aware
+        # inputs so comparisons against stored columns can't blow up.
+        if value.tzinfo is not None:
+            return value.astimezone(UTC).replace(tzinfo=None)
+        return value
+
     job_id: UUID
     job_name: str
     status: Literal["success", "error"]
@@ -540,11 +557,93 @@ class DisplayJobCreate(BaseModel):
 class DisplayJobDisplayRequest(BaseModel):
     """Optional body for ``POST /api/display-jobs/{id}/display``.
 
-    ``message_id`` redisplays a specific retained message from the history
-    list; omitted (or an empty body) displays the latest ready one.
+    ``group_id`` redisplays a specific retained group from the history
+    list; omitted (or an empty body) displays the latest generated one.
     """
 
-    message_id: UUID | None = None
+    group_id: UUID | None = None
+
+
+class MotdRenderRequest(BaseModel):
+    """Body for ``POST /api/display-jobs/render-part``.
+
+    The display worker generates the story out of process and posts it
+    here per (part, panel size); the API answers with display-ready JPEG
+    bytes. Keeping rendering server-side keeps the fonts and the panel
+    colour tuning in one place.
+    """
+
+    part: str
+    width: int = Field(ge=1, le=4000)
+    height: int = Field(ge=1, le=4000)
+    headline: str | None = None
+    what: str | None = None
+    why: str | None = None
+    when_text: str | None = None
+    takeaway: str | None = None
+    source_url: str | None = None
+    source_title: str | None = None
+
+    @field_validator("part")
+    @classmethod
+    def _valid_part(cls, value: str) -> str:
+        if value == "image" or not is_valid_part(value):
+            # The image part is fitted via the shared processing endpoint,
+            # not rendered here.
+            raise ValueError(f"Part {value!r} cannot be rendered")
+        return value
+
+
+# --- Image groups / grid queue ---
+
+
+class ImageGroupCreate(BaseModel):
+    """Body for ``POST /api/image-groups``.
+
+    ``image_ids`` become the group's members in list order (frame /
+    slot-sequence order). The worker creates the group first and registers
+    slot-addressed images into it afterwards, so an empty list is valid.
+    """
+
+    name: str = Field(min_length=1, max_length=200)
+    target_grid_id: UUID | None = None
+    display_job_id: UUID | None = None
+    description: str | None = Field(default=None, max_length=2000)
+    source_url: str | None = None
+    image_ids: list[UUID] = []
+
+
+class ImageGroupUpdate(BaseModel):
+    """Body for ``PUT /api/image-groups/{id}``.
+
+    ``image_ids`` replaces the full membership in order when present;
+    images dropped from the list return to the plain library.
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    target_grid_id: UUID | None = None
+    clear_target_grid: bool = False
+    description: str | None = Field(default=None, max_length=2000)
+    image_ids: list[UUID] | None = None
+
+
+class GridQueueReorderEntry(BaseModel):
+    """One entry reference inside a queue reorder."""
+
+    kind: Literal["group", "image"]
+    id: UUID
+
+
+class GridQueueReorder(BaseModel):
+    """Body for ``PUT /api/grids/{id}/queue`` — the full desired order."""
+
+    entries: list[GridQueueReorderEntry]
+
+
+class GridDisplayGroupRequest(BaseModel):
+    """Body for ``POST /api/grids/{id}/display-group``."""
+
+    group_id: UUID
 
 
 class DisplayJobUpdate(BaseModel):
@@ -555,6 +654,7 @@ class DisplayJobUpdate(BaseModel):
     """
 
     name: str | None = Field(default=None, min_length=1, max_length=200)
+    is_active: bool | None = None
     target_grid_id: UUID | None = None
     clear_target_grid: bool = False
     content_prompt: str | None = Field(default=None, min_length=1, max_length=4000)

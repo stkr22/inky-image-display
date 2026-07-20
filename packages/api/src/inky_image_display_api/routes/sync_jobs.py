@@ -11,7 +11,7 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.schemas import SyncJobCreate, SyncJobResponse, SyncJobUpdate
-from inky_image_display_api.services.sync_job_scheduling import claim_due_jobs, due_clause
+from inky_image_display_api.services.sync_job_scheduling import begin_runs, claim_due_jobs, due_clause
 
 router = APIRouter(prefix="/api/sync-jobs", tags=["sync-jobs"])
 logger = logging.getLogger(__name__)
@@ -41,8 +41,14 @@ async def list_sync_jobs(
 @router.post("/claim-due", response_model=list[SyncJobResponse])
 async def claim_due_sync_jobs(request: Request) -> list[ImmichSyncJob]:
     """Hand out due jobs to the worker and advance their schedules (lease semantics)."""
+    now = utcnow()
     async with AsyncSession(request.app.state.engine) as session:
-        jobs = await claim_due_jobs(session, ImmichSyncJob, utcnow())
+        jobs = await claim_due_jobs(session, ImmichSyncJob, now)
+        await begin_runs(session, "immich", [(j.id, j.name) for j in jobs], now)
+        for job in jobs:
+            # begin_runs committed and expired the instances; re-load them
+            # so serialization doesn't hit a detached session.
+            await session.refresh(job)
     if jobs:
         logger.info("Handed out %d due sync job(s)", len(jobs))
     return jobs
