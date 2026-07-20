@@ -8,9 +8,12 @@ need no grid-specific code.
 
 Grids are also the universal target for **display jobs** (see
 [motd.md](motd.md)) and **image groups**: every kind of content flows
-through one **content queue** per grid. The queue interleaves groups
-(worker-generated screens or operator-curated sets) with loose pool
-images; fresh (never-shown) entries play first in the operator's order,
+through one **content queue** per grid. An image group is a **panel
+spread**: each member image is assigned a grid slot and all panels update
+together — worker runs and operators produce the same shape (cover-cropping
+*one* image across all panels is not a group; that stays a loose pool
+image). The queue interleaves groups with loose pool images; fresh
+(never-shown) entries play first in the operator's order,
 then the least recently shown entry replays. Each grid additionally
 carries a daily display schedule (`display_*` columns: enabled, "HH:MM"
 local time, weekday mask, IANA timezone, duration) that front-runs the
@@ -207,9 +210,12 @@ curl -X POST localhost:8000/api/grids/<grid_id>/release
 
 - **The grid's `scheduled_next_at` drives the rotation loop.** It's bumped
   whenever new content is pushed; the rotation tick (every 30 s) advances
-  the grid's queue when due. A group occupies one refresh per frame:
-  slot-addressed images show simultaneously (multi-image slots rotate),
-  full-canvas images show one per refresh. On release the panels update
+  the grid's queue when due. A group's slot-assigned images show
+  simultaneously, one per panel; a slot holding several images rotates one
+  step per refresh, so a group occupies one refresh per frame (longest
+  slot). Images without a slot assignment are not shown (a group with none
+  is skipped entirely); assign panels in the Groups overview on the Images
+  page. On release the panels update
   immediately and the *next* refresh is randomly jittered so several grids
   released together don't flash in lockstep every interval afterwards.
 - **Member devices stay claimed across image transitions.** A grid pulling

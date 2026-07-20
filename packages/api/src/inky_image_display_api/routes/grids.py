@@ -281,7 +281,7 @@ async def get_display_status(request: Request, grid_id: UUID) -> GridContentStat
             group = await session.get(ImageGroup, grid.current_group_id)
             if group is not None:
                 images = await queue_service.group_images(session, group.id)
-        slotted, _canvas = queue_service.split_frames(images)
+        slotted = queue_service.slot_sequences(images)
         slot_statuses: list[GridSlotStatus] = []
         targets = await grid_service.resolve_slot_targets(session, grid.id)
         for key, target in sorted(targets.items()):

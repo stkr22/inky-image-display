@@ -93,9 +93,9 @@ class TestFrames:
         ]
         assert queue_service.frame_count(images) == 3
 
-    def test_canvas_group_frames_one_per_image(self) -> None:
+    def test_unassigned_images_occupy_no_frames(self) -> None:
         images = [_image(group_id=uuid4()), _image(group_id=uuid4())]
-        assert queue_service.frame_count(images) == 2
+        assert queue_service.frame_count(images) == 0
 
 
 class TestAdvanceAndHold:
@@ -210,42 +210,65 @@ class TestAdvanceAndHold:
         assert db_device.claimed_by_grid_id is None
 
     @pytest.mark.asyncio
-    async def test_advance_rotates_canvas_group_frames_then_moves_on(
+    async def test_advance_rotates_slot_images_then_moves_on(
         self, async_engine, mock_settings, mock_s3_service, seed_profile, mqtt
     ) -> None:
-        grid, _device = await self._grid_with_device(async_engine, seed_profile)
+        grid, device = await self._grid_with_device(async_engine, seed_profile)
         group = ImageGroup(name="album", target_grid_id=grid.id, queue_position=0)
-        first = _image(group_id=group.id, position=0)
-        second = _image(group_id=group.id, position=1)
+        first = _image(group_id=group.id, position=0, slot=(0, 0))
+        second = _image(group_id=group.id, position=1, slot=(0, 0))
         await _add(async_engine, group, first, second)
         app = _app(async_engine, mock_settings, mock_s3_service, mqtt)
 
+        # Step 1: queue picks the group, the panel shows the slot's first image.
+        async with AsyncSession(async_engine) as session:
+            db_grid = (await session.exec(select(Grid).where(Grid.id == grid.id))).one()
+            await queue_service.advance_grid(app, session, db_grid)
+        async with AsyncSession(async_engine) as session:
+            db_grid = (await session.exec(select(Grid).where(Grid.id == grid.id))).one()
+            db_device = (await session.exec(select(Device).where(Device.id == device.id))).one()
+            assert db_grid.current_group_id == group.id
+            assert db_grid.current_frame == 0
+            assert db_device.current_image_id == first.id
+
+        # Step 2: the slot rotates to its second image.
+        async with AsyncSession(async_engine) as session:
+            db_grid = (await session.exec(select(Grid).where(Grid.id == grid.id))).one()
+            await queue_service.advance_grid(app, session, db_grid)
+        async with AsyncSession(async_engine) as session:
+            db_grid = (await session.exec(select(Grid).where(Grid.id == grid.id))).one()
+            db_device = (await session.exec(select(Device).where(Device.id == device.id))).one()
+            assert db_grid.current_frame == 1
+            assert db_device.current_image_id == second.id
+
+        # Step 3: frames exhausted — the group finishes; with no other
+        # queue content it replays from frame 0 as the least recent entry.
+        async with AsyncSession(async_engine) as session:
+            db_grid = (await session.exec(select(Grid).where(Grid.id == grid.id))).one()
+            await queue_service.advance_grid(app, session, db_grid)
+        async with AsyncSession(async_engine) as session:
+            db_group = (await session.exec(select(ImageGroup).where(ImageGroup.id == group.id))).one()
+            assert db_group.last_displayed_at is not None
+
+    @pytest.mark.asyncio
+    async def test_advance_skips_group_without_panel_assignments(
+        self, async_engine, mock_settings, mock_s3_service, seed_profile, mqtt
+    ) -> None:
+        grid, _device = await self._grid_with_device(async_engine, seed_profile)
+        group = ImageGroup(name="unassigned", target_grid_id=grid.id, queue_position=0)
+        member = _image(group_id=group.id)
+        pool_image = _image(grid.id, position=1)
+        await _add(async_engine, group, member, pool_image)
+        app = _app(async_engine, mock_settings, mock_s3_service, mqtt)
+
         with patch.object(queue_service.grid_service, "render_and_upload", new=AsyncMock(return_value={})):
-            # Step 1: queue picks the group, shows frame 0.
-            async with AsyncSession(async_engine) as session:
-                db_grid = (await session.exec(select(Grid).where(Grid.id == grid.id))).one()
-                await queue_service.advance_grid(app, session, db_grid)
-            async with AsyncSession(async_engine) as session:
-                db_grid = (await session.exec(select(Grid).where(Grid.id == grid.id))).one()
-                assert db_grid.current_group_id == group.id
-                assert db_grid.current_frame == 0
-
-            # Step 2: frame 1.
-            async with AsyncSession(async_engine) as session:
-                db_grid = (await session.exec(select(Grid).where(Grid.id == grid.id))).one()
-                await queue_service.advance_grid(app, session, db_grid)
-            async with AsyncSession(async_engine) as session:
-                db_grid = (await session.exec(select(Grid).where(Grid.id == grid.id))).one()
-                assert db_grid.current_frame == 1
-
-            # Step 3: frames exhausted — the group finishes; with no other
-            # queue content it replays from frame 0 as the least recent entry.
             async with AsyncSession(async_engine) as session:
                 db_grid = (await session.exec(select(Grid).where(Grid.id == grid.id))).one()
                 await queue_service.advance_grid(app, session, db_grid)
         async with AsyncSession(async_engine) as session:
-            db_group = (await session.exec(select(ImageGroup).where(ImageGroup.id == group.id))).one()
-            assert db_group.last_displayed_at is not None
+            db_grid = (await session.exec(select(Grid).where(Grid.id == grid.id))).one()
+            assert db_grid.current_group_id is None
+            assert db_grid.current_image_id == pool_image.id
 
 
 class TestDisplayDue:

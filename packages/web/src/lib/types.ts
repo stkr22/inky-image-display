@@ -295,6 +295,14 @@ export interface DisplayJob {
 
 // --- Image groups / grid content queue ---
 
+// PUT/POST member shape: which panel (grid slot) each image covers.
+// Both null = unassigned; the image is not shown until given a panel.
+export interface GroupMemberAssignment {
+  image_id: string
+  row: number | null
+  col: number | null
+}
+
 export interface ImageGroup {
   id: string
   name: string

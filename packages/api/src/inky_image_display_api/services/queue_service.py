@@ -7,9 +7,10 @@ display, manual "show now", release — is a step through that queue.
 
 Playback order: never-shown entries first in ``queue_position`` order,
 then the least recently shown entry cycles, so fresh content always
-front-runs the replay loop. A group occupies one refresh per frame:
-slot-addressed images show simultaneously (one per panel, multi-image
-slots rotate), full-canvas images show one per refresh.
+front-runs the replay loop. A group is a panel spread: its slot-assigned
+images show simultaneously, one per panel; slots holding several images
+rotate one step per refresh, so a group occupies one refresh per frame
+(longest slot). Loose pool images cover-crop across the whole grid.
 """
 
 from __future__ import annotations
@@ -96,24 +97,24 @@ async def group_images(session: AsyncSession, group_id: UUID) -> list[Image]:
     return list(result.all())
 
 
-def split_frames(images: list[Image]) -> tuple[dict[tuple[int, int], list[Image]], list[Image]]:
-    """Partition a group into slot-addressed sequences and canvas frames."""
+def slot_sequences(images: list[Image]) -> dict[tuple[int, int], list[Image]]:
+    """Group a spread's images by panel slot, in rotation order.
+
+    Images without a slot assignment are simply not shown — operators
+    assign panels in the Groups overview; the worker always sets slots.
+    """
     slotted: dict[tuple[int, int], list[Image]] = {}
-    canvas: list[Image] = []
     for image in images:
         if image.group_slot_row is not None and image.group_slot_col is not None:
             slotted.setdefault((image.group_slot_row, image.group_slot_col), []).append(image)
         else:
-            canvas.append(image)
-    return slotted, canvas
+            logger.debug("Image %s in group %s has no panel assignment; not shown", image.id, image.group_id)
+    return slotted
 
 
 def frame_count(images: list[Image]) -> int:
-    """Refresh frames the group occupies: slot mode rotates the longest slot."""
-    slotted, canvas = split_frames(images)
-    if slotted:
-        return max(len(sequence) for sequence in slotted.values())
-    return len(canvas)
+    """Refresh frames the group occupies: the longest slot's rotation."""
+    return max((len(sequence) for sequence in slot_sequences(images).values()), default=0)
 
 
 async def _push_command(app: FastAPI, device: Device, image: Image) -> bool:
@@ -149,37 +150,29 @@ async def _show_group_frame(  # noqa: PLR0913 — one push spans grid, group, an
     grid_next: datetime,
     now: datetime,
 ) -> GroupDisplayResult:
-    """Push one frame of a group to the grid's panels. Does not commit."""
-    slotted, canvas = split_frames(images)
+    """Push one frame of a group spread to the grid's panels. Does not commit."""
+    slotted = slot_sequences(images)
     result = GroupDisplayResult(group_id=group.id, name=group.name, displayed=[], offline=[], skipped_no_content=[])
-    if slotted:
-        if canvas:
-            logger.info("Group %s mixes slot and canvas images; canvas frames are ignored", group.id)
-        targets = await grid_service.resolve_slot_targets(session, grid.id)
-        for key, target in sorted(targets.items()):
-            sequence = slotted.get(key)
-            device = target.device
-            if not sequence:
-                # Slot without content — the panel keeps what it was showing.
-                result.skipped_no_content.append(device.device_id)
-                continue
-            image = sequence[frame % len(sequence)]
-            already_showing = device.current_image_id == image.id and device.claimed_by_grid_id == grid.id
-            _claim(device, grid, image, grid_next, now)
-            session.add(device)
-            if already_showing:
-                # E-ink refreshes are slow and flashy — don't repaint a
-                # panel that is already showing this exact image.
-                result.displayed.append(device.device_id)
-                continue
-            pushed = await _push_command(app, device, image)
-            (result.displayed if pushed else result.offline).append(device.device_id)
-        grid.current_image_id = None
-    else:
-        image = canvas[frame % len(canvas)]
-        displayed, offline = await _push_canvas_image(app, session, grid, image, grid_next=grid_next, now=now)
-        result.displayed.extend(displayed)
-        result.offline.extend(offline)
+    targets = await grid_service.resolve_slot_targets(session, grid.id)
+    for key, target in sorted(targets.items()):
+        sequence = slotted.get(key)
+        device = target.device
+        if not sequence:
+            # Slot without content — the panel keeps what it was showing.
+            result.skipped_no_content.append(device.device_id)
+            continue
+        image = sequence[frame % len(sequence)]
+        already_showing = device.current_image_id == image.id and device.claimed_by_grid_id == grid.id
+        _claim(device, grid, image, grid_next, now)
+        session.add(device)
+        if already_showing:
+            # E-ink refreshes are slow and flashy — don't repaint a
+            # panel that is already showing this exact image.
+            result.displayed.append(device.device_id)
+            continue
+        pushed = await _push_command(app, device, image)
+        (result.displayed if pushed else result.offline).append(device.device_id)
+    grid.current_image_id = None
     return result
 
 
@@ -223,11 +216,11 @@ async def _push_canvas_image(  # noqa: PLR0913 — explicit deps mirror the fram
 
 
 async def _next_playable(session: AsyncSession, grid_id: UUID) -> tuple[str, ImageGroup | Image, list[Image]] | None:
-    """First queue entry that can actually show (skips empty groups)."""
+    """First queue entry that can actually show (skips groups with no panel assignments)."""
     for kind, obj in await queue_entries(session, grid_id):
         if kind == "group":
             images = await group_images(session, obj.id)
-            if not images:
+            if frame_count(images) == 0:
                 continue
             return kind, obj, images
         return kind, obj, []
@@ -303,9 +296,9 @@ async def start_group(app: FastAPI, session: AsyncSession, grid: Grid, group: Im
     """
     now = utcnow()
     images = await group_images(session, group.id)
-    if not images:
-        raise QueueError("The group has no images to display")
     frames = frame_count(images)
+    if frames == 0:
+        raise QueueError("The group has no panel assignments")
     default_seconds = await get_default_refresh_seconds(session, app.state.settings)
     grid_next = next_refresh_at(grid, default_seconds, now)
 

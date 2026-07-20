@@ -159,9 +159,11 @@ groups. The page header shows an overview of upcoming runs and recent
 executions across all job types.
 
 The **grid page** owns the display side: the "Up next" queue card (order,
-reorder, show-now, release), the "Grouped images" card, and the "Daily
-schedule" card (24h time, weekdays, timezone, duration or "until
-released").
+reorder, show-now, release) and the "Daily schedule" card (24h time,
+weekdays, timezone, duration or "until released"). Groups themselves are
+listed and edited in the Groups overview on the **Images page**
+(generated ones read-only + delete; curated ones: rename, grid, panel
+assignments).
 
 ## Requirements
 

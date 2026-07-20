@@ -1,14 +1,19 @@
-"""Image groups: ordered sets of images displayed together on a grid.
+"""Image groups: panel spreads shown together on a grid.
 
-A group is the unit of curated content in a grid's queue. Two flavours
-share the table:
+A group assigns images to grid slots so every panel shows its piece of
+the spread simultaneously — the one standardized shape for coordinated
+multi-screen content. Two flavours share the table:
 
 * Worker-generated groups (``display_job_id`` set): a display job's run
-  renders one image per grid slot (MOTD screens today) — those images
-  carry a slot address and are shown simultaneously, one per panel.
-* Operator-created groups: existing library images bundled for a grid.
-  Without slot addresses each image is a full-canvas frame, shown one
-  per refresh in ``queue_position`` order.
+  renders one image per grid slot (MOTD screens today). Read-only —
+  the job re-creates them; operators can only delete.
+* Operator-created groups: existing library images assigned to slots by
+  hand — the manual counterpart of a worker run. Images without a slot
+  are not shown until assigned; several images on one slot rotate on
+  that panel, one step per grid refresh.
+
+(Cover-cropping ONE image across all panels is not a group — that is a
+loose pool image via ``Image.target_grid_id``.)
 
 Images referencing a group are excluded from solo and grid-pool rotation;
 the grid's queue interleaves groups with loose pool images.
@@ -23,7 +28,7 @@ from inky_image_display_shared.time import utcnow
 
 
 class ImageGroup(SQLModel, table=True):
-    """An ordered set of images shown together on one grid."""
+    """A spread of slot-assigned images shown together on one grid."""
 
     __tablename__ = "image_groups"
 

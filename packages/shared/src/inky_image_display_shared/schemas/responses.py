@@ -471,7 +471,8 @@ class GridQueueEntry(BaseModel):
     id: UUID
     name: str | None
     last_displayed_at: UtcDatetime | None
-    # Groups: number of refresh frames the group occupies; images: 1.
+    # Groups: longest per-slot rotation (0 = no panel assignments,
+    # skipped by playback); images: 1.
     frame_count: int
     # Thumbnail source (a member image for groups, the image itself otherwise).
     storage_path: str | None
