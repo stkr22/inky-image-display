@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from inky_image_display_shared.models import ImageGroup
     from sqlmodel.ext.asyncio.session import AsyncSession
 
+    from inky_image_display_api.schemas import GroupMemberAssignment
+
 
 async def group_response(session: AsyncSession, group: ImageGroup) -> ImageGroupResponse:
     """Serialize a group with its member images in frame order."""
@@ -24,25 +26,29 @@ async def group_response(session: AsyncSession, group: ImageGroup) -> ImageGroup
     return response
 
 
-async def set_group_members(session: AsyncSession, group_id: UUID, image_ids: list[UUID]) -> None:
-    """Replace a group's membership with ``image_ids`` in list order.
+async def set_group_members(session: AsyncSession, group_id: UUID, members: list[GroupMemberAssignment]) -> None:
+    """Replace a group's membership and panel (slot) assignments.
 
-    Dropped images return to the plain library (their grid-pool link was
-    cleared when they joined, so they re-enter solo rotation). Does not
-    commit.
+    List order becomes ``queue_position`` — the rotation order among
+    members sharing a slot. Dropped images return to the plain library
+    (their grid-pool link was cleared when they joined, so they re-enter
+    solo rotation). Does not commit.
     """
     current = await session.exec(select(Image).where(col(Image.group_id) == group_id))
-    wanted = {image_id: position for position, image_id in enumerate(image_ids)}
+    wanted = {member.image_id: (position, member) for position, member in enumerate(members)}
     for image in current.all():
         if image.id not in wanted:
             image.group_id = None
+            image.group_slot_row = None
+            image.group_slot_col = None
             session.add(image)
-    if not image_ids:
+    if not members:
         return
     images = await session.exec(select(Image).where(col(Image.id).in_(list(wanted))))
     for image in images.all():
+        position, member = wanted[image.id]
         image.group_id = group_id
-        image.queue_position = wanted[image.id]
-        # Curated groups are full-canvas frame sequences; only the worker
-        # sets slot addresses on the images it generates.
+        image.queue_position = position
+        image.group_slot_row = member.row
+        image.group_slot_col = member.col
         session.add(image)

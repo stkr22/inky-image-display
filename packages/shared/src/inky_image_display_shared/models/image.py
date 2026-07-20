@@ -99,12 +99,12 @@ class Image(SQLModel, table=True):
         index=True,
     )
     # Slot address within the group's target grid (row/col of the grid
-    # layout). Set for worker-generated per-panel screens; None means the
-    # image is a full-canvas frame cropped across the whole grid.
+    # layout). None means the image is unassigned and not shown until an
+    # operator gives it a panel.
     group_slot_row: int | None = Field(default=None)
     group_slot_col: int | None = Field(default=None)
     # Ordering within the image's container: the grid queue for loose pool
-    # images, the frame/slot sequence for grouped images.
+    # images, the per-slot rotation order for grouped images.
     queue_position: int = Field(default=0)
 
     # Timestamps

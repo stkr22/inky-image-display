@@ -30,7 +30,7 @@ from inky_image_display_shared.schemas.responses import (
     SyncJobRunResponse,
     UtcDatetime,
 )
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 __all__ = [
     "AppSettingsResponse",
@@ -597,12 +597,32 @@ class MotdRenderRequest(BaseModel):
 # --- Image groups / grid queue ---
 
 
+class GroupMemberAssignment(BaseModel):
+    """One group member: an image and the grid panel (slot) it covers.
+
+    Both ``row``/``col`` null = unassigned; the image stays in the group
+    but is not shown until an operator gives it a panel. List order among
+    members sharing a slot is the rotation order on that panel.
+    """
+
+    image_id: UUID
+    row: int | None = Field(default=None, ge=0)
+    col: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _slot_complete(self) -> "GroupMemberAssignment":
+        if (self.row is None) != (self.col is None):
+            raise ValueError("row and col must be set together (or both omitted)")
+        return self
+
+
 class ImageGroupCreate(BaseModel):
     """Body for ``POST /api/image-groups``.
 
-    ``image_ids`` become the group's members in list order (frame /
-    slot-sequence order). The worker creates the group first and registers
-    slot-addressed images into it afterwards, so an empty list is valid.
+    ``members`` assign images to grid panels — the manual counterpart of
+    a worker run's slot-addressed screens. The worker creates the group
+    first and registers slotted images into it afterwards, so an empty
+    list is valid.
     """
 
     name: str = Field(min_length=1, max_length=200)
@@ -610,21 +630,21 @@ class ImageGroupCreate(BaseModel):
     display_job_id: UUID | None = None
     description: str | None = Field(default=None, max_length=2000)
     source_url: str | None = None
-    image_ids: list[UUID] = []
+    members: list[GroupMemberAssignment] = []
 
 
 class ImageGroupUpdate(BaseModel):
     """Body for ``PUT /api/image-groups/{id}``.
 
-    ``image_ids`` replaces the full membership in order when present;
-    images dropped from the list return to the plain library.
+    ``members`` replaces the full membership and slot assignments when
+    present; images dropped from the list return to the plain library.
     """
 
     name: str | None = Field(default=None, min_length=1, max_length=200)
     target_grid_id: UUID | None = None
     clear_target_grid: bool = False
     description: str | None = Field(default=None, max_length=2000)
-    image_ids: list[UUID] | None = None
+    members: list[GroupMemberAssignment] | None = None
 
 
 class GridQueueReorderEntry(BaseModel):

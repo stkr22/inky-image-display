@@ -43,7 +43,7 @@ async def list_image_groups(request: Request, target_grid_id: UUID | None = None
 
 @router.post("", status_code=201)
 async def create_image_group(request: Request, body: ImageGroupCreate) -> ImageGroupResponse:
-    """Create a group; ``image_ids`` become members in list order."""
+    """Create a group; ``members`` assign images to grid panels."""
     async with AsyncSession(request.app.state.engine) as session:
         group = ImageGroup(
             name=body.name,
@@ -54,10 +54,10 @@ async def create_image_group(request: Request, body: ImageGroupCreate) -> ImageG
         )
         session.add(group)
         await session.flush()
-        await set_group_members(session, group.id, body.image_ids)
+        await set_group_members(session, group.id, body.members)
         await session.commit()
         await session.refresh(group)
-        logger.info("Created image group %s (%s) with %d image(s)", group.id, group.name, len(body.image_ids))
+        logger.info("Created image group %s (%s) with %d image(s)", group.id, group.name, len(body.members))
         return await group_response(session, group)
 
 
@@ -71,9 +71,13 @@ async def get_image_group(request: Request, group_id: UUID) -> ImageGroupRespons
 
 @router.put("/{group_id}")
 async def update_image_group(request: Request, group_id: UUID, body: ImageGroupUpdate) -> ImageGroupResponse:
-    """Rename or re-target a group, or replace its membership/order."""
+    """Rename or re-target a group, or replace its members/slots."""
     async with AsyncSession(request.app.state.engine) as session:
         group = await _get_group_or_404(session, group_id)
+        if group.display_job_id is not None:
+            # Worker-generated groups are a run's immutable output — the
+            # job re-creates them; operators can only delete.
+            raise HTTPException(status_code=409, detail="Generated groups are read-only; delete instead")
         if body.name is not None:
             group.name = body.name
         if body.clear_target_grid:
@@ -84,8 +88,8 @@ async def update_image_group(request: Request, group_id: UUID, body: ImageGroupU
             group.description = body.description
         group.updated_at = utcnow()
         session.add(group)
-        if body.image_ids is not None:
-            await set_group_members(session, group.id, body.image_ids)
+        if body.members is not None:
+            await set_group_members(session, group.id, body.members)
         await session.commit()
         await session.refresh(group)
         return await group_response(session, group)
