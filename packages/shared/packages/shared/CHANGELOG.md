@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.10.0](https://github.com/stkr22/inky-image-display/compare/shared-v4.9.0...shared-v4.10.0) (2026-07-20)
+
+
+### Features
+
+* unify display-job content onto image groups and grid queues ([33539da](https://github.com/stkr22/inky-image-display/commit/33539dafb4f3bb414969040faa5df61d7a6de0e4))
+* unify display-job content onto image groups and grid queues ([07537fd](https://github.com/stkr22/inky-image-display/commit/07537fd9a7475998df179e83ebabbf6e9c63fe23))
+
 ## [4.9.0](https://github.com/stkr22/inky-image-display/compare/shared-v4.8.0...shared-v4.9.0) (2026-07-19)
 
 
