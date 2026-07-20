@@ -15,7 +15,12 @@ from inky_image_display_shared.time import utcnow
 
 
 class SyncJobRun(SQLModel, table=True):
-    """Outcome summary of one worker run of one sync job.
+    """One worker run of one job, from claim to completion.
+
+    A row is created with status ``running`` when the claim endpoint hands
+    the job to a worker — that is what lets the UI distinguish "in
+    progress" from "waiting for a worker". The worker's posted report
+    completes the row (or a later claim marks an abandoned one ``error``).
 
     ``job_id`` is a plain UUID (no FK) on purpose: runs are a log, and a
     deleted job shouldn't erase the history that explains where its images
@@ -23,12 +28,12 @@ class SyncJobRun(SQLModel, table=True):
 
     Attributes:
         id: Unique identifier.
-        job_type: Which worker produced the run ("immich" or "gemini").
+        job_type: Which worker produced the run ("immich", "gemini" or "display").
         job_id: UUID of the job at run time.
         job_name: Job name at run time (denormalized for display).
-        status: "success" or "error".
+        status: "running", "success" or "error".
         started_at: When the worker began the job.
-        finished_at: When the worker finished the job.
+        finished_at: When the worker finished the job (None while running).
         images_added: Newly downloaded/generated images.
         images_skipped: Candidates skipped (already synced, undersized, ...).
         images_deleted: Images removed by retention cleanup.
@@ -44,9 +49,9 @@ class SyncJobRun(SQLModel, table=True):
     job_type: str = Field(index=True, description="'immich' or 'gemini'")
     job_id: UUID = Field(index=True)
     job_name: str
-    status: str = Field(description="'success' or 'error'")
+    status: str = Field(description="'running', 'success' or 'error'")
     started_at: datetime
-    finished_at: datetime
+    finished_at: datetime | None = Field(default=None)
     images_added: int = Field(default=0)
     images_skipped: int = Field(default=0)
     images_deleted: int = Field(default=0)

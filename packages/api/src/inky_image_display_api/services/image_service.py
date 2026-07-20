@@ -71,6 +71,8 @@ async def get_next_image_for_device(session: AsyncSession, device: Device) -> Im
             col(Image.original_height) == expected_height,
             Image.is_portrait == is_portrait,
             col(Image.target_grid_id).is_(None),
+            # Grouped images are shown via their group's grid queue, never solo.
+            col(Image.group_id).is_(None),
             col(Image.excluded_from_rotation).is_(False),
         )
         .order_by(col(Image.last_displayed_at).asc().nullsfirst())

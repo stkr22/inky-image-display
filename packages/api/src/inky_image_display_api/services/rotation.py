@@ -1,4 +1,4 @@
-"""Background task for automatic image rotation."""
+"""Background task for automatic content rotation."""
 
 import asyncio
 import logging
@@ -10,7 +10,7 @@ from sqlalchemy import not_
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from inky_image_display_api.services import display_job_service, grid_service
+from inky_image_display_api.services import grid_service, queue_service
 from inky_image_display_api.services.app_settings_service import get_quiet_hours, is_quiet_now
 from inky_image_display_api.services.image_service import (
     build_display_command,
@@ -23,11 +23,10 @@ logger = logging.getLogger(__name__)
 
 
 async def rotation_loop(app: FastAPI) -> None:
-    """Continuously rotate images on devices whose schedule has elapsed.
+    """Continuously rotate content on devices and grids whose schedule elapsed.
 
-    Runs every 30 seconds and checks for online devices whose
-    ``scheduled_next_at`` is in the past. For each, selects the next
-    image via FIFO and publishes a display command over MQTT.
+    Runs every 30 seconds. Grids step through their content queue (groups
+    and pool images alike); solo devices rotate their FIFO pool.
 
     Args:
         app: The running FastAPI application (provides engine, settings,
@@ -37,11 +36,11 @@ async def rotation_loop(app: FastAPI) -> None:
     while True:
         await asyncio.sleep(30)
         try:
-            await display_job_service.tick(app)
+            await queue_service.queue_tick(app)
         except Exception:
-            logger.exception("Error in display-job tick")
+            logger.exception("Error in scheduled-display tick")
         # Quiet hours pause only the interval-driven rotation below. The
-        # display-job tick above stays live because its schedule is an
+        # scheduled-display tick above stays live because its schedule is an
         # explicit operator choice; manual pushes bypass this loop entirely.
         # Devices left overdue simply rotate on the first tick after the
         # window.
@@ -133,33 +132,30 @@ async def _rotate_due_grids(app: FastAPI) -> None:
 
     for grid in due_grids:
         try:
-            await _rotate_single_grid(app, grid.id)
+            await _advance_single_grid(app, grid.id)
         except Exception:
-            logger.exception("Failed to rotate grid %s", grid.id)
+            logger.exception("Failed to advance grid %s", grid.id)
 
 
-async def _rotate_single_grid(app: FastAPI, grid_id: object) -> None:
-    """Pick the next image for a grid and push slices to every member device."""
+async def _advance_single_grid(app: FastAPI, grid_id: object) -> None:
+    """Step one grid through its content queue."""
     async with AsyncSession(app.state.engine) as session:
-        grid = await session.exec(select(Grid).where(col(Grid.id) == grid_id))
-        db_grid = grid.first()
+        grid_result = await session.exec(select(Grid).where(col(Grid.id) == grid_id))
+        db_grid = grid_result.first()
         if db_grid is None:
             return
         # Empty grids are valid state (created in the UI before the user
-        # adds devices), so the background tick treats them like grids
-        # without images: log at debug and move on. ``render_and_upload``
-        # still raises 400 when called from the explicit route, which is
-        # the correct behaviour for a user-driven request.
+        # adds devices), so the background tick logs at debug and moves on.
         placements = await grid_service.list_grid_devices(session, db_grid.id)
         if not placements:
             logger.debug("No devices placed on grid %s", db_grid.id)
             return
-        # A grid renders one image in lockstep across every member, so a
-        # single stuck panel makes the whole composite unshowable. Pause
-        # the grid until that member recovers (its controller retries the
-        # stuck image and the success ack clears last_refresh_ok) — or
-        # until the failure ages past the dispatch backoff, so a member
-        # whose controller restarted can't pause the grid forever.
+        # A grid pushes in lockstep across members, so a single stuck panel
+        # makes the composite unshowable. Pause the grid until that member
+        # recovers (its controller retries the stuck image and the success
+        # ack clears last_refresh_ok) — or until the failure ages past the
+        # dispatch backoff, so a member whose controller restarted can't
+        # pause the grid forever.
         member_ids = [p.device_id for p in placements]
         errored = await session.exec(
             select(Device.device_id).where(
@@ -171,26 +167,4 @@ async def _rotate_single_grid(app: FastAPI, grid_id: object) -> None:
         if stuck:
             logger.debug("Grid %s paused — member(s) %s have a failed refresh", db_grid.id, ", ".join(stuck))
             return
-        # A display-job session holding this grid drives the panels
-        # exclusively; pool rotation resumes when the session releases it.
-        if db_grid.active_message_id is not None:
-            logger.debug("Grid %s paused — a display job session is active", db_grid.id)
-            return
-        image = await grid_service.get_next_grid_image(session, db_grid)
-        if image is None:
-            logger.debug("No images assigned to grid %s", db_grid.id)
-            return
-        crop_paths = await grid_service.render_and_upload(session, db_grid, image, app.state.s3_service)
-        # Capture ids before claim_devices_and_push commits: the commit
-        # expires both instances and re-reading them here would lazy-load
-        # outside the async greenlet (MissingGreenlet).
-        rotated_image_id = image.id
-        await grid_service.claim_devices_and_push(
-            session,
-            db_grid,
-            image,
-            crop_paths,
-            app.state.mqtt,
-            app.state.settings,
-        )
-        logger.info("Rotated grid %s to image %s", grid_id, rotated_image_id)
+        await queue_service.advance_grid(app, session, db_grid)

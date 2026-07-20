@@ -35,11 +35,12 @@ class Grid(SQLModel, table=True):
     # previously cadence was implicitly driven by ``image.display_duration_seconds``.
     refresh_interval_seconds: int | None = Field(default=None)
 
-    # Daily display-job schedule: when this grid shows the latest generated
-    # group from the display jobs targeting it. ``display_time`` is a local
-    # wall-clock "HH:MM" in ``display_timezone`` — the repo is otherwise
-    # UTC-everywhere, but a "show at 08:00" schedule only makes sense in the
-    # operator's local time. ``display_weekday_mask`` bit 0 = Monday.
+    # Daily display schedule: when this grid front-runs its queue with the
+    # newest generated group from the display jobs targeting it.
+    # ``display_time`` is a local wall-clock "HH:MM" in ``display_timezone``
+    # — the repo is otherwise UTC-everywhere, but a "show at 08:00" schedule
+    # only makes sense in the operator's local time. ``display_weekday_mask``
+    # bit 0 = Monday.
     display_schedule_enabled: bool = Field(default=False)
     display_time: str = Field(default="08:00")
     display_weekday_mask: int = Field(default=127)
@@ -47,13 +48,16 @@ class Grid(SQLModel, table=True):
     # ``None`` shows the content until the operator releases it manually.
     display_duration_seconds: int | None = Field(default=None)
 
-    # Live display-job session state. ``active_message_id`` is intentionally
-    # not a FK: motd_messages transitively references grids (via
-    # display_jobs), and a back-reference would create a circular FK that
-    # complicates table creation order.
-    active_message_id: UUID | None = Field(default=None)
-    active_since: datetime | None = Field(default=None)
-    active_expires_at: datetime | None = Field(default=None)
+    # Queue playback state: the group currently on the panels and which of
+    # its frames is showing. ``current_group_id`` is intentionally not a FK:
+    # image_groups references grids, and a back-reference would create a
+    # circular FK that complicates table creation order.
+    current_group_id: UUID | None = Field(default=None)
+    current_frame: int = Field(default=0)
+    # While set and in the future, the queue does not advance past the
+    # current group (frames still rotate). The scheduled daily display and
+    # manual "show now" set it; release clears it.
+    hold_until: datetime | None = Field(default=None)
     # Once-per-day guard for the scheduler tick, a local date in
     # ``display_timezone`` so "today" matches the operator's calendar.
     last_displayed_on: date | None = Field(default=None)

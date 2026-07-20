@@ -13,7 +13,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from inky_image_display_api.services.image_service import next_refresh_at
-from inky_image_display_api.services.rotation import _rotate_single_grid
+from inky_image_display_api.services.rotation import _advance_single_grid
 from inky_image_display_shared.models import Device, Grid
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -237,7 +237,7 @@ class TestRotationSkipsEmptyGrid:
         app.state.settings = mock_settings
 
         # No raise, no S3 calls — empty-grid path is silent.
-        await _rotate_single_grid(app, grid_id)
+        await _advance_single_grid(app, grid_id)
         mock_s3_service.upload_image.assert_not_called()
 
 

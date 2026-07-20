@@ -25,6 +25,13 @@ export interface Image {
   created_at: string
   tags: string | null
   target_grid_id: string | null
+  // Group membership: grouped images leave regular rotation and are shown
+  // via their group's grid queue. Slot fields address a grid panel for
+  // worker-generated screens; null = full-canvas frame.
+  group_id: string | null
+  group_slot_row: number | null
+  group_slot_col: number | null
+  queue_position: number
 }
 
 export interface DeviceProfile {
@@ -109,15 +116,16 @@ export interface SyncJob {
   updated_at: string
 }
 
-// One recorded worker run of a sync job (Immich or Gemini batch).
+// One worker run of a job, from claim to completion. 'running' means a
+// worker claimed the job and has not reported back yet.
 export interface SyncJobRun {
   id: string
-  job_type: 'immich' | 'gemini'
+  job_type: 'immich' | 'gemini' | 'display'
   job_id: string
   job_name: string
-  status: 'success' | 'error'
+  status: 'running' | 'success' | 'error'
   started_at: string
-  finished_at: string
+  finished_at: string | null
   images_added: number
   images_skipped: number
   images_deleted: number
@@ -189,6 +197,11 @@ export interface Grid {
   display_weekday_mask: number
   display_timezone: string
   display_duration_seconds: number | null
+  // Queue playback state: the group currently on the panels (if any) and
+  // whether it is held (scheduled display / manual show).
+  current_group_id: string | null
+  current_frame: number
+  hold_until: string | null
   devices: GridPlacement[] | null
 }
 
@@ -257,7 +270,6 @@ export interface DisplayJobSlot {
   row: number
   col: number
   parts: string[]
-  rotation_index: number
 }
 
 export interface DisplayJob {
@@ -270,62 +282,65 @@ export interface DisplayJob {
   source_mode: 'grounded' | 'knowledge'
   image_preset_id: string | null
   text_model_name: string
+  is_active: boolean
   interval_minutes: number | null
   next_run_at: string | null
   last_run_at: string | null
+  // Set while a "Run now" click is waiting for the worker's next due-claim.
+  run_requested_at: string | null
   created_at: string
   updated_at: string
   slots: DisplayJobSlot[]
 }
 
-export interface MotdScreen {
-  id: string
-  part: string
-  width: number
-  height: number
-  is_portrait: boolean
-  storage_path: string
-  created_at: string
-}
+// --- Image groups / grid content queue ---
 
-export interface MotdMessage {
+export interface ImageGroup {
   id: string
-  status: 'generating' | 'ready' | 'failed'
-  error: string | null
-  headline: string | null
-  what: string | null
-  why: string | null
-  when_text: string | null
-  takeaway: string | null
-  image_subject: string | null
+  name: string
+  target_grid_id: string | null
+  display_job_id: string | null
+  description: string | null
   source_url: string | null
-  source_title: string | null
-  source_mode: string
-  displayed_at: string | null
+  queue_position: number
+  last_displayed_at: string | null
   created_at: string
-  screens: MotdScreen[]
+  images: Image[]
 }
 
-export interface DisplayJobSlotStatus {
+// Entries arrive in predicted playback order — the rank is the list index.
+export interface GridQueueEntry {
+  kind: 'group' | 'image'
+  id: string
+  name: string | null
+  last_displayed_at: string | null
+  // Refresh frames the entry occupies (groups rotate through frames).
+  frame_count: number
+  storage_path: string | null
+  is_current: boolean
+}
+
+export interface GridSlotStatus {
   row: number
   col: number
   device_id: string
   is_online: boolean
-  current_part: string | null
+  current_title: string | null
 }
 
-export interface DisplayJobStatus {
-  active: boolean
-  message_id: string | null
-  headline: string | null
-  active_since: string | null
-  active_expires_at: string | null
-  slots: DisplayJobSlotStatus[]
+export interface GridContentStatus {
+  group_id: string | null
+  group_name: string | null
+  frame: number
+  frame_count: number
+  hold_until: string | null
+  displayed_since: string | null
+  slots: GridSlotStatus[]
 }
 
-export interface DisplayJobDisplayResult {
-  message_id: string
-  headline: string | null
+export interface GroupDisplayResult {
+  group_id: string
+  name: string | null
   displayed: string[]
   offline: string[]
   skipped_no_content: string[]

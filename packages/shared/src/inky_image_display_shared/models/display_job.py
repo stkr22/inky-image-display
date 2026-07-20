@@ -51,11 +51,14 @@ class DisplayJob(SQLModel, table=True):
     image_preset_id: UUID | None = Field(default=None, foreign_key="prompt_presets.id", ondelete="SET NULL")
     text_model_name: str = Field(default="gemini-2.5-flash")
 
-    # Generation cadence. The tick advances ``next_run_at`` when it spawns a
-    # run (lease semantics, mirroring the sync jobs).
+    # Generation cadence and worker hand-off, identical to the sync jobs:
+    # the external worker claims due jobs (``next_run_at`` advanced as a
+    # lease at claim) and generates the content out of process.
+    is_active: bool = Field(default=True)
     interval_minutes: int | None = Field(default=None, ge=1)
     next_run_at: datetime | None = Field(default=None)
     last_run_at: datetime | None = Field(default=None)
+    run_requested_at: datetime | None = Field(default=None)
 
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow, sa_column_kwargs={"onupdate": utcnow})
@@ -67,9 +70,9 @@ class DisplayJobSlot(SQLModel, table=True):
     Slots address grid positions (``row``/``col`` on ``grid_devices``), not
     devices, so swapping a panel in the grid layout keeps the job mapping
     intact. ``parts`` is a JSON-encoded ordered list of part keys (see
-    ``inky_image_display_shared.motd``); ``rotation_index`` is session
-    state — the position currently on screen, advanced on each refresh of
-    a multi-part slot while the session is active.
+    ``inky_image_display_shared.motd``). The worker renders one image per
+    (slot, part) into the run's image group; multi-part slots become that
+    slot's frame sequence.
     """
 
     __tablename__ = "display_job_slots"
@@ -78,5 +81,4 @@ class DisplayJobSlot(SQLModel, table=True):
     row: int = Field(primary_key=True)
     col: int = Field(primary_key=True)
     parts: str = Field(default="[]")
-    rotation_index: int = Field(default=0)
     created_at: datetime = Field(default_factory=utcnow)

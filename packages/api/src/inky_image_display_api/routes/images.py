@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=list[ImageResponse])
-async def list_images(
+async def list_images(  # noqa: PLR0912 — one branch per optional filter
     request: Request,
     response: Response,
     source_name: str | None = None,
@@ -32,6 +32,8 @@ async def list_images(
     expires_before: datetime | None = None,
     target_grid_id: UUID | None = None,
     solo_only: bool = False,
+    group_id: UUID | None = None,
+    in_group: bool | None = None,
     excluded: bool | None = None,
     search: str | None = None,
     limit: int = 100,
@@ -55,6 +57,8 @@ async def list_images(
         expires_before: Return only images expiring before this datetime.
         target_grid_id: Filter to images assigned to a specific grid's pool.
         solo_only: Return only images without a ``target_grid_id`` (the solo pool).
+        group_id: Filter to one image group's members.
+        in_group: True → only grouped images; False → only ungrouped ones.
         excluded: Filter by the exclude-from-rotation flag.
         search: Case-insensitive substring match on title, description or tags.
         limit: Max results to return.
@@ -82,6 +86,10 @@ async def list_images(
             conditions.append(col(Image.target_grid_id) == target_grid_id)
         if solo_only:
             conditions.append(col(Image.target_grid_id).is_(None))
+        if group_id is not None:
+            conditions.append(col(Image.group_id) == group_id)
+        if in_group is not None:
+            conditions.append(col(Image.group_id).is_not(None) if in_group else col(Image.group_id).is_(None))
         if excluded is not None:
             conditions.append(col(Image.excluded_from_rotation).is_(excluded))
         if search:
@@ -141,6 +149,10 @@ async def register_image(request: Request, body: ImageRegister) -> Image:
         is_portrait=body.is_portrait,
         display_duration_seconds=body.display_duration_seconds,
         expires_at=body.expires_at,
+        group_id=body.group_id,
+        group_slot_row=body.group_slot_row,
+        group_slot_col=body.group_slot_col,
+        queue_position=body.queue_position,
     )
     async with AsyncSession(request.app.state.engine) as session:
         session.add(image)

@@ -15,7 +15,7 @@ from inky_image_display_api.schemas import (
     GeminiSyncJobResponse,
     GeminiSyncJobUpdate,
 )
-from inky_image_display_api.services.sync_job_scheduling import claim_due_jobs, due_clause
+from inky_image_display_api.services.sync_job_scheduling import begin_runs, claim_due_jobs, due_clause
 
 router = APIRouter(prefix="/api/genai/jobs", tags=["genai"])
 logger = logging.getLogger(__name__)
@@ -45,8 +45,14 @@ async def list_gemini_sync_jobs(
 @router.post("/claim-due", response_model=list[GeminiSyncJobResponse])
 async def claim_due_gemini_jobs(request: Request) -> list[GeminiSyncJob]:
     """Hand out due Gemini jobs and advance their schedules (lease semantics)."""
+    now = utcnow()
     async with AsyncSession(request.app.state.engine) as session:
-        jobs = await claim_due_jobs(session, GeminiSyncJob, utcnow())
+        jobs = await claim_due_jobs(session, GeminiSyncJob, now)
+        await begin_runs(session, "gemini", [(j.id, j.name) for j in jobs], now)
+        for job in jobs:
+            # begin_runs committed and expired the instances; re-load them
+            # so serialization doesn't hit a detached session.
+            await session.refresh(job)
     if jobs:
         logger.info("Handed out %d due gemini sync job(s)", len(jobs))
     return jobs

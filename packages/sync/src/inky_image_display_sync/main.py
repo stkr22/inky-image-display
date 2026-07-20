@@ -16,6 +16,7 @@ from typing import Annotated
 import typer
 from inky_image_display_shared.logging import setup_logging
 
+from inky_image_display_sync.display import DisplayJobAPIClient, DisplayJobSyncService
 from inky_image_display_sync.gemini import GeminiSyncService
 from inky_image_display_sync.gemini.api_client import GeminiDisplayAPIClient
 from inky_image_display_sync.immich import ImmichDisplayAPIClient, ImmichSyncService
@@ -55,6 +56,12 @@ def gemini(
 ) -> None:
     """Run Gemini batch generation for due Gemini jobs (or all active with --all)."""
     asyncio.run(run_gemini_sync(dry_run, all_active=all_active))
+
+
+@app.command()
+def display() -> None:
+    """Claim due display jobs and generate their content (story + screens)."""
+    asyncio.run(run_display_sync())
 
 
 async def run_immich_sync(dry_run: bool, all_active: bool = False) -> None:
@@ -115,6 +122,20 @@ async def run_gemini_sync(dry_run: bool, all_active: bool = False) -> None:
 
         service = GeminiSyncService(api_client=api_client, logger=logger)
         await service.sync_jobs(all_active=all_active)
+    finally:
+        await api_client.aclose()
+
+
+async def run_display_sync() -> None:
+    """Run display-job content generation for claimed jobs."""
+    setup_logging()
+    logger = logging.getLogger("inky_image_display_sync")
+
+    api_config = APIClientConfig()  # ty: ignore[missing-argument]
+    api_client = DisplayJobAPIClient(config=api_config, logger=logger)
+    try:
+        service = DisplayJobSyncService(api_client=api_client, logger=logger)
+        await service.sync_jobs()
     finally:
         await api_client.aclose()
 

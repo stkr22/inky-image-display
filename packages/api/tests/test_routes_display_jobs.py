@@ -1,15 +1,17 @@
-"""Route-level tests for /api/display-jobs."""
+"""Route-level tests for /api/display-jobs (worker claim model)."""
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
 import pytest
-from inky_image_display_shared.models import MotdMessage, MotdScreen, PromptPreset
+from inky_image_display_shared.models import Image, ImageGroup, PromptPreset, SyncJobRun
 from inky_image_display_shared.motd import DEFAULT_MOTD_PROMPT
-from sqlmodel import select
+from inky_image_display_shared.time import utcnow
+from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 if TYPE_CHECKING:
@@ -33,6 +35,39 @@ def _create_job(client: TestClient, grid_id: str | None = None, name: str = "mor
     return response.json()
 
 
+async def _seed_group(
+    engine: AsyncEngine,
+    job_id: str,
+    grid_id: str,
+    *,
+    slotted: bool = True,
+) -> UUID:
+    """Insert a generated group with one screen image for slot (0, 0)."""
+    async with AsyncSession(engine) as session:
+        group = ImageGroup(
+            name="Bridge built",
+            target_grid_id=UUID(grid_id),
+            display_job_id=UUID(job_id),
+        )
+        session.add(group)
+        await session.flush()
+        session.add(
+            Image(
+                source_name="display-job",
+                storage_path=f"groups/{group.id}/{uuid4()}.jpg",
+                title="Bridge built",
+                original_width=1600,
+                original_height=1200,
+                group_id=group.id,
+                group_slot_row=0 if slotted else None,
+                group_slot_col=0 if slotted else None,
+            )
+        )
+        group_id = group.id
+        await session.commit()
+    return group_id
+
+
 class TestDisplayJobCrud:
     def test_create_and_get(self, client: TestClient) -> None:
         job = _create_job(client)
@@ -40,6 +75,7 @@ class TestDisplayJobCrud:
         assert job["content_prompt"] == DEFAULT_MOTD_PROMPT
         assert job["default_prompt"] == DEFAULT_MOTD_PROMPT
         assert job["target_grid_id"] is None
+        assert job["is_active"] is True
         assert job["slots"] == []
 
         fetched = client.get(f"/api/display-jobs/{job['id']}")
@@ -86,7 +122,7 @@ class TestDisplayJobCrud:
         assert body["source_mode"] == "knowledge"
         assert body["interval_minutes"] == 1440
         assert body["next_run_at"] is not None
-        assert body["slots"] == [{"row": 0, "col": 0, "parts": ["what", "why+takeaway", "qr"], "rotation_index": 0}]
+        assert body["slots"] == [{"row": 0, "col": 0, "parts": ["what", "why+takeaway", "qr"]}]
 
     def test_update_clear_interval_sets_manual_only(self, client: TestClient) -> None:
         job = _create_job(client)
@@ -94,6 +130,11 @@ class TestDisplayJobCrud:
         response = client.put(f"/api/display-jobs/{job['id']}", json={"clear_interval": True})
         assert response.json()["interval_minutes"] is None
         assert response.json()["next_run_at"] is None
+
+    def test_update_pause_and_resume(self, client: TestClient) -> None:
+        job = _create_job(client)
+        assert client.put(f"/api/display-jobs/{job['id']}", json={"is_active": False}).json()["is_active"] is False
+        assert client.put(f"/api/display-jobs/{job['id']}", json={"is_active": True}).json()["is_active"] is True
 
     def test_update_rejects_invalid_part(self, client: TestClient) -> None:
         job = _create_job(client)
@@ -137,59 +178,6 @@ class TestDisplayJobCrud:
         assert client.delete(f"/api/display-jobs/{job['id']}").status_code == 204
         assert client.get(f"/api/display-jobs/{job['id']}").status_code == 404
 
-    @pytest.mark.asyncio
-    async def test_slot_edits_resync_active_session(
-        self,
-        client: TestClient,
-        async_engine: AsyncEngine,
-        mock_mqtt: MagicMock,
-        mock_s3_service: MagicMock,
-        seed_device: Device,
-    ) -> None:
-        """Slot edits made while a session is active take effect immediately."""
-        mock_mqtt.is_connected = MagicMock(return_value=True)
-        grid_id = _create_grid(client, seed_device)
-        job = _create_job(client, grid_id)
-        client.put(f"/api/display-jobs/{job['id']}", json={"slots": [{"row": 0, "col": 0, "parts": ["what"]}]})
-        async with AsyncSession(async_engine) as session:
-            message = MotdMessage(
-                job_id=UUID(job["id"]),
-                status="ready",
-                headline="Bridge built",
-                what="A bridge.",
-                takeaway="Build bridges.",
-            )
-            session.add(message)
-            await session.commit()
-            await session.refresh(message)
-            session.add(
-                MotdScreen(
-                    message_id=message.id,
-                    part="what",
-                    width=1600,
-                    height=1200,
-                    is_portrait=False,
-                    storage_path=f"motd/{message.id}/what_1600x1200.jpg",
-                )
-            )
-            await session.commit()
-        assert client.post(f"/api/display-jobs/{job['id']}/display").status_code == 200
-        assert mock_mqtt.send_command.await_count == 1
-
-        response = client.put(
-            f"/api/display-jobs/{job['id']}",
-            json={"slots": [{"row": 0, "col": 0, "parts": ["takeaway"]}]},
-        )
-
-        assert response.status_code == 200
-        # The takeaway screen did not exist — rendered on demand and pushed.
-        assert mock_mqtt.send_command.await_count == 2
-        command = mock_mqtt.send_command.await_args.args[1]
-        assert command.image_path.endswith("takeaway_1600x1200.jpg")
-        mock_s3_service.upload_image.assert_called_once()
-        status = client.get(f"/api/grids/{grid_id}/display-status").json()
-        assert status["slots"][0]["current_part"] == "takeaway"
-
     def test_multiple_jobs_can_target_one_grid(self, client: TestClient, seed_device: Device) -> None:
         grid_id = _create_grid(client, seed_device)
         _create_job(client, grid_id)
@@ -197,20 +185,124 @@ class TestDisplayJobCrud:
         assert client.put(f"/api/display-jobs/{other['id']}", json={"target_grid_id": grid_id}).status_code == 200
 
 
-class TestDisplayJobActions:
-    def test_generate_without_api_key_returns_503(self, client: TestClient, mock_settings: MagicMock) -> None:
-        mock_settings.gemini_api_key = None
-        job = _create_job(client)
-        response = client.post(f"/api/display-jobs/{job['id']}/generate")
-        assert response.status_code == 503
+class TestClaimDue:
+    def test_claim_returns_due_job_with_resolved_slots(self, client: TestClient, seed_device: Device) -> None:
+        grid_id = _create_grid(client, seed_device)
+        # Creating with an interval makes the job due immediately (a PUT
+        # would rebase the schedule into the future instead).
+        job = client.post(
+            "/api/display-jobs", json={"name": "due-job", "target_grid_id": grid_id, "interval_minutes": 1440}
+        ).json()
+        client.put(
+            f"/api/display-jobs/{job['id']}",
+            json={"slots": [{"row": 0, "col": 0, "parts": ["what", "qr"]}]},
+        )
 
-    def test_display_without_message_returns_409(self, client: TestClient, seed_device: Device) -> None:
+        claims = client.post("/api/display-jobs/claim-due").json()
+        assert len(claims) == 1
+        claim = claims[0]
+        assert claim["id"] == job["id"]
+        assert claim["target_grid_id"] == grid_id
+        assert claim["slots"] == [
+            {
+                "row": 0,
+                "col": 0,
+                "parts": ["what", "qr"],
+                "device_id": seed_device.device_id,
+                "width": 1600,
+                "height": 1200,
+                "is_portrait": False,
+            }
+        ]
+        # Lease semantics: a second claim hands out nothing.
+        assert client.post("/api/display-jobs/claim-due").json() == []
+
+    def test_job_without_grid_is_never_due(self, client: TestClient) -> None:
+        job = _create_job(client)
+        client.put(f"/api/display-jobs/{job['id']}", json={"interval_minutes": 60})
+        assert client.post("/api/display-jobs/claim-due").json() == []
+
+    def test_paused_job_is_not_due_but_run_now_wins(self, client: TestClient, seed_device: Device) -> None:
         grid_id = _create_grid(client, seed_device)
         job = _create_job(client, grid_id)
-        client.put(f"/api/display-jobs/{job['id']}", json={"slots": [{"row": 0, "col": 0, "parts": ["what"]}]})
+        client.put(f"/api/display-jobs/{job['id']}", json={"interval_minutes": 60, "is_active": False})
+        assert client.post("/api/display-jobs/claim-due").json() == []
+
+        assert client.post(f"/api/display-jobs/{job['id']}/run-now").status_code == 200
+        claims = client.post("/api/display-jobs/claim-due").json()
+        assert [c["id"] for c in claims] == [job["id"]]
+
+    def test_run_now_without_grid_returns_409(self, client: TestClient) -> None:
+        job = _create_job(client)
+        assert client.post(f"/api/display-jobs/{job['id']}/run-now").status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_claim_records_running_run_row(
+        self, client: TestClient, async_engine: AsyncEngine, seed_device: Device
+    ) -> None:
+        grid_id = _create_grid(client, seed_device)
+        job = client.post(
+            "/api/display-jobs", json={"name": "due-job", "target_grid_id": grid_id, "interval_minutes": 60}
+        ).json()
+        client.post("/api/display-jobs/claim-due")
+
+        async with AsyncSession(async_engine) as session:
+            runs = (await session.exec(select(SyncJobRun).where(col(SyncJobRun.job_id) == UUID(job["id"])))).all()
+        assert len(runs) == 1
+        assert runs[0].status == "running"
+        assert runs[0].finished_at is None
+
+    def test_report_completes_running_row_and_clears_run_now(self, client: TestClient, seed_device: Device) -> None:
+        grid_id = _create_grid(client, seed_device)
+        job = _create_job(client, grid_id)
+        client.post(f"/api/display-jobs/{job['id']}/run-now")
+        client.post("/api/display-jobs/claim-due")
+
+        started = utcnow()
+        report = {
+            "job_type": "display",
+            "job_id": job["id"],
+            "job_name": job["name"],
+            "status": "success",
+            "started_at": started.isoformat(),
+            "finished_at": (started + timedelta(minutes=1)).isoformat(),
+            "images_added": 3,
+        }
+        assert client.post("/api/sync-runs", json=report).status_code == 201
+
+        runs = client.get("/api/sync-runs", params={"job_type": "display", "job_id": job["id"]}).json()
+        assert len(runs) == 1
+        assert runs[0]["status"] == "success"
+        assert runs[0]["images_added"] == 3
+        assert client.get(f"/api/display-jobs/{job['id']}").json()["run_requested_at"] is None
+
+
+class TestRenderPart:
+    def test_renders_text_part(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/display-jobs/render-part",
+            json={"part": "what", "width": 640, "height": 400, "what": "A bridge was built."},
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/jpeg"
+        assert len(response.content) > 0
+
+    def test_missing_content_returns_422(self, client: TestClient) -> None:
+        response = client.post("/api/display-jobs/render-part", json={"part": "what", "width": 640, "height": 400})
+        assert response.status_code == 422
+
+    def test_image_part_is_rejected(self, client: TestClient) -> None:
+        response = client.post("/api/display-jobs/render-part", json={"part": "image", "width": 640, "height": 400})
+        assert response.status_code == 422
+
+
+class TestDisplayJobActions:
+    def test_display_without_group_returns_409(self, client: TestClient, seed_device: Device) -> None:
+        grid_id = _create_grid(client, seed_device)
+        job = _create_job(client, grid_id)
         response = client.post(f"/api/display-jobs/{job['id']}/display")
         assert response.status_code == 409
-        assert "No generated message" in response.json()["detail"]
+        assert "No generated group" in response.json()["detail"]
 
     def test_display_without_grid_returns_409(self, client: TestClient) -> None:
         job = _create_job(client)
@@ -218,71 +310,71 @@ class TestDisplayJobActions:
         assert response.status_code == 409
         assert "no target grid" in response.json()["detail"]
 
-    def test_display_unknown_message_returns_409(self, client: TestClient, seed_device: Device) -> None:
-        grid_id = _create_grid(client, seed_device)
-        job = _create_job(client, grid_id)
-        response = client.post(
-            f"/api/display-jobs/{job['id']}/display",
-            json={"message_id": "00000000-0000-0000-0000-000000000001"},
-        )
-        assert response.status_code == 409
-        assert "no longer exists" in response.json()["detail"]
-
-    def test_release_session_is_idempotent(self, client: TestClient, seed_device: Device) -> None:
-        grid_id = _create_grid(client, seed_device)
-        response = client.post(f"/api/grids/{grid_id}/release-session")
-        assert response.status_code == 200
-        assert response.json() == {"status": "released"}
-
-    def test_status_inactive(self, client: TestClient, seed_device: Device) -> None:
-        grid_id = _create_grid(client, seed_device)
-        response = client.get(f"/api/grids/{grid_id}/display-status")
-        assert response.status_code == 200
-        body = response.json()
-        assert body["active"] is False
-        assert body["slots"] == []
-
-    def test_messages_list_empty(self, client: TestClient) -> None:
-        job = _create_job(client)
-        response = client.get(f"/api/display-jobs/{job['id']}/messages")
-        assert response.status_code == 200
-        assert response.json() == []
-
     @pytest.mark.asyncio
-    async def test_grid_manual_display_blocked_during_session(
+    async def test_display_pushes_latest_group(
         self,
         client: TestClient,
         async_engine: AsyncEngine,
         mock_mqtt: MagicMock,
         seed_device: Device,
     ) -> None:
-        """While a job session holds the grid, manual pool pushes 409."""
         mock_mqtt.is_connected = MagicMock(return_value=True)
         grid_id = _create_grid(client, seed_device)
         job = _create_job(client, grid_id)
-        client.put(f"/api/display-jobs/{job['id']}", json={"slots": [{"row": 0, "col": 0, "parts": ["what"]}]})
-        async with AsyncSession(async_engine) as session:
-            message = MotdMessage(job_id=UUID(job["id"]), status="ready", headline="x", what="y")
-            session.add(message)
-            await session.commit()
-            await session.refresh(message)
-            session.add(
-                MotdScreen(
-                    message_id=message.id,
-                    part="what",
-                    width=1600,
-                    height=1200,
-                    is_portrait=False,
-                    storage_path=f"motd/{message.id}/what_1600x1200.jpg",
-                )
-            )
-            await session.commit()
+        group_id = await _seed_group(async_engine, job["id"], grid_id)
+
+        response = client.post(f"/api/display-jobs/{job['id']}/display")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["group_id"] == str(group_id)
+        assert body["displayed"] == [seed_device.device_id]
+        assert mock_mqtt.send_command.await_count == 1
+
+        status = client.get(f"/api/grids/{grid_id}/display-status").json()
+        assert status["group_id"] == str(group_id)
+        assert status["hold_until"] is not None
+        assert status["slots"][0]["device_id"] == seed_device.device_id
+
+    @pytest.mark.asyncio
+    async def test_groups_history_lists_generated_groups(
+        self, client: TestClient, async_engine: AsyncEngine, seed_device: Device
+    ) -> None:
+        grid_id = _create_grid(client, seed_device)
+        job = _create_job(client, grid_id)
+        assert client.get(f"/api/display-jobs/{job['id']}/groups").json() == []
+
+        group_id = await _seed_group(async_engine, job["id"], grid_id)
+        groups = client.get(f"/api/display-jobs/{job['id']}/groups").json()
+        assert [g["id"] for g in groups] == [str(group_id)]
+        assert len(groups[0]["images"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_release_resumes_queue_immediately(
+        self,
+        client: TestClient,
+        async_engine: AsyncEngine,
+        mock_mqtt: MagicMock,
+        seed_device: Device,
+    ) -> None:
+        """Release updates the panels right away instead of waiting a cycle."""
+        mock_mqtt.is_connected = MagicMock(return_value=True)
+        grid_id = _create_grid(client, seed_device)
+        job = _create_job(client, grid_id)
+        await _seed_group(async_engine, job["id"], grid_id)
         assert client.post(f"/api/display-jobs/{job['id']}/display").status_code == 200
+        pushes_before = mock_mqtt.send_command.await_count
 
-        response = client.post(f"/api/grids/{grid_id}/next")
-        assert response.status_code == 409
-        assert "display job session" in response.json()["detail"]
+        assert client.post(f"/api/grids/{grid_id}/release").status_code == 200
+        # The only queue content is the group itself, so release replays it —
+        # the point is that a push happened immediately.
+        assert mock_mqtt.send_command.await_count >= pushes_before
+        status = client.get(f"/api/grids/{grid_id}/display-status").json()
+        assert status["hold_until"] is None
 
-        # After release, the grid is usable again (404 = empty pool, not 409).
-        client.post(f"/api/grids/{grid_id}/release-session")
-        assert client.post(f"/api/grids/{grid_id}/next").status_code == 404
+    def test_status_idle(self, client: TestClient, seed_device: Device) -> None:
+        grid_id = _create_grid(client, seed_device)
+        response = client.get(f"/api/grids/{grid_id}/display-status")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["group_id"] is None
+        assert [slot["device_id"] for slot in body["slots"]] == [seed_device.device_id]

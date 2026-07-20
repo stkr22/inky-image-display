@@ -18,7 +18,7 @@ from uuid import uuid4
 
 import pytest
 from inky_image_display_api.services.generation_service import generate_and_publish
-from inky_image_display_api.services.rotation import _rotate_due_devices, _rotate_single_grid
+from inky_image_display_api.services.rotation import _advance_single_grid, _rotate_due_devices
 from inky_image_display_shared.models import Device, DeviceProfile, Grid, GridDevice, Image, PromptBlock, PromptPreset
 from inky_image_display_shared.time import utcnow
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -162,7 +162,7 @@ class TestGridRotationGate:
         grid_id = grid.id
         await _add(async_engine, grid, member, placement)
 
-        await _rotate_single_grid(_app(async_engine, mock_settings, mock_s3_service, mock_mqtt), grid_id)
+        await _advance_single_grid(_app(async_engine, mock_settings, mock_s3_service, mock_mqtt), grid_id)
 
         # Gate fires before any rendering or pushing happens.
         mock_s3_service.upload_image.assert_not_called()
@@ -186,15 +186,15 @@ class TestGridRotationGate:
         await _add(async_engine, grid, member, placement)
 
         # The stale member must no longer pause the grid: the tick has to get
-        # past the health gate and reach image selection (which the paused
+        # past the health gate and reach queue advancement (which the paused
         # case never does).
         with patch(
-            "inky_image_display_api.services.rotation.grid_service.get_next_grid_image",
+            "inky_image_display_api.services.rotation.queue_service.advance_grid",
             new=AsyncMock(return_value=None),
-        ) as pick:
-            await _rotate_single_grid(_app(async_engine, mock_settings, mock_s3_service, mock_mqtt), grid_id)
+        ) as advance:
+            await _advance_single_grid(_app(async_engine, mock_settings, mock_s3_service, mock_mqtt), grid_id)
 
-        pick.assert_awaited_once()
+        advance.assert_awaited_once()
 
 
 class TestGenAiGate:

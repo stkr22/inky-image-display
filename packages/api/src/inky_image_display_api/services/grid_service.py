@@ -11,6 +11,7 @@ the normal MQTT ``DisplayCommand`` flow.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from io import BytesIO
 from typing import TYPE_CHECKING
 
@@ -65,6 +66,41 @@ def oriented_pixel_dims(profile: DeviceProfile, orientation: str) -> tuple[int, 
     if orientation == "portrait":
         return profile.height, profile.width
     return profile.width, profile.height
+
+
+@dataclass(frozen=True)
+class SlotTarget:
+    """A resolved grid slot: its device and oriented panel dimensions."""
+
+    device: Device
+    width: int
+    height: int
+    is_portrait: bool
+
+
+async def resolve_slot_targets(session: AsyncSession, grid_id: UUID) -> dict[tuple[int, int], SlotTarget]:
+    """Map each grid slot (row, col) to its device and panel dimensions."""
+    placements = await session.exec(select(GridDevice).where(col(GridDevice.grid_id) == grid_id))
+    targets: dict[tuple[int, int], SlotTarget] = {}
+    for placement in placements.all():
+        device_result = await session.exec(select(Device).where(col(Device.id) == placement.device_id))
+        device = device_result.first()
+        if device is None:
+            continue
+        profile_result = await session.exec(
+            select(DeviceProfile).where(col(DeviceProfile.id) == device.device_profile_id)
+        )
+        profile = profile_result.first()
+        if profile is None:
+            continue
+        width, height = oriented_pixel_dims(profile, device.display_orientation)
+        targets[(placement.row, placement.col)] = SlotTarget(
+            device=device,
+            width=width,
+            height=height,
+            is_portrait=device.display_orientation == "portrait",
+        )
+    return targets
 
 
 async def list_grid_devices(session: AsyncSession, grid_id: UUID) -> list[GridDevice]:
@@ -361,25 +397,3 @@ async def release_grid(session: AsyncSession, grid: Grid) -> None:
             device.claimed_by_grid_id = None
             session.add(device)
     await session.commit()
-
-
-async def get_next_grid_image(session: AsyncSession, grid: Grid) -> Image | None:
-    """Pick the next image from the grid's pool (FIFO).
-
-    Mirrors solo per-device rotation: never-shown images first, then by
-    least-recently-shown.
-    """
-    query = (
-        select(Image)
-        .where(
-            col(Image.target_grid_id) == grid.id,
-            # The operator veto applies to grid pools like it does to solo
-            # rotation — "don't show again" must stick even when the image
-            # was curated into a grid.
-            col(Image.excluded_from_rotation).is_(False),
-        )
-        .order_by(col(Image.last_displayed_at).asc().nullsfirst())
-        .limit(1)
-    )
-    result = await session.exec(query)
-    return result.first()

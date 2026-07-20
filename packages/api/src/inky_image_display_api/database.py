@@ -14,9 +14,8 @@ from inky_image_display_shared.models import (
     Grid,
     GridDevice,
     Image,
+    ImageGroup,
     ImmichSyncJob,
-    MotdMessage,
-    MotdScreen,
     PromptBlock,
     PromptPreset,
     SyncJobRun,
@@ -68,12 +67,11 @@ async def create_tables(engine: AsyncEngine) -> None:
             GridDevice.__table__,  # ty: ignore[unresolved-attribute]
             ImmichSyncJob.__table__,  # ty: ignore[unresolved-attribute]
             GeminiSyncJob.__table__,  # ty: ignore[unresolved-attribute]
-            # display_jobs precedes motd_messages: the message FK references
+            # display_jobs precedes image_groups: the group FK references
             # it, and referenced tables must exist at DDL time.
             DisplayJob.__table__,  # ty: ignore[unresolved-attribute]
             DisplayJobSlot.__table__,  # ty: ignore[unresolved-attribute]
-            MotdMessage.__table__,  # ty: ignore[unresolved-attribute]
-            MotdScreen.__table__,  # ty: ignore[unresolved-attribute]
+            ImageGroup.__table__,  # ty: ignore[unresolved-attribute]
             SyncJobRun.__table__,  # ty: ignore[unresolved-attribute]
             GenerationTask.__table__,  # ty: ignore[unresolved-attribute]
         ]

@@ -22,6 +22,7 @@ from inky_image_display_api.routes import (
     eink_preview,
     gemini_sync_jobs,
     grids,
+    image_groups,
     images,
     images_process,
     prompt_blocks,
@@ -41,9 +42,8 @@ from inky_image_display_shared.models import (
     Grid,
     GridDevice,
     Image,
+    ImageGroup,
     ImmichSyncJob,
-    MotdMessage,
-    MotdScreen,
     PromptBlock,
     PromptPreset,
     SyncJobRun,
@@ -78,8 +78,7 @@ async def async_engine() -> AsyncIterator[AsyncEngine]:
             GeminiSyncJob.__table__,  # ty: ignore[unresolved-attribute]
             DisplayJob.__table__,  # ty: ignore[unresolved-attribute]
             DisplayJobSlot.__table__,  # ty: ignore[unresolved-attribute]
-            MotdMessage.__table__,  # ty: ignore[unresolved-attribute]
-            MotdScreen.__table__,  # ty: ignore[unresolved-attribute]
+            ImageGroup.__table__,  # ty: ignore[unresolved-attribute]
             SyncJobRun.__table__,  # ty: ignore[unresolved-attribute]
             GenerationTask.__table__,  # ty: ignore[unresolved-attribute]
         ]:
@@ -205,6 +204,7 @@ def test_app(
     app.include_router(prompt_blocks.router)
     app.include_router(gemini_sync_jobs.router)
     app.include_router(display_jobs.router)
+    app.include_router(image_groups.router)
 
     return app
 

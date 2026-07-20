@@ -27,6 +27,7 @@ from inky_image_display_api.routes import (
     gemini_sync_jobs,
     genai_generate,
     grids,
+    image_groups,
     images,
     images_process,
     immich_browse,
@@ -95,6 +96,7 @@ app.add_middleware(SessionAuthMiddleware)
 app.include_router(health_router)
 app.include_router(auth.router)
 app.include_router(images.router)
+app.include_router(image_groups.router)
 app.include_router(images_process.router)
 # eink_preview shares the /api/images prefix; registered after images so
 # its literal /eink-preview POST still wins over any dynamic sibling.

@@ -55,6 +55,10 @@ class ImageResponse(BaseModel):
     created_at: UtcDatetime
     tags: str | None
     target_grid_id: UUID | None = None
+    group_id: UUID | None = None
+    group_slot_row: int | None = None
+    group_slot_col: int | None = None
+    queue_position: int = 0
 
 
 class ImageStatsResponse(BaseModel):
@@ -189,7 +193,11 @@ class SyncJobResponse(BaseModel):
 
 
 class SyncJobRunResponse(BaseModel):
-    """One recorded worker run of a sync job (Immich or Gemini)."""
+    """One recorded worker run of a job (Immich, Gemini or display).
+
+    ``status`` is ``running`` from claim until the worker's report lands;
+    ``finished_at`` is ``None`` for running rows.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -199,7 +207,7 @@ class SyncJobRunResponse(BaseModel):
     job_name: str
     status: str
     started_at: UtcDatetime
-    finished_at: UtcDatetime
+    finished_at: UtcDatetime | None
     images_added: int
     images_skipped: int
     images_deleted: int
@@ -308,9 +316,9 @@ class GridResponse(BaseModel):
     display_weekday_mask: int = 127
     display_timezone: str = "UTC"
     display_duration_seconds: int | None = None
-    active_message_id: UUID | None = None
-    active_since: UtcDatetime | None = None
-    active_expires_at: UtcDatetime | None = None
+    current_group_id: UUID | None = None
+    current_frame: int = 0
+    hold_until: UtcDatetime | None = None
     last_displayed_on: date | None = None
     created_at: UtcDatetime
     updated_at: UtcDatetime
@@ -377,11 +385,10 @@ class DisplayJobSlotResponse(BaseModel):
     row: int
     col: int
     parts: list[str]
-    rotation_index: int
 
 
 class DisplayJobResponse(BaseModel):
-    """A display job's configuration plus live session state."""
+    """A display job's configuration and worker schedule state."""
 
     id: UUID
     name: str
@@ -394,76 +401,110 @@ class DisplayJobResponse(BaseModel):
     source_mode: str
     image_preset_id: UUID | None
     text_model_name: str
+    is_active: bool
     interval_minutes: int | None
     next_run_at: UtcDatetime | None
     last_run_at: UtcDatetime | None
+    run_requested_at: UtcDatetime | None
     created_at: UtcDatetime
     updated_at: UtcDatetime
     slots: list[DisplayJobSlotResponse]
 
 
-class MotdScreenResponse(BaseModel):
-    """One pre-rendered screen of a generated message."""
+class DisplayJobClaimSlot(BaseModel):
+    """A slot with its resolved panel target, handed to the worker at claim."""
 
-    model_config = ConfigDict(from_attributes=True)
-
-    id: UUID
-    part: str
+    row: int
+    col: int
+    parts: list[str]
+    device_id: str
     width: int
     height: int
     is_portrait: bool
-    storage_path: str
-    created_at: UtcDatetime
 
 
-class MotdMessageResponse(BaseModel):
-    """A generated MOTD story with its rendered screens."""
+class DisplayJobClaim(BaseModel):
+    """One claimed display job with its config and resolved slots.
+
+    No run id is handed out: the claim records a ``running`` run row and
+    the worker's posted report completes the newest one for the job.
+    """
+
+    id: UUID
+    name: str
+    target_grid_id: UUID
+    content_prompt: str
+    source_mode: str
+    image_preset_id: UUID | None
+    text_model_name: str
+    slots: list[DisplayJobClaimSlot]
+
+
+# --- Image groups / grid queue ---
+
+
+class ImageGroupResponse(BaseModel):
+    """An image group with its member images."""
 
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    status: str
-    error: str | None
-    headline: str | None
-    what: str | None
-    why: str | None
-    when_text: str | None
-    takeaway: str | None
-    image_subject: str | None
+    name: str
+    target_grid_id: UUID | None
+    display_job_id: UUID | None
+    description: str | None
     source_url: str | None
-    source_title: str | None
-    source_mode: str
-    displayed_at: UtcDatetime | None
+    queue_position: int
+    last_displayed_at: UtcDatetime | None
     created_at: UtcDatetime
-    screens: list[MotdScreenResponse] = []
+    images: list[ImageResponse] = []
 
 
-class DisplayJobSlotStatus(BaseModel):
-    """Live per-slot state while a job session is active."""
+class GridQueueEntry(BaseModel):
+    """One upcoming entry in a grid's content queue (group or loose image).
+
+    Entries are returned in predicted playback order — the rank *is* the
+    list index, so the stored sort key is not exposed.
+    """
+
+    kind: str  # "group" | "image"
+    id: UUID
+    name: str | None
+    last_displayed_at: UtcDatetime | None
+    # Groups: number of refresh frames the group occupies; images: 1.
+    frame_count: int
+    # Thumbnail source (a member image for groups, the image itself otherwise).
+    storage_path: str | None
+    is_current: bool = False
+
+
+class GridSlotStatus(BaseModel):
+    """What one panel of the grid is currently showing."""
 
     row: int
     col: int
     device_id: str
     is_online: bool
-    current_part: str | None
+    current_title: str | None
 
 
-class DisplayJobStatusResponse(BaseModel):
-    """Whether a job session is active and what each slot shows."""
+class GridContentStatus(BaseModel):
+    """The grid's current queue playback state."""
 
-    active: bool
-    message_id: UUID | None
-    headline: str | None
-    active_since: UtcDatetime | None
-    active_expires_at: UtcDatetime | None
-    slots: list[DisplayJobSlotStatus]
+    group_id: UUID | None
+    group_name: str | None
+    frame: int
+    frame_count: int
+    hold_until: UtcDatetime | None
+    displayed_since: UtcDatetime | None
+    slots: list[GridSlotStatus]
 
 
-class DisplayJobDisplayResult(BaseModel):
-    """Per-device outcome of ``POST /api/display-jobs/{id}/display``."""
+class GroupDisplayResult(BaseModel):
+    """Per-device outcome of showing a group on its grid."""
 
-    message_id: UUID
-    headline: str | None
+    group_id: UUID
+    name: str | None
     displayed: list[str]
     offline: list[str]
     skipped_no_content: list[str]
