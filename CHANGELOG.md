@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.14.1](https://github.com/stkr22/inky-image-display/compare/v5.14.0...v5.14.1) (2026-07-20)
+
+
+### Bug Fixes
+
+* make curated groups panel spreads, not canvas sequences ([2dcd5e0](https://github.com/stkr22/inky-image-display/commit/2dcd5e0c55e11443d4ba9002aa7b3860039e9348))
+* make curated groups panel spreads, not canvas sequences ([8c62789](https://github.com/stkr22/inky-image-display/commit/8c6278907f9d0138a669ada8e3a2cc525f4863a7))
+
 ## [5.14.0](https://github.com/stkr22/inky-image-display/compare/v5.13.0...v5.14.0) (2026-07-20)
 
 
