@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.6.0](https://github.com/stkr22/inky-image-display/compare/controller-v4.5.2...controller-v4.6.0) (2026-07-21)
+
+
+### Features
+
+* anchor job schedules to a fixed interval grid ([1f4e02a](https://github.com/stkr22/inky-image-display/commit/1f4e02a8aef89ef05df06fd5f0c4aa9631bdcf62))
+* anchor job schedules to a fixed interval grid ([0762dbb](https://github.com/stkr22/inky-image-display/commit/0762dbb55c57c8ec39566af532c8fc1148679ab4))
+
 ## [4.5.2](https://github.com/stkr22/inky-image-display/compare/controller-v4.5.1...controller-v4.5.2) (2026-07-11)
 
 

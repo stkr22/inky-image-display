@@ -1,5 +1,18 @@
 # Changelog
 
+## [7.0.0](https://github.com/stkr22/inky-image-display/compare/v6.0.0...v7.0.0) (2026-07-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* replace CronJob polling with an MQTT-woken worker and cron schedules
+
+### Features
+
+* anchor job schedules to a fixed interval grid ([1f4e02a](https://github.com/stkr22/inky-image-display/commit/1f4e02a8aef89ef05df06fd5f0c4aa9631bdcf62))
+* anchor job schedules to a fixed interval grid ([0762dbb](https://github.com/stkr22/inky-image-display/commit/0762dbb55c57c8ec39566af532c8fc1148679ab4))
+* replace CronJob polling with an MQTT-woken worker and cron schedules ([b83bc1c](https://github.com/stkr22/inky-image-display/commit/b83bc1c14154e7aab7f91dc8c5b7ad024aaf690d))
+
 ## [6.0.0](https://github.com/stkr22/inky-image-display/compare/v5.14.1...v6.0.0) (2026-07-21)
 
 
