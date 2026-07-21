@@ -309,15 +309,12 @@ class GridResponse(BaseModel):
     height_cm: float
     current_image_id: UUID | None
     displayed_since: UtcDatetime | None
-    scheduled_next_at: UtcDatetime
-    refresh_interval_seconds: int | None = None
     display_schedule_enabled: bool = False
     display_time: str = "08:00"
     display_weekday_mask: int = 127
     display_timezone: str = "UTC"
     display_duration_seconds: int | None = None
     current_group_id: UUID | None = None
-    current_frame: int = 0
     hold_until: UtcDatetime | None = None
     last_displayed_on: date | None = None
     created_at: UtcDatetime
@@ -329,14 +326,18 @@ class GridResponse(BaseModel):
 
 
 class ScheduleUpcomingEntry(BaseModel):
-    """One row in the merged upcoming-refresh queue (device or grid)."""
+    """One row in the merged upcoming-refresh queue (device or grid).
+
+    Device rows carry their rotation interval; grid rows are one-shot
+    scheduled displays, so their interval fields are None.
+    """
 
     kind: str
     id: UUID
     name: str
     scheduled_next_at: UtcDatetime
-    refresh_interval_seconds: int | None
-    effective_interval_seconds: int
+    refresh_interval_seconds: int | None = None
+    effective_interval_seconds: int | None = None
 
 
 # --- App settings ---
@@ -471,9 +472,6 @@ class GridQueueEntry(BaseModel):
     id: UUID
     name: str | None
     last_displayed_at: UtcDatetime | None
-    # Groups: longest per-slot rotation (0 = no panel assignments,
-    # skipped by playback); images: 1.
-    frame_count: int
     # Thumbnail source (a member image for groups, the image itself otherwise).
     storage_path: str | None
     is_current: bool = False
@@ -494,8 +492,6 @@ class GridContentStatus(BaseModel):
 
     group_id: UUID | None
     group_name: str | None
-    frame: int
-    frame_count: int
     hold_until: UtcDatetime | None
     displayed_since: UtcDatetime | None
     slots: list[GridSlotStatus]

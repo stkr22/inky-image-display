@@ -190,17 +190,14 @@ export interface Grid {
   height_cm: number
   current_image_id: string | null
   displayed_since: string | null
-  scheduled_next_at: string
-  refresh_interval_seconds: number | null
   display_schedule_enabled: boolean
   display_time: string
   display_weekday_mask: number
   display_timezone: string
   display_duration_seconds: number | null
   // Queue playback state: the group currently on the panels (if any) and
-  // whether it is held (scheduled display / manual show).
+  // until when it is held (scheduled display / manual show).
   current_group_id: string | null
-  current_frame: number
   hold_until: string | null
   devices: GridPlacement[] | null
 }
@@ -210,8 +207,9 @@ export interface ScheduleEntry {
   id: string
   name: string
   scheduled_next_at: string
+  // Device rows only; grid rows are one-shot scheduled displays.
   refresh_interval_seconds: number | null
-  effective_interval_seconds: number
+  effective_interval_seconds: number | null
 }
 
 export interface AuthMe {
@@ -322,8 +320,6 @@ export interface GridQueueEntry {
   id: string
   name: string | null
   last_displayed_at: string | null
-  // Refresh frames the entry occupies (groups rotate through frames).
-  frame_count: number
   storage_path: string | null
   is_current: boolean
 }
@@ -339,8 +335,6 @@ export interface GridSlotStatus {
 export interface GridContentStatus {
   group_id: string | null
   group_name: string | null
-  frame: number
-  frame_count: number
   hold_until: string | null
   displayed_since: string | null
   slots: GridSlotStatus[]

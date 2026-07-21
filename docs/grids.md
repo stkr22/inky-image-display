@@ -9,16 +9,22 @@ need no grid-specific code.
 Grids are also the universal target for **display jobs** (see
 [motd.md](motd.md)) and **image groups**: every kind of content flows
 through one **content queue** per grid. An image group is a **panel
-spread**: each member image is assigned a grid slot and all panels update
-together — worker runs and operators produce the same shape (cover-cropping
-*one* image across all panels is not a group; that stays a loose pool
-image). The queue interleaves groups with loose pool images; fresh
-(never-shown) entries play first in the operator's order,
-then the least recently shown entry replays. Each grid additionally
-carries a daily display schedule (`display_*` columns: enabled, "HH:MM"
-local time, weekday mask, IANA timezone, duration) that front-runs the
-queue with the newest generated group and holds it. A single display
-participates in that system by living in a one-panel grid.
+spread**: each member image is assigned a grid slot (exactly one image per
+slot — a group is a frozen set, nothing rotates within it) and all panels
+update together — worker runs and operators produce the same shape
+(cover-cropping *one* image across all panels is not a group; that stays a
+loose pool image). The queue interleaves groups with loose pool images;
+fresh (never-shown) entries play first in the operator's order, then the
+least recently shown entry replays.
+
+**Grids do not rotate on an interval.** A grid shows content only when its
+daily display schedule fires (`display_*` columns: enabled, "HH:MM" local
+time, weekday mask, IANA timezone, duration) or when an operator acts
+("show now" / "next"). Each display steps the queue **one entry** forward
+and holds it for `display_duration_seconds` (or until an explicit release
+when unset); when the hold expires the member panels are released back to
+their own solo rotation. A single display participates in that system by
+living in a one-panel grid.
 
 ## Mental model
 
@@ -113,18 +119,19 @@ The mechanism is the `devices.claimed_by_grid_id` column:
 - Non-NULL = the named grid currently owns it (via its content queue);
   solo rotation skips this device until the claim is released.
 
-Claims end by removing the device from the layout, or via
-`POST /api/grids/{id}/release` when the grid's queue is empty (with queue
-content, release instead resumes the queue immediately — see below). A
-manual image push while a group is showing is an operator override: the
-held group is dropped and the queue resumes from there.
+Claims end automatically when the display hold expires, or via
+`POST /api/grids/{id}/release` — both hand the panels back to solo
+rotation with a jittered rejoin so simultaneous releases don't flash in
+lockstep. Removing the device from the layout also releases it. A manual
+image push while a group is showing is an operator override: the held
+group is dropped and the pushed image is held instead.
 
 ### Explicit image-to-grid assignment
 
 An `Image` row has an optional `target_grid_id`. Solo per-device rotation
-excludes images with that field set; the grid rotation pool is exactly the
+excludes images with that field set; the grid's queue pool is exactly the
 set of images carrying its id. Images with a `group_id` leave both solo
-and pool rotation — their group plays as one queue entry instead.
+rotation and the pool — their group plays as one queue entry instead.
 
 A many-to-many table (images ↔ grids) was considered and rejected on the
 grounds that grids tend to be long-lived and image curation is per-grid in
@@ -139,15 +146,15 @@ All under `/api/grids`.
 | `GET /`                             | List grids (`?include_devices=true` to embed)        |
 | `POST /`                            | Create grid from a tile layout (`name`, `rows`)      |
 | `GET /{id}`                         | Detail, includes placements with slot addresses      |
-| `PUT /{id}`                         | Rename, change cadence, or replace the layout        |
+| `PUT /{id}`                         | Rename, edit the display schedule, or replace the layout |
 | `DELETE /{id}`                      | Delete; releases claims; clears `target_grid_id`     |
 | `POST /{id}/display` (`{image_id}`) | Render slices + push to every member device          |
 | `POST /{id}/display-group` (`{group_id}`) | Show a group now, held per the grid's duration |
-| `POST /{id}/next`                   | Advance the queue one step now                       |
-| `POST /{id}/release`                | End a held group; resume the queue immediately (jittered next refresh); with an empty queue, release devices to solo |
+| `POST /{id}/next`                   | Show the next queue entry now (empty queue: release the panels) |
+| `POST /{id}/release`                | End the display; panels return to (jittered) solo rotation |
 | `GET /{id}/queue`                   | The queue in predicted playback order                |
 | `PUT /{id}/queue`                   | Persist the operator's queue order (groups + images share one sequence) |
-| `GET /{id}/display-status`          | Current group/frame/hold + per-panel content         |
+| `GET /{id}/display-status`          | Current group/hold + per-panel content               |
 
 `rows` is a list of lists of device UUIDs — the visual arrangement. The
 response embeds each placement's `row`/`col` slot plus its computed
@@ -208,20 +215,16 @@ curl -X POST localhost:8000/api/grids/<grid_id>/release
 
 ## Operational notes
 
-- **The grid's `scheduled_next_at` drives the rotation loop.** It's bumped
-  whenever new content is pushed; the rotation tick (every 30 s) advances
-  the grid's queue when due. A group's slot-assigned images show
-  simultaneously, one per panel; a slot holding several images rotates one
-  step per refresh, so a group occupies one refresh per frame (longest
-  slot). Images without a slot assignment are not shown (a group with none
-  is skipped entirely); assign panels in the Groups overview on the Images
-  page. On release the panels update
-  immediately and the *next* refresh is randomly jittered so several grids
-  released together don't flash in lockstep every interval afterwards.
-- **Member devices stay claimed across image transitions.** A grid pulling
-  its next image does *not* release devices between images. Use
-  `POST /release` (or edit the layout / delete the grid) to return them to
-  solo rotation.
+- **The queue tick (every 30 s) drives grids.** It starts the scheduled
+  daily display when due — one queue entry, shown and held — and releases
+  the panels when a hold expires. A group's slot-assigned images show
+  simultaneously, one per panel; images without a slot assignment are not
+  shown (a group with none is skipped entirely); assign panels in the
+  Groups overview on the Images page.
+- **Panels are only claimed while content is held.** When the hold expires
+  (or on `POST /release`) the member devices return to solo rotation with
+  a jittered rejoin, so several grids releasing together don't flash in
+  lockstep afterwards.
 - **Controllers are unchanged.** No grid-specific code lives on the device
   side; a controller just receives a normal display command with a path
   pointing into the `grids/` prefix.

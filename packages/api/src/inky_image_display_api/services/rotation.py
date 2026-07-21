@@ -4,13 +4,12 @@ import asyncio
 import logging
 
 from fastapi import FastAPI
-from inky_image_display_shared.models import Device, Grid
+from inky_image_display_shared.models import Device
 from inky_image_display_shared.time import utcnow
-from sqlalchemy import not_
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from inky_image_display_api.services import grid_service, queue_service
+from inky_image_display_api.services import queue_service
 from inky_image_display_api.services.app_settings_service import get_quiet_hours, is_quiet_now
 from inky_image_display_api.services.image_service import (
     build_display_command,
@@ -23,10 +22,11 @@ logger = logging.getLogger(__name__)
 
 
 async def rotation_loop(app: FastAPI) -> None:
-    """Continuously rotate content on devices and grids whose schedule elapsed.
+    """Continuously drive grid schedules and solo-device rotation.
 
-    Runs every 30 seconds. Grids step through their content queue (groups
-    and pool images alike); solo devices rotate their FIFO pool.
+    Runs every 30 seconds. Grids show content only via their daily display
+    schedule (the queue tick, which also expires holds and hands panels
+    back); solo devices rotate their FIFO pool on their refresh interval.
 
     Args:
         app: The running FastAPI application (provides engine, settings,
@@ -40,19 +40,15 @@ async def rotation_loop(app: FastAPI) -> None:
         except Exception:
             logger.exception("Error in scheduled-display tick")
         # Quiet hours pause only the interval-driven rotation below. The
-        # scheduled-display tick above stays live because its schedule is an
-        # explicit operator choice; manual pushes bypass this loop entirely.
-        # Devices left overdue simply rotate on the first tick after the
-        # window.
+        # queue tick above stays live because its schedule is an explicit
+        # operator choice (and a hold-expiry release pushes nothing — the
+        # freed panels repaint via this gated loop). Devices left overdue
+        # simply rotate on the first tick after the window.
         try:
             if await _in_quiet_hours(app):
                 continue
         except Exception:
             logger.exception("Error evaluating quiet hours; rotating anyway")
-        try:
-            await _rotate_due_grids(app)
-        except Exception:
-            logger.exception("Error in grid rotation tick")
         try:
             await _rotate_due_devices(app)
         except Exception:
@@ -121,50 +117,3 @@ async def _rotate_single_device(app: FastAPI, device: Device) -> None:
         await app.state.mqtt.send_command(device_id, command)
         await update_display_state(session, db_device, image, app.state.settings)
         logger.info("Rotated device %s to image %s", device_id, image_id)
-
-
-async def _rotate_due_grids(app: FastAPI) -> None:
-    """Advance any grid whose schedule has elapsed."""
-    now = utcnow()
-    async with AsyncSession(app.state.engine) as session:
-        result = await session.exec(select(Grid).where(Grid.scheduled_next_at <= now))
-        due_grids = list(result.all())
-
-    for grid in due_grids:
-        try:
-            await _advance_single_grid(app, grid.id)
-        except Exception:
-            logger.exception("Failed to advance grid %s", grid.id)
-
-
-async def _advance_single_grid(app: FastAPI, grid_id: object) -> None:
-    """Step one grid through its content queue."""
-    async with AsyncSession(app.state.engine) as session:
-        grid_result = await session.exec(select(Grid).where(col(Grid.id) == grid_id))
-        db_grid = grid_result.first()
-        if db_grid is None:
-            return
-        # Empty grids are valid state (created in the UI before the user
-        # adds devices), so the background tick logs at debug and moves on.
-        placements = await grid_service.list_grid_devices(session, db_grid.id)
-        if not placements:
-            logger.debug("No devices placed on grid %s", db_grid.id)
-            return
-        # A grid pushes in lockstep across members, so a single stuck panel
-        # makes the composite unshowable. Pause the grid until that member
-        # recovers (its controller retries the stuck image and the success
-        # ack clears last_refresh_ok) — or until the failure ages past the
-        # dispatch backoff, so a member whose controller restarted can't
-        # pause the grid forever.
-        member_ids = [p.device_id for p in placements]
-        errored = await session.exec(
-            select(Device.device_id).where(
-                col(Device.id).in_(member_ids),
-                not_(dispatch_allowed_clause(utcnow(), app.state.settings.refresh_error_backoff_seconds)),
-            )
-        )
-        stuck = errored.all()
-        if stuck:
-            logger.debug("Grid %s paused — member(s) %s have a failed refresh", db_grid.id, ", ".join(stuck))
-            return
-        await queue_service.advance_grid(app, session, db_grid)

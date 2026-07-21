@@ -73,7 +73,7 @@ async def list_grids(
 @router.post("", status_code=201)
 async def create_grid(request: Request, body: GridCreate) -> GridResponse:
     """Create a grid from a tile layout."""
-    grid = Grid(name=body.name, width_cm=0.0, height_cm=0.0, refresh_interval_seconds=body.refresh_interval_seconds)
+    grid = Grid(name=body.name, width_cm=0.0, height_cm=0.0)
     async with AsyncSession(request.app.state.engine) as session:
         session.add(grid)
         await session.flush()
@@ -93,15 +93,11 @@ async def get_grid(request: Request, grid_id: UUID) -> GridResponse:
 
 @router.put("/{grid_id}")
 async def update_grid(request: Request, grid_id: UUID, body: GridUpdate) -> GridResponse:
-    """Rename a grid, change its cadence or display schedule, or replace its layout."""
+    """Rename a grid, change its display schedule, or replace its layout."""
     async with AsyncSession(request.app.state.engine) as session:
         grid = await grid_service.get_grid_or_404(session, grid_id)
         if body.name is not None:
             grid.name = body.name
-        if body.clear_refresh_interval:
-            grid.refresh_interval_seconds = None
-        elif body.refresh_interval_seconds is not None:
-            grid.refresh_interval_seconds = body.refresh_interval_seconds
         for field_name in ("display_schedule_enabled", "display_time", "display_weekday_mask", "display_timezone"):
             value = getattr(body, field_name)
             if value is not None:
@@ -146,7 +142,7 @@ async def display_image_on_grid(
     """Render slices for ``body.image_id`` and push them to every member device.
 
     A manual push is an operator override: any held group is dropped and
-    the queue resumes from here on the next refresh.
+    the image is held like any other display (duration or until release).
     """
     async with AsyncSession(request.app.state.engine) as session:
         grid = await grid_service.get_grid_or_404(session, grid_id)
@@ -158,8 +154,6 @@ async def display_image_on_grid(
             raise HTTPException(status_code=400, detail="Image targets a different grid")
 
         grid.current_group_id = None
-        grid.current_frame = 0
-        grid.hold_until = None
         crop_paths = await grid_service.render_and_upload(session, grid, image, request.app.state.s3_service)
         await grid_service.claim_devices_and_push(
             session,
@@ -167,27 +161,26 @@ async def display_image_on_grid(
             image,
             crop_paths,
             request.app.state.mqtt,
-            request.app.state.settings,
         )
         return {"status": "ok"}
 
 
 @router.post("/{grid_id}/next")
 async def advance_grid_rotation(request: Request, grid_id: UUID) -> dict[str, str]:
-    """Advance the queue one step now (skips the rest of a running group)."""
+    """Show the next queue entry now; with an empty queue, release the panels."""
     async with AsyncSession(request.app.state.engine) as session:
         grid = await grid_service.get_grid_or_404(session, grid_id)
-        await queue_service.advance_grid(request.app, session, grid, force_next=True)
+        if not await queue_service.show_next(request.app, session, grid):
+            await queue_service.release_queue(request.app, session, grid)
         return {"status": "ok"}
 
 
 @router.post("/{grid_id}/release")
 async def release_grid_content(request: Request, grid_id: UUID) -> dict[str, str]:
-    """End any held group and resume the queue immediately.
+    """End the grid's display and return the panels to solo rotation.
 
-    The panels update right away; the next refresh is jittered so grids
-    released together don't flash in lockstep. With an empty queue the
-    member devices return to (jittered) solo rotation instead.
+    The panels keep their last image until their own (jittered) rotation
+    replaces it, so simultaneous releases don't flash in lockstep.
     """
     async with AsyncSession(request.app.state.engine) as session:
         grid = await grid_service.get_grid_or_404(session, grid_id)
@@ -224,7 +217,6 @@ async def get_grid_queue(request: Request, grid_id: UUID) -> list[GridQueueEntry
                         id=obj.id,
                         name=obj.name,
                         last_displayed_at=obj.last_displayed_at,
-                        frame_count=queue_service.frame_count(images),
                         storage_path=images[0].storage_path if images else None,
                         is_current=grid.current_group_id == obj.id,
                     )
@@ -236,7 +228,6 @@ async def get_grid_queue(request: Request, grid_id: UUID) -> list[GridQueueEntry
                         id=obj.id,
                         name=obj.title,
                         last_displayed_at=obj.last_displayed_at,
-                        frame_count=1,
                         storage_path=obj.storage_path,
                         is_current=grid.current_group_id is None and grid.current_image_id == obj.id,
                     )
@@ -281,14 +272,14 @@ async def get_display_status(request: Request, grid_id: UUID) -> GridContentStat
             group = await session.get(ImageGroup, grid.current_group_id)
             if group is not None:
                 images = await queue_service.group_images(session, group.id)
-        slotted = queue_service.slot_sequences(images)
+        slotted = queue_service.slot_images(images)
         slot_statuses: list[GridSlotStatus] = []
         targets = await grid_service.resolve_slot_targets(session, grid.id)
         for key, target in sorted(targets.items()):
-            sequence = slotted.get(key)
+            slot_image = slotted.get(key)
             current_title = None
-            if sequence:
-                current_title = sequence[grid.current_frame % len(sequence)].title
+            if slot_image is not None:
+                current_title = slot_image.title
             elif target.device.current_image_id is not None:
                 image = await session.get(Image, target.device.current_image_id)
                 current_title = image.title if image is not None else None
@@ -304,8 +295,6 @@ async def get_display_status(request: Request, grid_id: UUID) -> GridContentStat
         return GridContentStatus(
             group_id=grid.current_group_id,
             group_name=group.name if group is not None else None,
-            frame=grid.current_frame,
-            frame_count=queue_service.frame_count(images),
             hold_until=grid.hold_until,
             displayed_since=grid.displayed_since,
             slots=slot_statuses,

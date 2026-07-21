@@ -82,7 +82,10 @@ function ScheduleRow({ position, entry }: { position: number; entry: ScheduleEnt
       <div className="col gap-0 flex-1">
         <span className="ink-body truncate">{entry.name}</span>
         <span className="ink-small">
-          {entry.kind} · every {formatIntervalSeconds(entry.effective_interval_seconds)}
+          {entry.kind}
+          {entry.effective_interval_seconds != null
+            ? ` · every ${formatIntervalSeconds(entry.effective_interval_seconds)}`
+            : ' · daily display'}
         </span>
       </div>
       <div className="col gap-0 items-end">

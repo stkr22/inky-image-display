@@ -17,8 +17,9 @@ from inky_image_display_shared.time import utcnow
 class Grid(SQLModel, table=True):
     """A virtual canvas spanning a group of devices.
 
-    Mirrors the per-device rotation-state fields so the same background
-    rotation pattern can drive grids and individual devices.
+    A grid does not rotate on an interval: it shows one queue entry per
+    scheduled daily display (or operator action), holds it, and then hands
+    the member panels back to their own solo rotation.
     """
 
     __tablename__ = "grids"
@@ -29,18 +30,12 @@ class Grid(SQLModel, table=True):
     height_cm: float
     current_image_id: UUID | None = Field(default=None, foreign_key="images.id")
     displayed_since: datetime | None = Field(default=None)
-    scheduled_next_at: datetime = Field(default_factory=utcnow)
-    # Per-grid rotation cadence. ``None`` falls back to
-    # ``settings.default_display_duration`` (matches Device behaviour);
-    # previously cadence was implicitly driven by ``image.display_duration_seconds``.
-    refresh_interval_seconds: int | None = Field(default=None)
 
-    # Daily display schedule: when this grid front-runs its queue with the
-    # newest generated group from the display jobs targeting it.
-    # ``display_time`` is a local wall-clock "HH:MM" in ``display_timezone``
-    # — the repo is otherwise UTC-everywhere, but a "show at 08:00" schedule
-    # only makes sense in the operator's local time. ``display_weekday_mask``
-    # bit 0 = Monday.
+    # Daily display schedule: when this grid steps its content queue one
+    # entry forward. ``display_time`` is a local wall-clock "HH:MM" in
+    # ``display_timezone`` — the repo is otherwise UTC-everywhere, but a
+    # "show at 08:00" schedule only makes sense in the operator's local
+    # time. ``display_weekday_mask`` bit 0 = Monday.
     display_schedule_enabled: bool = Field(default=False)
     display_time: str = Field(default="08:00")
     display_weekday_mask: int = Field(default=127)
@@ -48,15 +43,14 @@ class Grid(SQLModel, table=True):
     # ``None`` shows the content until the operator releases it manually.
     display_duration_seconds: int | None = Field(default=None)
 
-    # Queue playback state: the group currently on the panels and which of
-    # its frames is showing. ``current_group_id`` is intentionally not a FK:
-    # image_groups references grids, and a back-reference would create a
-    # circular FK that complicates table creation order.
+    # Queue playback state: the group currently on the panels.
+    # ``current_group_id`` is intentionally not a FK: image_groups
+    # references grids, and a back-reference would create a circular FK
+    # that complicates table creation order.
     current_group_id: UUID | None = Field(default=None)
-    current_frame: int = Field(default=0)
-    # While set and in the future, the queue does not advance past the
-    # current group (frames still rotate). The scheduled daily display and
-    # manual "show now" set it; release clears it.
+    # When the current display ends and the panels are released. The
+    # scheduled daily display and manual "show now" set it; expiry or an
+    # explicit release clears it.
     hold_until: datetime | None = Field(default=None)
     # Once-per-day guard for the scheduler tick, a local date in
     # ``display_timezone`` so "today" matches the operator's calendar.
