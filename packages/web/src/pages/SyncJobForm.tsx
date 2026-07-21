@@ -231,6 +231,18 @@ export function SyncJobForm() {
               help="Fetches Count × this many candidates from Immich, because photos with the wrong orientation or too small for the panel are dropped afterwards. Raise it when runs deliver fewer images than requested."
             />
           </div>
+          <Switch
+            label="Random pick"
+            checked={randomPick}
+            onChange={setRandomPick}
+            help="SMART only: pick the images at random from the fetched search results instead of always taking the closest matches — adds variety between runs. RANDOM jobs are already random."
+          />
+        </div>
+      </div>
+
+      <div className="bento-tile w-full" style={{ padding: 24 }}>
+        <div className="ink-form-section w-full">
+          <span className="ink-eyebrow">Schedule</span>
           <div className="ink-form-row items-end w-full">
             <NumberField
               label="Run every (minutes, blank = manual only)"
@@ -238,23 +250,15 @@ export function SyncJobForm() {
               onChange={setIntervalMinutes}
               min={1}
               step={1}
-              help="How often the worker runs this job automatically. Leave blank to only run it via the 'Run now' button."
+              help="How often the worker runs this job automatically, on a fixed cadence — manual runs and worker downtime don't shift it. Leave blank to only run it via the 'Run now' button."
             />
           </div>
-          <div className="row w-full gap-4 items-center wrap">
-            <Switch
-              label="Random pick"
-              checked={randomPick}
-              onChange={setRandomPick}
-              help="SMART only: pick the images at random from the fetched search results instead of always taking the closest matches — adds variety between runs. RANDOM jobs are already random."
-            />
-            <Switch
-              label="Active"
-              checked={active}
-              onChange={setActive}
-              help="Inactive jobs are skipped by the schedule but can still be started with 'Run now'."
-            />
-          </div>
+          <Switch
+            label="Active"
+            checked={active}
+            onChange={setActive}
+            help="Inactive jobs are skipped by the schedule but can still be started with 'Run now'."
+          />
         </div>
       </div>
 

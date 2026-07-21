@@ -20,6 +20,16 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 _RUNNING_STALE_AFTER = timedelta(minutes=30)
 
 
+def advance_schedule(next_run_at: datetime, interval: timedelta, now: datetime) -> datetime:
+    """Next tick on the fixed grid anchored at ``next_run_at``, strictly after ``now``.
+
+    Anchoring at the previous ``next_run_at`` instead of the claim time keeps
+    the cadence fixed: late claims (worker offline, cron jitter) don't shift
+    the grid, and missed ticks are skipped in one jump rather than replayed.
+    """
+    return next_run_at + ((now - next_run_at) // interval + 1) * interval
+
+
 def due_clause[JobT: (ImmichSyncJob, GeminiSyncJob)](model: type[JobT], now: datetime) -> ColumnElement[bool]:
     """Jobs the worker should run: Run-now flagged, or on-schedule and due.
 
@@ -38,15 +48,17 @@ async def claim_due_jobs[JobT: (ImmichSyncJob, GeminiSyncJob)](
     """Hand out due jobs and advance their schedules.
 
     Advancing ``next_run_at`` at hand-out doubles as a lease: an overlapping
-    worker invocation won't be given the same interval-due job twice. The
-    Run-now flag is deliberately NOT cleared here — the posted run report
-    clears it, so a worker that dies mid-run leaves the request armed.
+    worker invocation won't be given the same interval-due job twice. Only
+    schedule-due jobs advance — a Run-now claim leaves the fixed cadence
+    untouched. The Run-now flag is deliberately NOT cleared here — the
+    posted run report clears it, so a worker that dies mid-run leaves the
+    request armed.
     """
     result = await session.exec(select(model).where(due_clause(model, now)))
     jobs = list(result.all())
     for job in jobs:
-        if job.interval_minutes is not None:
-            job.next_run_at = now + timedelta(minutes=job.interval_minutes)
+        if job.interval_minutes is not None and job.next_run_at is not None and job.next_run_at <= now:
+            job.next_run_at = advance_schedule(job.next_run_at, timedelta(minutes=job.interval_minutes), now)
             session.add(job)
     await session.commit()
     for job in jobs:

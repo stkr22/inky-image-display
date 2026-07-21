@@ -140,17 +140,28 @@ export function GeminiJobForm() {
               min={0}
               step={1}
             />
-            <NumberField
-              label="Run every (minutes, blank = manual only)"
-              value={intervalMinutes}
-              onChange={setIntervalMinutes}
-              min={1}
-              step={1}
-              help="How often the worker runs this job automatically. Gemini batches spend generation quota — daily (1440) is a sensible default."
-            />
           </div>
           <ChipsInput label="Subjects" values={subjects} onChange={setSubjects} placeholder="Add a subject and press Enter…" />
-          <Switch label="Active" checked={active} onChange={setActive} />
+        </div>
+      </div>
+
+      <div className="bento-tile w-full" style={{ padding: 24 }}>
+        <div className="ink-form-section w-full">
+          <span className="ink-eyebrow">Schedule</span>
+          <NumberField
+            label="Run every (minutes, blank = manual only)"
+            value={intervalMinutes}
+            onChange={setIntervalMinutes}
+            min={1}
+            step={1}
+            help="How often the worker runs this job automatically, on a fixed cadence — manual runs don't shift it. Gemini batches spend generation quota — daily (1440) is a sensible default."
+          />
+          <Switch
+            label="Active"
+            checked={active}
+            onChange={setActive}
+            help="Inactive jobs are skipped by the schedule but can still be started with 'Run now'."
+          />
         </div>
       </div>
 

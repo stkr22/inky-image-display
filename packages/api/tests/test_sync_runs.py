@@ -116,6 +116,33 @@ class TestDueScheduling:
             assert next_run_at is not None
             assert next_run_at > utcnow() + timedelta(minutes=29)
 
+    async def test_late_claim_keeps_fixed_grid_and_skips_missed_ticks(
+        self, client: TestClient, async_engine, seed_profile
+    ) -> None:
+        """A worker offline for hours runs the job once and the cadence stays anchored."""
+        anchor = utcnow() - timedelta(minutes=100)
+        job = await _seed_job(async_engine, seed_profile, interval_minutes=30, next_run_at=anchor)
+
+        claimed = client.post("/api/sync-jobs/claim-due").json()
+        assert [j["id"] for j in claimed] == [str(job.id)]
+
+        async with AsyncSession(async_engine) as session:
+            result = await session.exec(select(ImmichSyncJob).where(col(ImmichSyncJob.id) == job.id))
+            # 100 minutes late: ticks at +30/+60/+90 are skipped, next is +120 on the original grid.
+            assert result.one().next_run_at == anchor + timedelta(minutes=120)
+
+    async def test_run_now_claim_does_not_shift_schedule(self, client: TestClient, async_engine, seed_profile) -> None:
+        future = utcnow() + timedelta(minutes=17)
+        job = await _seed_job(async_engine, seed_profile, interval_minutes=30, next_run_at=future)
+        client.post(f"/api/sync-jobs/{job.id}/run-now")
+
+        claimed = client.post("/api/sync-jobs/claim-due").json()
+        assert [j["id"] for j in claimed] == [str(job.id)]
+
+        async with AsyncSession(async_engine) as session:
+            result = await session.exec(select(ImmichSyncJob).where(col(ImmichSyncJob.id) == job.id))
+            assert result.one().next_run_at == future
+
     async def test_claim_keeps_run_now_flag_for_crash_safety(
         self, client: TestClient, async_engine, seed_profile
     ) -> None:
