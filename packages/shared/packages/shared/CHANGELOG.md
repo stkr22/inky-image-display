@@ -1,5 +1,16 @@
 # Changelog
 
+## [6.0.0](https://github.com/stkr22/inky-image-display/compare/shared-v5.0.0...shared-v6.0.0) (2026-07-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* replace CronJob polling with an MQTT-woken worker and cron schedules
+
+### Features
+
+* replace CronJob polling with an MQTT-woken worker and cron schedules ([b83bc1c](https://github.com/stkr22/inky-image-display/commit/b83bc1c14154e7aab7f91dc8c5b7ad024aaf690d))
+
 ## [5.0.0](https://github.com/stkr22/inky-image-display/compare/shared-v4.10.1...shared-v5.0.0) (2026-07-21)
 
 
