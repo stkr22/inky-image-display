@@ -10,6 +10,13 @@ Topic layout (single-level wildcards used for subscriptions):
 * ``inky/devices/{id}/status`` — retained, device → broker, ``DeviceStatus``.
 * ``inky/devices/{id}/cmd``    — API → device, ``DisplayCommand``.
 * ``inky/devices/{id}/ack``    — device → API, ``DeviceAcknowledge``.
+* ``inky/workers/sync/status`` — retained, worker → broker, ``DeviceStatus``.
+* ``inky/workers/sync/wake``   — API → worker, doorbell only.
+
+The wake topic is deliberately a doorbell, not a work order: the job rows
+in the database stay the source of truth and the worker claims due jobs
+over HTTP, so a duplicate or missed message can never double-run or
+strand a job (the worker also claims on startup and on a slow poll).
 """
 
 from __future__ import annotations
@@ -42,6 +49,8 @@ logger = logging.getLogger(__name__)
 
 
 TOPIC_PREFIX = "inky/devices"
+WORKER_STATUS_TOPIC = "inky/workers/sync/status"
+WORKER_WAKE_TOPIC = "inky/workers/sync/wake"
 
 
 def _command_topic(device_id: str) -> str:
@@ -217,6 +226,8 @@ class MQTTService:
         self._client: aiomqtt.Client | None = None
         self._client_ready = asyncio.Event()
         self._online: set[str] = set()
+        # Whether the sync worker's retained status says it is online.
+        self.worker_online = False
 
     @property
     def online_devices(self) -> set[str]:
@@ -248,6 +259,20 @@ class MQTTService:
             command.model_dump_json(),
             qos=1,
         )
+
+    async def publish_wake(self, job_type: str) -> None:
+        """Ring the worker's doorbell for ``job_type`` (informational payload).
+
+        Best-effort by design: the broker being down must never fail the
+        request or tick that armed the job — the worker's safety poll
+        picks up whatever a missed wake would have delivered.
+        """
+        try:
+            if self._client is None:
+                raise RuntimeError("MQTT client is not connected")
+            await self._client.publish(WORKER_WAKE_TOPIC, f'{{"job_type": "{job_type}"}}', qos=1)
+        except Exception:
+            logger.debug("Could not publish %s wake; worker poll will catch up", job_type, exc_info=True)
 
     async def run(self) -> None:
         """Connect to the broker and dispatch messages forever.
@@ -281,6 +306,8 @@ class MQTTService:
 
                     await client.subscribe(f"{TOPIC_PREFIX}/+/status", qos=1)
                     await client.subscribe(f"{TOPIC_PREFIX}/+/ack", qos=1)
+                    # Retained, so the worker's current state arrives right away.
+                    await client.subscribe(WORKER_STATUS_TOPIC, qos=1)
                     logger.info(
                         "MQTT connected to %s:%s, subscribed to status and ack topics",
                         self._settings.mqtt_host,
@@ -295,6 +322,7 @@ class MQTTService:
                 self._client = None
                 self._client_ready.clear()
                 self._online.clear()
+                self.worker_online = False
                 logger.warning(
                     "MQTT connection lost: %s. Reconnecting in %ds...",
                     exc,
@@ -306,22 +334,26 @@ class MQTTService:
                 self._client = None
                 self._client_ready.clear()
                 self._online.clear()
+                self.worker_online = False
                 logger.exception("Unexpected MQTT failure; reconnecting in %ds", backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, max_backoff)
 
     async def _dispatch(self, message: aiomqtt.Message) -> None:
         topic = str(message.topic)
-        device_id = _device_id_from_topic(topic)
-        if device_id is None:
-            logger.debug("Ignoring message on unexpected topic: %s", topic)
-            return
-
         payload = message.payload
         if isinstance(payload, bytes | bytearray):
             text = bytes(payload).decode("utf-8", errors="replace")
         else:
             text = str(payload)
+
+        if topic == WORKER_STATUS_TOPIC:
+            self._handle_worker_status(text)
+            return
+        device_id = _device_id_from_topic(topic)
+        if device_id is None:
+            logger.debug("Ignoring message on unexpected topic: %s", topic)
+            return
 
         if topic.endswith("/status"):
             await self._handle_status(device_id, text)
@@ -329,6 +361,15 @@ class MQTTService:
             await self._handle_ack(device_id, text)
         else:
             logger.debug("Ignoring message on unexpected topic: %s", topic)
+
+    def _handle_worker_status(self, text: str) -> None:
+        try:
+            status = DeviceStatus.model_validate_json(text)
+        except Exception:
+            logger.warning("Worker sent unparseable status: %s", text[:200])
+            return
+        self.worker_online = status.status == "online"
+        logger.info("Sync worker is %s", status.status)
 
     async def _handle_status(self, device_id: str, text: str) -> None:
         try:

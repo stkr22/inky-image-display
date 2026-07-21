@@ -6,16 +6,19 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ConfirmDialog, Dialog } from '../components/Dialog'
-import { Button, NumberField, Switch, TextField } from '../components/fields'
+import { Button, Switch, TextField } from '../components/fields'
+import { describeCron, ScheduleEditor, type ScheduleValue } from '../components/ScheduleEditor'
 import { useNotify } from '../components/Toast'
 import { Badge, EmptyNote, PageHeader, Spinner } from '../components/ui'
 import { api, ApiError } from '../lib/api'
-import { formatDatetime, formatRelative, humanizeSeconds } from '../lib/format'
+import { formatDatetime, formatRelative } from '../lib/format'
 import type { DisplayJob, GeminiJob, SyncJob, SyncJobRun } from '../lib/types'
 
-function scheduleSummary(job: Pick<SyncJob, 'interval_minutes' | 'next_run_at'> & { is_active?: boolean }): string {
-  if (job.interval_minutes == null) return 'Manual runs only'
-  const cadence = `Runs every ${humanizeSeconds(job.interval_minutes * 60)}`
+function scheduleSummary(
+  job: Pick<SyncJob, 'schedule_cron' | 'schedule_timezone' | 'next_run_at'> & { is_active?: boolean },
+): string {
+  if (job.schedule_cron == null) return 'Manual runs only'
+  const cadence = describeCron(job.schedule_cron, job.schedule_timezone)
   if (job.is_active === false) return `${cadence} (paused)`
   return job.next_run_at ? `${cadence} · next ${formatRelative(job.next_run_at)}` : cadence
 }
@@ -107,6 +110,11 @@ export function Jobs() {
 const JOB_TYPE_LABELS = { immich: 'Immich', gemini: 'Gemini', display: 'Display' } as const
 
 function JobsOverview() {
+  const { data: workerStatus } = useQuery({
+    queryKey: ['worker-status'],
+    queryFn: api.getWorkerStatus,
+    refetchInterval: 15_000,
+  })
   const { data: runs } = useQuery({
     queryKey: ['sync-runs', 'all'],
     queryFn: () => api.listSyncRuns({ limit: 60 }),
@@ -142,11 +150,21 @@ function JobsOverview() {
     .slice(0, 6)
   const recent = (runs ?? []).filter((run) => run.status !== 'running').slice(0, 8)
 
-  if (!running.length && !waiting.length && !upcoming.length && !recent.length) return null
+  if (!running.length && !waiting.length && !upcoming.length && !recent.length && workerStatus?.online !== false) {
+    return null
+  }
 
   return (
     <div className="ink-card w-full" style={{ gap: 10 }}>
-      <h3 className="ink-h3">Overview</h3>
+      <div className="row w-full items-center gap-2">
+        <h3 className="ink-h3">Overview</h3>
+        <div className="flex-1" />
+        {workerStatus && (
+          <Badge tone={workerStatus.online ? 'ok' : 'danger'}>
+            {workerStatus.online ? 'Worker online' : 'Worker offline'}
+          </Badge>
+        )}
+      </div>
       {(running.length > 0 || waiting.length > 0) && (
         <div className="col w-full gap-1">
           {running.map((run) => (
@@ -163,7 +181,7 @@ function JobsOverview() {
             <div key={job.id} className="row w-full items-center gap-2 wrap">
               <Badge tone="warn">Waiting for worker</Badge>
               <span className="ink-body">{job.name}</span>
-              <span className="ink-small">{JOB_TYPE_LABELS[type]} · due, not picked up yet</span>
+              <span className="ink-small">{JOB_TYPE_LABELS[type]} · due, not claimed yet</span>
             </div>
           ))}
         </div>
@@ -384,14 +402,17 @@ function DisplayJobRow({
 function DisplayJobScheduleDialog({ job, onClose }: { job: DisplayJob; onClose: () => void }) {
   const notify = useNotify()
   const queryClient = useQueryClient()
-  const [intervalMinutes, setIntervalMinutes] = useState<number | ''>(job.interval_minutes ?? '')
+  const [schedule, setSchedule] = useState<ScheduleValue>({
+    cron: job.schedule_cron,
+    timezone: job.schedule_timezone || 'UTC',
+  })
 
   const save = async () => {
-    const interval = Number(intervalMinutes) || 0
     try {
       await api.updateDisplayJob(job.id, {
-        interval_minutes: interval > 0 ? interval : null,
-        clear_interval: interval <= 0,
+        schedule_cron: schedule.cron,
+        schedule_timezone: schedule.timezone || 'UTC',
+        clear_schedule: schedule.cron == null,
       })
       notify('Schedule saved.', 'positive')
       queryClient.invalidateQueries({ queryKey: ['display-jobs'] })
@@ -404,14 +425,9 @@ function DisplayJobScheduleDialog({ job, onClose }: { job: DisplayJob; onClose: 
   return (
     <Dialog open onClose={onClose}>
       <h3 className="ink-h3">Schedule '{job.name}'</h3>
-      <NumberField
-        label="Generate every (minutes, blank = manual only)"
-        value={intervalMinutes}
-        onChange={setIntervalMinutes}
-        min={1}
-      />
+      <ScheduleEditor value={schedule} onChange={setSchedule} />
       <span className="ink-small">
-        1440 = daily. The grid's own display schedule decides when generated content is shown.
+        The grid's own display schedule decides when generated content is shown.
       </span>
       <div className="row w-full justify-end gap-2">
         <Button flat onClick={onClose}>
@@ -540,7 +556,7 @@ function JobRow({
   const runNowMutation = useMutation({
     mutationFn: onRunNow,
     onSuccess: () => {
-      notify('Run queued — the worker picks it up on its next tick', 'positive')
+      notify('Run queued — the worker is being woken up now', 'positive')
       queryClient.invalidateQueries({ queryKey })
     },
     onError: (err) => notify(`Run request failed: ${errMessage(err)}`, 'negative'),

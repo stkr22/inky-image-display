@@ -12,7 +12,7 @@ There are three kinds of callers, each with its own mechanism:
 |--------|-----------|-----|
 | Humans (operator) | OIDC authorization code + PKCE against Zitadel, handled server-side (BFF) | Browser only ever holds an HttpOnly session cookie — no tokens in JS, and `<img src="/media/...">` requests authenticate automatically |
 | Party guests | Signed invite link / QR code minted in the UI | No IdP account or login screen on a guest's phone; the session is restricted and short-lived |
-| Machines (sync CronJobs, display controllers) | Static internal tokens in an `x-api-key` header | Cluster-internal callers; a static secret avoids token refresh/clock concerns and keeps Zitadel for humans only |
+| Machines (sync worker, display controllers) | Static internal tokens in an `x-api-key` header | Cluster-internal callers; a static secret avoids token refresh/clock concerns and keeps Zitadel for humans only |
 
 ## Human sign-in (OIDC, backend-for-frontend)
 
@@ -62,7 +62,7 @@ Invite tokens and session cookies are signed with `API_SESSION_SECRET`
 Two independent static tokens, both sent as `x-api-key` and only enforced
 while OIDC auth is enabled:
 
-- `API_SYNC_TOKEN` — full API access for the sync CronJobs. Configure the
+- `API_SYNC_TOKEN` — full API access for the sync worker. Configure the
   same value as `DISPLAY_API_TOKEN` on the sync side.
 - `API_DEVICE_TOKEN` — grants **only** `POST /api/devices/register` (the
   endpoint that hands out S3 reader and MQTT credentials). Configure the
@@ -93,7 +93,7 @@ existingSecrets:
   auth: inky-auth
 ```
 
-The chart injects the sync token into both sync CronJobs automatically.
+The chart injects the sync token into the sync worker automatically.
 Controllers are configured out-of-band (their YAML/env), so set
 `CONTROLLER_API__TOKEN` on each device.
 

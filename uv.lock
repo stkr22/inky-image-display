@@ -351,6 +351,14 @@ wheels = [
 ]
 
 [[package]]
+name = "cronsim"
+version = "2.7"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fb/1a/02f105147f7f2e06ed4f734ff5a6439590bb275a53dd91fc73df6312298a/cronsim-2.7-py3-none-any.whl", hash = "sha256:1e1431fa08c51dc7f72e67e571c7c7a09af26420169b607badd4ca9677ffad1e", size = 14213, upload-time = "2025-10-21T16:38:20.431Z" },
+]
+
+[[package]]
 name = "cryptography"
 version = "47.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -628,6 +636,7 @@ dependencies = [
     { name = "aiosqlite" },
     { name = "alembic" },
     { name = "authlib" },
+    { name = "cronsim" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "inky-image-display-shared" },
@@ -649,6 +658,7 @@ requires-dist = [
     { name = "aiosqlite", specifier = "~=0.22.1" },
     { name = "alembic", specifier = "~=1.18.4" },
     { name = "authlib", specifier = "~=1.6.5" },
+    { name = "cronsim", specifier = "~=2.6" },
     { name = "fastapi", specifier = "~=0.135.3" },
     { name = "httpx", specifier = "~=0.28.1" },
     { name = "inky-image-display-shared", editable = "packages/shared" },
@@ -730,6 +740,7 @@ name = "inky-image-display-sync"
 version = "0.14.0"
 source = { editable = "packages/sync" }
 dependencies = [
+    { name = "aiomqtt" },
     { name = "httpx" },
     { name = "inky-image-display-shared" },
     { name = "minio" },
@@ -741,6 +752,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiomqtt", specifier = "~=2.5.1" },
     { name = "httpx", specifier = "~=0.28.1" },
     { name = "inky-image-display-shared", editable = "packages/shared" },
     { name = "minio", specifier = "~=7.2.20" },

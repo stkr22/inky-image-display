@@ -19,7 +19,7 @@ config:
 
   # S3-compatible object storage (Garage, MinIO, AWS S3). The API uses the
   # writer credentials for uploads and hands the reader credentials to
-  # controllers at registration; the sync CronJobs use the writer credentials.
+  # controllers at registration; the sync worker uses the writer credentials.
   s3:
     endpoint: ""  # required, e.g. s3.example.com
     bucket: inky-images
@@ -43,7 +43,7 @@ config:
     websocketPath: /mqtt
 
   # Immich server. Enables the API's read-only browse proxy (name-based
-  # pickers in the web UI) and is required by the Immich sync CronJob.
+  # pickers in the web UI) and is required by the Immich sync worker.
   # Leave empty to disable both; the UI falls back to raw-ID inputs.
   immich:
     baseUrl: ""  # e.g. https://immich.example.com
@@ -77,8 +77,8 @@ existingSecrets:
   # Recommended with config.auth. Keys (each optional in the Secret):
   #   session-secret      signs session cookies + guest invites; without it
   #                       every API restart logs everyone out
-  #   sync-token          machine token for the sync CronJobs (API_SYNC_TOKEN,
-  #                       also injected into the CronJobs as DISPLAY_API_TOKEN)
+  #   sync-token          machine token for the sync worker (API_SYNC_TOKEN,
+  #                       also injected into the worker as DISPLAY_API_TOKEN)
   #   device-token        machine token controllers use to register
   #   oidc-client-secret  only for a confidential OIDC client; omit for a
   #                       public PKCE client (recommended)
@@ -136,46 +136,44 @@ persistence:
     - ReadWriteOnce
   size: 1Gi
 
+# One long-running worker Deployment handles all enabled job families.
+# Per-job cadence is a cron schedule edited in the web UI; the API wakes
+# the worker over MQTT (config.mqtt) when something is due, so there are
+# no CronJob schedules to tune here anymore.
 sync:
   image:
     repository: ghcr.io/stkr22/inky-image-display-sync
     tag: ""  # defaults to the chart appVersion
     pullPolicy: IfNotPresent
 
-  # How the sync jobs reach the API. Empty defaults to the in-cluster
+  # How the worker reaches the API. Empty defaults to the in-cluster
   # service (http://<fullname>-api:<service.port>); set the public URL to go
   # through the ingress instead (e.g. when network policies only allow
   # egress via the ingress).
   apiBaseUrl: ""
 
+  # Extra environment variables for the worker container (e.g.
+  # WORKER_MQTT_USERNAME, a secretKeyRef for WORKER_MQTT_PASSWORD, or
+  # WORKER_POLL_INTERVAL_SECONDS to tune the missed-wake safety poll,
+  # default 600).
+  extraEnv: []
+
   # Pulls recent Immich assets into the S3 bucket and registers them with
   # the API. Needs config.immich.baseUrl and existingSecrets.immich.
-  #
-  # The CronJob schedule only sets how often the worker *asks* the API for
-  # due jobs (it exits immediately when nothing is due) — the actual per-job
-  # cadence is the "Run every" setting on each sync job in the web UI. Keep
-  # the schedule frequent so UI cadences and "Run now" clicks take effect
-  # promptly.
   immich:
     enabled: true
-    schedule: "*/2 * * * *"
     maxImages: 50
 
-  # Opt-in: scheduled batch AI image generation. The frequent schedule is
-  # cheap for the same reason as above; how often images are actually
-  # generated (and billed) is each Gemini job's "Run every" setting in the
+  # Opt-in: scheduled batch AI image generation; how often images are
+  # actually generated (and billed) is each Gemini job's schedule in the
   # UI, defaulting to daily. Needs existingSecrets.gemini.
   gemini:
     enabled: false
-    schedule: "*/5 * * * *"
 
-  # Opt-in: display-job content generation (MOTD stories + screens). The
-  # worker claims due display jobs from the API — same due-claim model as
-  # the other workers, so the frequent schedule is cheap. Needs
-  # existingSecrets.gemini.
+  # Opt-in: display-job content generation (MOTD stories + screens).
+  # Needs existingSecrets.gemini.
   display:
     enabled: false
-    schedule: "*/5 * * * *"
 
   resources:
     requests:

@@ -95,8 +95,8 @@ spec:
                   key: secret-access-key
             {{- if .Values.existingSecrets.gemini }}
             # Enables POST /api/genai/generate (one-off UI generations).
-            # Display-job content generation moved to the sync worker's
-            # display CronJob — see sync.display in values.yaml.
+            # Display-job content generation runs in the sync worker —
+            # see sync.display in values.yaml.
             # optional: the Secret may be created later; without it the GenAI
             # endpoints return 503 and everything else works.
             - name: API_GEMINI_API_KEY

@@ -6,10 +6,13 @@ shared with the display-job claim too: every claim records a ``running``
 run row so the UI can tell "in progress" from "waiting for a worker".
 """
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
+from cronsim import CronSim, CronSimError
 from inky_image_display_shared.models import GeminiSyncJob, ImmichSyncJob, SyncJobRun
+from inky_image_display_shared.time import as_utc_aware
 from sqlalchemy import ColumnElement
 from sqlmodel import col, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -20,14 +23,31 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 _RUNNING_STALE_AFTER = timedelta(minutes=30)
 
 
-def advance_schedule(next_run_at: datetime, interval: timedelta, now: datetime) -> datetime:
-    """Next tick on the fixed grid anchored at ``next_run_at``, strictly after ``now``.
+def validate_cron(expr: str) -> str:
+    """Return ``expr`` if it is a valid five-field cron expression.
 
-    Anchoring at the previous ``next_run_at`` instead of the claim time keeps
-    the cadence fixed: late claims (worker offline, cron jitter) don't shift
-    the grid, and missed ticks are skipped in one jump rather than replayed.
+    Raises:
+        ValueError: With cronsim's explanation when the expression is bad.
+
     """
-    return next_run_at + ((now - next_run_at) // interval + 1) * interval
+    try:
+        CronSim(expr, datetime(2026, 1, 1, tzinfo=UTC))
+    except CronSimError as exc:
+        raise ValueError(f"Invalid cron expression: {exc}") from exc
+    return expr
+
+
+def next_cron_run(expr: str, timezone: str, now: datetime) -> datetime:
+    """First cron occurrence strictly after ``now``; naive-UTC in and out.
+
+    The expression is evaluated as wall-clock time in ``timezone`` (cronsim
+    handles DST transitions), then converted back to the repo's naive-UTC
+    storage convention. Cron is inherently a fixed grid, so late claims
+    skip missed ticks instead of replaying them — the same anchoring
+    behaviour the interval scheduler had.
+    """
+    local_now = as_utc_aware(now).astimezone(ZoneInfo(timezone))
+    return next(CronSim(expr, local_now)).astimezone(UTC).replace(tzinfo=None)
 
 
 def due_clause[JobT: (ImmichSyncJob, GeminiSyncJob)](model: type[JobT], now: datetime) -> ColumnElement[bool]:
@@ -38,7 +58,7 @@ def due_clause[JobT: (ImmichSyncJob, GeminiSyncJob)](model: type[JobT], now: dat
     """
     return or_(
         col(model.run_requested_at).is_not(None),
-        (col(model.is_active).is_(True)) & (col(model.interval_minutes).is_not(None)) & (col(model.next_run_at) <= now),
+        (col(model.is_active).is_(True)) & (col(model.schedule_cron).is_not(None)) & (col(model.next_run_at) <= now),
     )
 
 
@@ -57,8 +77,8 @@ async def claim_due_jobs[JobT: (ImmichSyncJob, GeminiSyncJob)](
     result = await session.exec(select(model).where(due_clause(model, now)))
     jobs = list(result.all())
     for job in jobs:
-        if job.interval_minutes is not None and job.next_run_at is not None and job.next_run_at <= now:
-            job.next_run_at = advance_schedule(job.next_run_at, timedelta(minutes=job.interval_minutes), now)
+        if job.schedule_cron is not None and job.next_run_at is not None and job.next_run_at <= now:
+            job.next_run_at = next_cron_run(job.schedule_cron, job.schedule_timezone, now)
             session.add(job)
     await session.commit()
     for job in jobs:

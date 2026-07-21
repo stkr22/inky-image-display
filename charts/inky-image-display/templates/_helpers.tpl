@@ -53,7 +53,7 @@ workflow pins to the release tag.
 {{- end }}
 
 {{/*
-Base URL the sync CronJobs use to reach the API.
+Base URL the sync worker uses to reach the API.
 */}}
 {{- define "inky-image-display.syncApiBaseUrl" -}}
 {{- if .Values.sync.apiBaseUrl }}
@@ -64,7 +64,7 @@ Base URL the sync CronJobs use to reach the API.
 {{- end }}
 
 {{/*
-S3 writer environment for the sync containers (shared by both CronJobs).
+S3 writer environment for the sync worker container.
 */}}
 {{- define "inky-image-display.syncS3Env" -}}
 - name: S3_WRITER_ENDPOINT
@@ -90,7 +90,7 @@ S3 writer environment for the sync containers (shared by both CronJobs).
 {{- end }}
 
 {{/*
-Machine token the sync CronJobs present to the API (x-api-key). Optional in
+Machine token the sync worker presents to the API (x-api-key). Optional in
 the Secret: without it the jobs run unauthenticated, which only works while
 OIDC auth is disabled on the API.
 */}}

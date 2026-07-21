@@ -105,12 +105,13 @@ export interface SyncJob {
   taken_after: string | null
   taken_before: string | null
   rating: number | null
-  // null = manual runs only; a value auto-runs the job on that cadence via
-  // the worker's due-claim polling.
-  interval_minutes: number | null
+  // null = manual runs only; a five-field cron expression auto-runs the
+  // job, evaluated in schedule_timezone.
+  schedule_cron: string | null
+  schedule_timezone: string
   next_run_at: string | null
   last_run_at: string | null
-  // Set while a "Run now" click is waiting for the worker's next due-claim.
+  // Set while a "Run now" click is waiting for the worker to claim it.
   run_requested_at: string | null
   created_at: string
   updated_at: string
@@ -163,7 +164,8 @@ export interface GeminiJob {
   subjects: string[]
   images_per_subject: number
   retention_days: number | null
-  interval_minutes: number | null
+  schedule_cron: string | null
+  schedule_timezone: string
   next_run_at: string | null
   last_run_at: string | null
   run_requested_at: string | null
@@ -191,8 +193,9 @@ export interface Grid {
   current_image_id: string | null
   displayed_since: string | null
   display_schedule_enabled: boolean
-  display_time: string
-  display_weekday_mask: number
+  // Five-field cron evaluated in display_timezone; the enabled flag
+  // toggles the schedule without losing it.
+  display_cron: string
   display_timezone: string
   display_duration_seconds: number | null
   // Queue playback state: the group currently on the panels (if any) and
@@ -281,10 +284,11 @@ export interface DisplayJob {
   image_preset_id: string | null
   text_model_name: string
   is_active: boolean
-  interval_minutes: number | null
+  schedule_cron: string | null
+  schedule_timezone: string
   next_run_at: string | null
   last_run_at: string | null
-  // Set while a "Run now" click is waiting for the worker's next due-claim.
+  // Set while a "Run now" click is waiting for the worker to claim it.
   run_requested_at: string | null
   created_at: string
   updated_at: string

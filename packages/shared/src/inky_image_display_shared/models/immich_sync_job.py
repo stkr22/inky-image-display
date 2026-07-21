@@ -122,16 +122,19 @@ class ImmichSyncJob(SQLModel, table=True):
     rating: int | None = Field(default=None, ge=0, le=5, description="Minimum rating")
 
     # Scheduling lives on the job row so cadence is operator-tunable from
-    # the UI instead of baked into deployment cron specs. The worker runs on
-    # one frequent cron and claims whatever is due via POST /claim-due.
+    # the UI instead of baked into deployment cron specs. The API stamps
+    # next_run_at from the cron expression and wakes the worker over MQTT;
+    # the worker claims whatever is due via POST /claim-due.
     # Defaults stay None here (a SQLAlchemy column default would silently
     # override an explicit None at INSERT); the API create schema supplies
     # the default cadence and the route stamps the first next_run_at.
-    interval_minutes: int | None = Field(
+    schedule_cron: str | None = Field(
         default=None,
-        ge=1,
-        description="Auto-run cadence in minutes; None = manual runs only",
+        description="Five-field cron expression; None = manual runs only",
     )
+    # Cron fields are wall-clock — "daily at 06:00" must survive DST, so the
+    # expression is evaluated in this zone (mirrors Grid.display_timezone).
+    schedule_timezone: str = Field(default="UTC")
     next_run_at: datetime | None = Field(
         default=None,
         description="When the job is next due; advanced by the claim-due hand-out",

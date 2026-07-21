@@ -1,0 +1,74 @@
+{{- if or .Values.sync.immich.enabled .Values.sync.gemini.enabled .Values.sync.display.enabled }}
+# One long-running worker replaces the per-family CronJobs: the API
+# evaluates each job's cron schedule and wakes the worker over MQTT, so
+# Run-now clicks and due schedules take effect within seconds instead of
+# waiting for the next CronJob tick.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "inky-image-display.fullname" . }}-worker
+  labels:
+    {{- include "inky-image-display.selectorLabels" (dict "ctx" . "component" "worker") | nindent 4 }}
+    {{- include "inky-image-display.labels" . | nindent 4 }}
+spec:
+  # Singleton on purpose: claim cycles run one at a time, matching the old
+  # CronJobs' concurrencyPolicy: Forbid.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "inky-image-display.selectorLabels" (dict "ctx" . "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "inky-image-display.selectorLabels" (dict "ctx" . "component" "worker") | nindent 8 }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "inky-image-display.syncImage" . }}
+          imagePullPolicy: {{ .Values.sync.image.pullPolicy }}
+          args: ["worker"]
+          env:
+            - name: DISPLAY_API_BASE_URL
+              value: {{ include "inky-image-display.syncApiBaseUrl" . | quote }}
+            - name: WORKER_MQTT_HOST
+              value: {{ required "config.mqtt.host is required" .Values.config.mqtt.host | quote }}
+            - name: WORKER_MQTT_PORT
+              value: {{ .Values.config.mqtt.port | quote }}
+            - name: WORKER_ENABLE_IMMICH
+              value: {{ .Values.sync.immich.enabled | quote }}
+            - name: WORKER_ENABLE_GEMINI
+              value: {{ .Values.sync.gemini.enabled | quote }}
+            - name: WORKER_ENABLE_DISPLAY
+              value: {{ .Values.sync.display.enabled | quote }}
+            {{- if .Values.sync.immich.enabled }}
+            - name: IMMICH_BASE_URL
+              value: {{ required "config.immich.baseUrl is required when sync.immich.enabled" .Values.config.immich.baseUrl | quote }}
+            - name: IMMICH_MAX_IMAGES
+              value: {{ .Values.sync.immich.maxImages | quote }}
+            - name: IMMICH_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "existingSecrets.immich is required when sync.immich.enabled" .Values.existingSecrets.immich }}
+                  key: apiKey
+            {{- end }}
+            {{- if or .Values.sync.gemini.enabled .Values.sync.display.enabled }}
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "existingSecrets.gemini is required when sync.gemini.enabled or sync.display.enabled" .Values.existingSecrets.gemini }}
+                  key: gemini-api-key
+            {{- end }}
+            {{- include "inky-image-display.syncApiTokenEnv" . | nindent 12 }}
+            {{- include "inky-image-display.syncS3Env" . | nindent 12 }}
+            {{- with .Values.sync.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.sync.resources | nindent 12 }}
+{{- end }}

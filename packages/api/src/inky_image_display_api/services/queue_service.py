@@ -19,9 +19,8 @@ from __future__ import annotations
 
 import logging
 import random
-from datetime import UTC, datetime, time, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
-from zoneinfo import ZoneInfo
 
 from inky_image_display_shared.models import Device, Grid, Image, ImageGroup
 from inky_image_display_shared.schemas import DisplayCommand
@@ -32,9 +31,9 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.services import grid_service
 from inky_image_display_api.services.app_settings_service import get_default_refresh_seconds
+from inky_image_display_api.services.sync_job_scheduling import next_cron_run
 
 if TYPE_CHECKING:
-    from datetime import date, tzinfo
     from uuid import UUID
 
     from fastapi import FastAPI
@@ -289,64 +288,22 @@ async def release_queue(app: FastAPI, session: AsyncSession, grid: Grid) -> None
     await session.commit()
 
 
-# --- Scheduled daily display ---
-
-
-def _local_now(grid: Grid, now: datetime) -> datetime:
-    """Lift stored naive-UTC ``now`` into the grid's display timezone."""
-    return now.replace(tzinfo=UTC).astimezone(ZoneInfo(grid.display_timezone))
-
-
-def _display_on_day(grid: Grid, day: date, tz: tzinfo | None) -> datetime:
-    """Return the grid's display moment on a grid-local day, as naive UTC."""
-    hour, minute = (int(piece) for piece in grid.display_time.split(":"))
-    return datetime.combine(day, time(hour, minute), tzinfo=tz).astimezone(UTC).replace(tzinfo=None)
-
-
-def _display_at_utc(grid: Grid, now: datetime) -> datetime | None:
-    """Today's display time (grid-local) as naive UTC, or None off-schedule days."""
-    local = _local_now(grid, now)
-    if not grid.display_weekday_mask & (1 << local.weekday()):
-        return None
-    return _display_on_day(grid, local.date(), local.tzinfo)
-
-
-def local_today(grid: Grid, now: datetime) -> date:
-    """Today's date on the operator's calendar (grid display timezone)."""
-    return _local_now(grid, now).date()
-
-
-def next_display_at(grid: Grid, now: datetime) -> datetime | None:
-    """Return the next scheduled display occurrence as naive UTC (None if disabled).
-
-    Scans a week of grid-local days: today counts if the time is still
-    ahead and today's display has not already run.
-    """
-    if not grid.display_schedule_enabled:
-        return None
-    local = _local_now(grid, now)
-    for offset in range(8):
-        day = local.date() + timedelta(days=offset)
-        if not grid.display_weekday_mask & (1 << day.weekday()) or grid.last_displayed_on == day:
-            continue
-        display_at = _display_on_day(grid, day, local.tzinfo)
-        if display_at > now:
-            return display_at
-    return None
+# --- Scheduled display ---
 
 
 def display_due(grid: Grid, now: datetime) -> bool:
-    """Report whether the grid's scheduled daily display should start."""
-    if not grid.display_schedule_enabled:
+    """Report whether the grid's scheduled display should start.
+
+    ``display_next_at`` is a lease exactly like the jobs' ``next_run_at``:
+    it is stamped by the grid routes when the schedule is edited/enabled
+    and advanced along the cron grid by ``queue_tick`` once a display
+    actually starts.
+    """
+    if not grid.display_schedule_enabled or grid.display_next_at is None:
         return False
     if grid.hold_until is not None and grid.hold_until > now:
         return False
-    display_at = _display_at_utc(grid, now)
-    if display_at is None:
-        return False
-    if grid.last_displayed_on == local_today(grid, now):
-        return False
-    return now >= display_at
+    return now >= grid.display_next_at
 
 
 async def queue_tick(app: FastAPI) -> None:
@@ -369,13 +326,13 @@ async def queue_tick(app: FastAPI) -> None:
             grid = await session.get(Grid, grid_id)
             if grid is None or not display_due(grid, now):
                 continue
-            # An empty queue is not marked displayed — the next tick retries
-            # until content (e.g. the day's generated group) exists.
+            # An empty queue does not advance the lease — the next tick
+            # retries until content (e.g. the day's generated group) exists.
             if not await show_next(app, session, grid):
                 continue
             grid = await session.get(Grid, grid_id)  # show_next committed; re-fetch
             if grid is not None:
-                grid.last_displayed_on = local_today(grid, now)
+                grid.display_next_at = next_cron_run(grid.display_cron, grid.display_timezone, now)
                 session.add(grid)
                 await session.commit()
             logger.info("Grid %s scheduled display started", grid_id)

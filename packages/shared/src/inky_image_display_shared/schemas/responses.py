@@ -9,7 +9,7 @@ Request/update schemas remain in ``inky_image_display_api.schemas`` —
 only the API accepts input, so there is nothing to share on that side.
 """
 
-from datetime import date, datetime
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -184,7 +184,8 @@ class SyncJobResponse(BaseModel):
     taken_after: datetime | None
     taken_before: datetime | None
     rating: int | None
-    interval_minutes: int | None = None
+    schedule_cron: str | None = None
+    schedule_timezone: str = "UTC"
     next_run_at: UtcDatetime | None = None
     last_run_at: UtcDatetime | None = None
     run_requested_at: UtcDatetime | None = None
@@ -267,7 +268,8 @@ class GeminiSyncJobResponse(BaseModel):
     subjects: list[str]
     images_per_subject: int
     retention_days: int | None
-    interval_minutes: int | None = None
+    schedule_cron: str | None = None
+    schedule_timezone: str = "UTC"
     next_run_at: UtcDatetime | None = None
     last_run_at: UtcDatetime | None = None
     run_requested_at: UtcDatetime | None = None
@@ -310,13 +312,12 @@ class GridResponse(BaseModel):
     current_image_id: UUID | None
     displayed_since: UtcDatetime | None
     display_schedule_enabled: bool = False
-    display_time: str = "08:00"
-    display_weekday_mask: int = 127
+    display_cron: str = "0 8 * * *"
     display_timezone: str = "UTC"
     display_duration_seconds: int | None = None
     current_group_id: UUID | None = None
     hold_until: UtcDatetime | None = None
-    last_displayed_on: date | None = None
+    display_next_at: UtcDatetime | None = None
     created_at: UtcDatetime
     updated_at: UtcDatetime
     devices: list[GridDeviceResponse] | None = None
@@ -403,7 +404,8 @@ class DisplayJobResponse(BaseModel):
     image_preset_id: UUID | None
     text_model_name: str
     is_active: bool
-    interval_minutes: int | None
+    schedule_cron: str | None
+    schedule_timezone: str
     next_run_at: UtcDatetime | None
     last_run_at: UtcDatetime | None
     run_requested_at: UtcDatetime | None

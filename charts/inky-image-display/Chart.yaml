@@ -2,7 +2,7 @@ apiVersion: v2
 name: inky-image-display
 description: >-
   E-ink photo display fleet: FastAPI backend serving the operator UI and
-  media proxy, plus Immich and Gemini sync CronJobs. Secrets (S3 keys,
+  media proxy, plus an MQTT-woken sync worker. Secrets (S3 keys,
   Immich/Gemini API keys) are referenced by name and must be created
   separately.
 type: application

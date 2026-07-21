@@ -30,7 +30,9 @@ from inky_image_display_shared.schemas.responses import (
     SyncJobRunResponse,
     UtcDatetime,
 )
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, Field, field_validator, model_validator
+
+from inky_image_display_api.services.sync_job_scheduling import validate_cron
 
 __all__ = [
     "AppSettingsResponse",
@@ -85,8 +87,20 @@ __all__ = [
 _MAX_REFRESH_SECONDS = 7 * 24 * 3600
 RefreshIntervalSeconds = Annotated[int, Field(ge=1, le=_MAX_REFRESH_SECONDS)]
 
-# Range guard for sync-job cadence: 1 minute through 4 weeks.
-SyncIntervalMinutes = Annotated[int, Field(ge=1, le=28 * 24 * 60)]
+
+def _validate_timezone(value: str | None) -> str | None:
+    if value is not None:
+        try:
+            ZoneInfo(value)
+        except (KeyError, ValueError) as exc:
+            raise ValueError(f"Unknown IANA timezone: {value}") from exc
+    return value
+
+
+# Job cadence: a five-field cron expression, validated by the same code
+# that later evaluates it, plus the IANA zone it is evaluated in.
+CronExpression = Annotated[str, AfterValidator(validate_cron)]
+ScheduleTimezone = Annotated[str, AfterValidator(_validate_timezone)]
 
 # --- Images ---
 
@@ -209,9 +223,10 @@ class SyncJobCreate(BaseModel):
 
     name: str
     is_active: bool = True
-    # None = manual runs only (Run-now button); a value auto-runs the job
-    # on that cadence via the worker's due-claim polling.
-    interval_minutes: SyncIntervalMinutes | None = 60
+    # None = manual runs only (Run-now button); a cron expression auto-runs
+    # the job on that schedule, evaluated in schedule_timezone.
+    schedule_cron: CronExpression | None = "0 * * * *"
+    schedule_timezone: ScheduleTimezone = "UTC"
     target_device_profile_id: UUID
     orientation: str | None = None
     strategy: str = "RANDOM"
@@ -237,13 +252,14 @@ class SyncJobCreate(BaseModel):
 class SyncJobUpdate(BaseModel):
     """Fields accepted when updating a sync job (all optional).
 
-    ``interval_minutes`` uses ``exclude_unset`` semantics: sending an
+    ``schedule_cron`` uses ``exclude_unset`` semantics: sending an
     explicit ``null`` switches the job to manual-only runs.
     """
 
     name: str | None = None
     is_active: bool | None = None
-    interval_minutes: SyncIntervalMinutes | None = None
+    schedule_cron: CronExpression | None = None
+    schedule_timezone: ScheduleTimezone | None = None
     target_device_profile_id: UUID | None = None
     orientation: str | None = None
     strategy: str | None = None
@@ -356,7 +372,8 @@ class GeminiSyncJobCreate(BaseModel):
     name: str
     is_active: bool = True
     # Daily default: Gemini batches spend real generation quota.
-    interval_minutes: SyncIntervalMinutes | None = 1440
+    schedule_cron: CronExpression | None = "0 0 * * *"
+    schedule_timezone: ScheduleTimezone = "UTC"
     target_device_profile_id: UUID
     prompt_preset_id: UUID
     orientation: str = "portrait"
@@ -368,12 +385,13 @@ class GeminiSyncJobCreate(BaseModel):
 class GeminiSyncJobUpdate(BaseModel):
     """Patch fields on an existing Gemini sync job (all optional).
 
-    ``interval_minutes``: explicit ``null`` switches to manual-only runs.
+    ``schedule_cron``: explicit ``null`` switches to manual-only runs.
     """
 
     name: str | None = None
     is_active: bool | None = None
-    interval_minutes: SyncIntervalMinutes | None = None
+    schedule_cron: CronExpression | None = None
+    schedule_timezone: ScheduleTimezone | None = None
     target_device_profile_id: UUID | None = None
     prompt_preset_id: UUID | None = None
     orientation: str | None = None
@@ -443,15 +461,6 @@ def _validate_layout_rows(rows: list[list[UUID]]) -> list[list[UUID]]:
     return rows
 
 
-def _validate_timezone(value: str | None) -> str | None:
-    if value is not None:
-        try:
-            ZoneInfo(value)
-        except (KeyError, ValueError) as exc:
-            raise ValueError(f"Unknown IANA timezone: {value}") from exc
-    return value
-
-
 class GridCreate(BaseModel):
     """Payload to create a grid.
 
@@ -478,8 +487,7 @@ class GridUpdate(BaseModel):
     name: str | None = None
     rows: list[list[UUID]] | None = Field(default=None, min_length=1)
     display_schedule_enabled: bool | None = None
-    display_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
-    display_weekday_mask: int | None = Field(default=None, ge=1, le=127)
+    display_cron: CronExpression | None = None
     display_timezone: str | None = None
     display_duration_seconds: RefreshIntervalSeconds | None = None
     # Duration None means "until released"; a dedicated flag distinguishes
@@ -541,14 +549,15 @@ class DisplayJobCreate(BaseModel):
     """Body for ``POST /api/display-jobs``.
 
     Content fields start on the model defaults; the UI edits them
-    afterwards via the update endpoint. ``interval_minutes`` ``None`` means
+    afterwards via the update endpoint. ``schedule_cron`` ``None`` means
     manual generation only, matching the sync jobs.
     """
 
     name: str = Field(min_length=1, max_length=200)
     job_type: Literal["motd"] = "motd"
     target_grid_id: UUID | None = None
-    interval_minutes: SyncIntervalMinutes | None = None
+    schedule_cron: CronExpression | None = None
+    schedule_timezone: ScheduleTimezone = "UTC"
 
 
 class DisplayJobDisplayRequest(BaseModel):
@@ -679,10 +688,11 @@ class DisplayJobUpdate(BaseModel):
     image_preset_id: UUID | None = None
     clear_image_preset: bool = False
     text_model_name: str | None = Field(default=None, min_length=1, max_length=100)
-    interval_minutes: SyncIntervalMinutes | None = None
-    # Interval None means "manual generation only"; a dedicated flag
+    schedule_cron: CronExpression | None = None
+    schedule_timezone: ScheduleTimezone | None = None
+    # Cron None means "manual generation only"; a dedicated flag
     # distinguishes "leave unchanged" from "set manual" in the partial update.
-    clear_interval: bool = False
+    clear_schedule: bool = False
     slots: list[DisplayJobSlotUpdate] | None = None
 
     @field_validator("slots")

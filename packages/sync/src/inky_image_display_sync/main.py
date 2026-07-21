@@ -4,9 +4,11 @@ Defaults to running the Immich sync (back-compat with the original
 single-command invocation) but also exposes a ``gemini`` subcommand for
 AI-generated batches.
 
-Job cadence lives on the job rows in the API's database: the default mode
-claims whatever is due (per-job interval plus Run-now flags), so a single
-frequent cron — e.g. every minute — drives all schedules.
+Job cadence lives on the job rows in the API's database (cron
+expressions plus Run-now flags). Production runs the ``worker``
+subcommand: a long-running process that claims due jobs when the API
+rings its MQTT wake topic (and on a slow safety poll). The one-shot
+subcommands remain for manual runs and debugging.
 """
 
 import asyncio
@@ -16,6 +18,7 @@ from typing import Annotated
 import typer
 from inky_image_display_shared.logging import setup_logging
 
+from inky_image_display_sync import worker as worker_module
 from inky_image_display_sync.display import DisplayJobAPIClient, DisplayJobSyncService
 from inky_image_display_sync.gemini import GeminiSyncService
 from inky_image_display_sync.gemini.api_client import GeminiDisplayAPIClient
@@ -62,6 +65,13 @@ def gemini(
 def display() -> None:
     """Claim due display jobs and generate their content (story + screens)."""
     asyncio.run(run_display_sync())
+
+
+@app.command()
+def worker() -> None:
+    """Run the long-lived worker: MQTT wakes + safety poll drive claim cycles."""
+    setup_logging()
+    asyncio.run(worker_module.run_worker())
 
 
 async def run_immich_sync(dry_run: bool, all_active: bool = False) -> None:

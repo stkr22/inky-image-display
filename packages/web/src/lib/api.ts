@@ -219,6 +219,9 @@ export const api = {
 
   // --- Schedule / settings / generation ---
   getScheduleUpcoming: (limit = 20) => request<ScheduleEntry[]>('/api/schedule/upcoming', { params: { limit } }),
+  cronPreview: (cron: string, timezone: string) =>
+    request<{ next_runs: string[] }>('/api/schedule/cron-preview', { method: 'POST', body: { cron, timezone } }),
+  getWorkerStatus: () => request<{ online: boolean }>('/api/schedule/worker-status'),
   getAppSettings: () => request<AppSettings>('/api/app-settings'),
   updateAppSettings: (body: Record<string, unknown>) =>
     request<AppSettings>('/api/app-settings', { method: 'PUT', body }),

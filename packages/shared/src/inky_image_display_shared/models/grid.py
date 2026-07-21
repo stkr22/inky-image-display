@@ -6,7 +6,7 @@ coordinates; the API pre-renders per-device crops so controllers receive an
 ordinary display command pointing at their slice.
 """
 
-from datetime import date, datetime
+from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlmodel import Field, SQLModel
@@ -31,14 +31,14 @@ class Grid(SQLModel, table=True):
     current_image_id: UUID | None = Field(default=None, foreign_key="images.id")
     displayed_since: datetime | None = Field(default=None)
 
-    # Daily display schedule: when this grid steps its content queue one
-    # entry forward. ``display_time`` is a local wall-clock "HH:MM" in
+    # Display schedule: when this grid steps its content queue one entry
+    # forward. Same cron mechanism as the jobs: ``display_cron`` is a
+    # five-field expression evaluated as wall-clock time in
     # ``display_timezone`` — the repo is otherwise UTC-everywhere, but a
     # "show at 08:00" schedule only makes sense in the operator's local
-    # time. ``display_weekday_mask`` bit 0 = Monday.
+    # time. The enabled flag toggles the schedule without losing it.
     display_schedule_enabled: bool = Field(default=False)
-    display_time: str = Field(default="08:00")
-    display_weekday_mask: int = Field(default=127)
+    display_cron: str = Field(default="0 8 * * *")
     display_timezone: str = Field(default="UTC")
     # ``None`` shows the content until the operator releases it manually.
     display_duration_seconds: int | None = Field(default=None)
@@ -52,9 +52,11 @@ class Grid(SQLModel, table=True):
     # scheduled daily display and manual "show now" set it; expiry or an
     # explicit release clears it.
     hold_until: datetime | None = Field(default=None)
-    # Once-per-day guard for the scheduler tick, a local date in
-    # ``display_timezone`` so "today" matches the operator's calendar.
-    last_displayed_on: date | None = Field(default=None)
+    # Next scheduled display as naive UTC — the same lease pattern as the
+    # jobs' ``next_run_at``: stamped when the schedule is enabled/edited,
+    # advanced along the cron grid when a display fires. ``None`` while
+    # the schedule is disabled.
+    display_next_at: datetime | None = Field(default=None)
 
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow, sa_column_kwargs={"onupdate": utcnow})

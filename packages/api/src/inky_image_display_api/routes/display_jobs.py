@@ -10,7 +10,6 @@ lives on the grid routes (queue / display-group / release).
 
 import json
 import logging
-from datetime import timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -38,7 +37,7 @@ from inky_image_display_api.services import display_job_service, grid_service, m
 from inky_image_display_api.services.display_job_service import MOTD_SCENE_PRESET_NAME
 from inky_image_display_api.services.image_group_service import group_response
 from inky_image_display_api.services.queue_service import QueueError
-from inky_image_display_api.services.sync_job_scheduling import begin_runs
+from inky_image_display_api.services.sync_job_scheduling import begin_runs, next_cron_run
 
 router = APIRouter(prefix="/api/display-jobs", tags=["display-jobs"])
 logger = logging.getLogger(__name__)
@@ -149,9 +148,10 @@ async def create_display_job(request: Request, body: DisplayJobCreate) -> Displa
             job_type=body.job_type,
             target_grid_id=body.target_grid_id,
             image_preset_id=scene_preset.id if scene_preset else None,
-            interval_minutes=body.interval_minutes,
+            schedule_cron=body.schedule_cron,
+            schedule_timezone=body.schedule_timezone,
         )
-        if job.interval_minutes is not None:
+        if job.schedule_cron is not None:
             # Due immediately: a freshly created job should deliver right away.
             job.next_run_at = utcnow()
         session.add(job)
@@ -191,13 +191,15 @@ async def update_display_job(request: Request, job_id: UUID, body: DisplayJobUpd
             job.image_preset_id = None
         elif body.image_preset_id is not None:
             job.image_preset_id = body.image_preset_id
-        if body.clear_interval:
-            job.interval_minutes = None
+        if body.clear_schedule:
+            job.schedule_cron = None
             job.next_run_at = None
-        elif body.interval_minutes is not None:
+        elif body.schedule_cron is not None or body.schedule_timezone is not None:
             # Rebase the schedule on the new cadence (mirrors the sync jobs).
-            job.interval_minutes = body.interval_minutes
-            job.next_run_at = utcnow() + timedelta(minutes=body.interval_minutes)
+            job.schedule_cron = body.schedule_cron or job.schedule_cron
+            job.schedule_timezone = body.schedule_timezone or job.schedule_timezone
+            if job.schedule_cron is not None:
+                job.next_run_at = next_cron_run(job.schedule_cron, job.schedule_timezone, utcnow())
         session.add(job)
 
         if body.slots is not None:
@@ -246,7 +248,9 @@ async def request_display_job_run(request: Request, job_id: UUID) -> DisplayJobR
         await session.commit()
         await session.refresh(job)
         logger.info("Run requested for display job %s (%s)", job_id, job.name)
-        return _job_response(job, await display_job_service.list_slots(session, job.id))
+        response = _job_response(job, await display_job_service.list_slots(session, job.id))
+    await request.app.state.mqtt.publish_wake("display")
+    return response
 
 
 @router.post("/{job_id}/display")
