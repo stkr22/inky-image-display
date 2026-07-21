@@ -51,7 +51,7 @@ def apply_busy_wait_fix() -> bool:
     patches the class, not an instance.
     """
     try:
-        import inky.inky_el133uf1 as el133  # noqa: PLC0415  # ty: ignore[unresolved-import]
+        import inky.inky_el133uf1 as el133  # noqa: PLC0415
     except Exception:
         logger.debug("EL133UF1 driver not importable; busy-wait fix not applied")
         return False

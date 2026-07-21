@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING
 from inky_image_display_shared.models import DisplayJob, DisplayJobSlot, Grid, Image, ImageGroup
 from sqlmodel import col, or_, select
 
+from inky_image_display_api.services.sync_job_scheduling import advance_schedule
+
 if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
@@ -82,14 +84,16 @@ async def claim_due_jobs(session: AsyncSession, now: datetime) -> list[DisplayJo
     """Hand out due jobs and advance their schedules.
 
     Advancing ``next_run_at`` at hand-out doubles as a lease, exactly like
-    the sync jobs' claim. The Run-now flag is cleared by the posted run
-    report, so a worker that dies mid-run leaves the request armed.
+    the sync jobs' claim: only schedule-due jobs advance, along the fixed
+    grid, so Run-now claims and late workers don't shift the cadence. The
+    Run-now flag is cleared by the posted run report, so a worker that
+    dies mid-run leaves the request armed.
     """
     result = await session.exec(select(DisplayJob).where(due_clause(now)))
     jobs = list(result.all())
     for job in jobs:
-        if job.interval_minutes is not None:
-            job.next_run_at = now + timedelta(minutes=job.interval_minutes)
+        if job.interval_minutes is not None and job.next_run_at is not None and job.next_run_at <= now:
+            job.next_run_at = advance_schedule(job.next_run_at, timedelta(minutes=job.interval_minutes), now)
             session.add(job)
     await session.commit()
     for job in jobs:

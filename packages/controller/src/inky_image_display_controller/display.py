@@ -195,7 +195,7 @@ class InkyDisplay:
         # Eager init - get dimensions from hardware
         try:
             if _display is None:
-                from inky.auto import auto  # noqa: PLC0415  # ty: ignore[unresolved-import]
+                from inky.auto import auto  # noqa: PLC0415
 
                 from inky_image_display_controller.el133uf1_patch import apply_busy_wait_fix  # noqa: PLC0415
 
