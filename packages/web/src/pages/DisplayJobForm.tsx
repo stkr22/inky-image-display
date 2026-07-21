@@ -8,7 +8,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { Button, NumberField, SelectField, Switch, TextArea, TextField } from '../components/fields'
+import { Button, SelectField, Switch, TextArea, TextField } from '../components/fields'
+import { ScheduleEditor, type ScheduleValue } from '../components/ScheduleEditor'
 import { GridMiniPreview } from '../components/GridMiniPreview'
 import { useNotify } from '../components/Toast'
 import { Badge, EmptyNote, ErrorNote, PageHeader, Spinner } from '../components/ui'
@@ -103,7 +104,7 @@ function JobActions({ job }: { job: DisplayJob }) {
       <div className="row w-full items-center gap-3 wrap">
         <span className="ink-small">
           {job.last_run_at ? `Last generated ${formatRelative(job.last_run_at)}` : 'Nothing generated yet'}
-          {job.interval_minutes != null && job.next_run_at ? ` · next run ${formatRelative(job.next_run_at)}` : ''}
+          {job.schedule_cron != null && job.next_run_at ? ` · next run ${formatRelative(job.next_run_at)}` : ''}
         </span>
         {runQueued && <Badge tone="accent">Run queued</Badge>}
         <div className="flex-1" />
@@ -134,7 +135,7 @@ function JobConfig({ job, grids }: { job: DisplayJob; grids: Grid[] }) {
   const [sourceMode, setSourceMode] = useState<string>(job.source_mode)
   const [presetId, setPresetId] = useState(job.image_preset_id ?? '')
   const [gridId, setGridId] = useState(job.target_grid_id ?? '')
-  const [intervalMinutes, setIntervalMinutes] = useState<number | ''>(job.interval_minutes ?? '')
+  const [schedule, setSchedule] = useState<ScheduleValue>({ cron: job.schedule_cron, timezone: job.schedule_timezone || 'UTC' })
   // One part per slot (single or a "two texts on one screen" combo).
   const [slotParts, setSlotParts] = useState<Record<string, string>>(() =>
     Object.fromEntries(job.slots.map((slot) => [`${slot.row}:${slot.col}`, slot.parts[0] ?? 'what'])),
@@ -160,7 +161,6 @@ function JobConfig({ job, grids }: { job: DisplayJob; grids: Grid[] }) {
     setSaving(true)
     setError('')
     try {
-      const interval = Number(intervalMinutes) || 0
       await api.updateDisplayJob(job.id, {
         name: name.trim() || job.name,
         content_prompt: prompt.trim(),
@@ -169,8 +169,9 @@ function JobConfig({ job, grids }: { job: DisplayJob; grids: Grid[] }) {
         clear_image_preset: !presetId,
         target_grid_id: gridId || null,
         clear_target_grid: !gridId,
-        interval_minutes: interval > 0 ? interval : null,
-        clear_interval: interval <= 0,
+        schedule_cron: schedule.cron,
+        schedule_timezone: schedule.timezone || 'UTC',
+        clear_schedule: schedule.cron == null,
         slots: Object.entries(slotParts).map(([key, part]) => {
           const [row, col] = key.split(':').map(Number)
           return { row, col, parts: [part] }
@@ -250,15 +251,10 @@ function JobConfig({ job, grids }: { job: DisplayJob; grids: Grid[] }) {
             <span className="ink-eyebrow">Generation</span>
             <h3 className="ink-h3">How often is new content made?</h3>
           </div>
-          <NumberField
-            label="Generate every (minutes, blank = manual only)"
-            value={intervalMinutes}
-            onChange={setIntervalMinutes}
-            min={1}
-          />
+          <ScheduleEditor value={schedule} onChange={setSchedule} />
           <span className="ink-small">
-            Generation and display are independent: the worker produces content on this cadence (1440 = daily), and
-            each grid decides on its own schedule when to show the latest generated group.
+            Generation and display are independent: the worker produces content on this schedule, and each grid
+            decides on its own schedule when to show the latest generated group.
           </span>
         </div>
       </div>

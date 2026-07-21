@@ -142,6 +142,8 @@ def mock_mqtt() -> MagicMock:
     mqtt.is_connected = MagicMock(return_value=False)
     mqtt.connected_device_ids = MagicMock(return_value=[])
     mqtt.send_command = AsyncMock()
+    mqtt.publish_wake = AsyncMock()
+    mqtt.worker_online = False
     return mqtt
 
 

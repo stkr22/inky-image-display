@@ -18,9 +18,10 @@ fresh (never-shown) entries play first in the operator's order, then the
 least recently shown entry replays.
 
 **Grids do not rotate on an interval.** A grid shows content only when its
-daily display schedule fires (`display_*` columns: enabled, "HH:MM" local
-time, weekday mask, IANA timezone, duration) or when an operator acts
-("show now" / "next"). Each display steps the queue **one entry** forward
+display schedule fires (`display_schedule_enabled` + `display_cron`, the
+same five-field cron mechanism the jobs use, evaluated in
+`display_timezone`; `display_next_at` is the lease the queue tick fires
+on) or when an operator acts ("show now" / "next"). Each display steps the queue **one entry** forward
 and holds it for `display_duration_seconds` (or until an explicit release
 when unset); when the hold expires the member panels are released back to
 their own solo rotation. A single display participates in that system by
@@ -216,8 +217,9 @@ curl -X POST localhost:8000/api/grids/<grid_id>/release
 ## Operational notes
 
 - **The queue tick (every 30 s) drives grids.** It starts the scheduled
-  daily display when due — one queue entry, shown and held — and releases
-  the panels when a hold expires. A group's slot-assigned images show
+  display when its cron lease elapses — one queue entry, shown and held —
+  and releases the panels when a hold expires. An empty queue does not
+  advance the lease, so the tick retries until content exists. A group's slot-assigned images show
   simultaneously, one per panel; images without a slot assignment are not
   shown (a group with none is skipped entirely); assign panels in the
   Groups overview on the Images page.

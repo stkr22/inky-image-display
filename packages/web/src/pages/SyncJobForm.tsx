@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Button, Icon, NumberField, RefMultiSelect, SelectField, Slider, Switch, TextField } from '../components/fields'
+import { ScheduleEditor, type ScheduleValue } from '../components/ScheduleEditor'
 import { useNotify } from '../components/Toast'
 import { PageHeader, Spinner } from '../components/ui'
 import { api, ApiError } from '../lib/api'
@@ -40,7 +41,7 @@ export function SyncJobForm() {
   const [overfetch, setOverfetch] = useState(3)
   const [randomPick, setRandomPick] = useState(false)
   const [active, setActive] = useState(true)
-  const [intervalMinutes, setIntervalMinutes] = useState<number | ''>(60)
+  const [schedule, setSchedule] = useState<ScheduleValue>({ cron: '0 * * * *', timezone: 'UTC' })
   const [albumIds, setAlbumIds] = useState<string[]>([])
   const [personIds, setPersonIds] = useState<string[]>([])
   const [tagIds, setTagIds] = useState<string[]>([])
@@ -67,7 +68,7 @@ export function SyncJobForm() {
     setOverfetch(job.overfetch_multiplier || 3)
     setRandomPick(job.random_pick)
     setActive(job.is_active)
-    setIntervalMinutes(typeof job.interval_minutes === 'number' ? job.interval_minutes : '')
+    setSchedule({ cron: job.schedule_cron, timezone: job.schedule_timezone || 'UTC' })
     setAlbumIds(job.album_ids ?? [])
     setPersonIds(job.person_ids ?? [])
     setTagIds(job.tag_ids ?? [])
@@ -112,9 +113,6 @@ export function SyncJobForm() {
       return setError('Max images must be 0 (unlimited) or greater')
     }
     if (strategy === 'SMART' && !query.trim()) return setError('Query is required when strategy is SMART')
-    if (intervalMinutes !== '' && (!Number.isInteger(Number(intervalMinutes)) || Number(intervalMinutes) < 1)) {
-      return setError('Run interval must be at least 1 minute (or blank for manual runs only)')
-    }
 
     const body = {
       name,
@@ -139,7 +137,8 @@ export function SyncJobForm() {
       taken_before: takenBefore || null,
       rating: rating === '' ? null : Number(rating),
       is_active: active,
-      interval_minutes: intervalMinutes === '' ? null : Number(intervalMinutes),
+      schedule_cron: schedule.cron,
+      schedule_timezone: schedule.timezone || 'UTC',
     }
     try {
       if (isEdit) await api.updateSyncJob(jobId!, body)
@@ -243,16 +242,7 @@ export function SyncJobForm() {
       <div className="bento-tile w-full" style={{ padding: 24 }}>
         <div className="ink-form-section w-full">
           <span className="ink-eyebrow">Schedule</span>
-          <div className="ink-form-row items-end w-full">
-            <NumberField
-              label="Run every (minutes, blank = manual only)"
-              value={intervalMinutes}
-              onChange={setIntervalMinutes}
-              min={1}
-              step={1}
-              help="How often the worker runs this job automatically, on a fixed cadence — manual runs and worker downtime don't shift it. Leave blank to only run it via the 'Run now' button."
-            />
-          </div>
+          <ScheduleEditor value={schedule} onChange={setSchedule} />
           <Switch
             label="Active"
             checked={active}

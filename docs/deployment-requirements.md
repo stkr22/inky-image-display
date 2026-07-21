@@ -123,43 +123,47 @@ spec:
               value: inky-images
 ```
 
-### Sync (CronJob)
+### Sync worker (Deployment)
 
 ```yaml
-apiVersion: batch/v1
-kind: CronJob
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: inky-immich-sync
+  name: inky-sync-worker
 spec:
-  schedule: "*/2 * * * *"   # frequent; per-job cadence is set in the UI
-  jobTemplate:
+  replicas: 1   # claim cycles run one at a time
+  template:
     spec:
-      template:
-        spec:
-          restartPolicy: OnFailure
-          containers:
-            - name: sync
-              image: ghcr.io/stkr22/inky-image-display-sync:latest
-              args: ["immich"]
-              envFrom:
-                - secretRef:
-                    name: inky-sync-secrets
-              env:
-                - name: DISPLAY_API_BASE_URL
-                  value: http://inky-image-display-api.svc:8000
-                - name: IMMICH_BASE_URL
-                  value: https://photos.example.com
-                - name: S3_WRITER_ENDPOINT
-                  value: garage.storage.svc:3900
-                - name: S3_WRITER_BUCKET
-                  value: inky-images
+      containers:
+        - name: worker
+          image: ghcr.io/stkr22/inky-image-display-sync:latest
+          args: ["worker"]
+          envFrom:
+            - secretRef:
+                name: inky-sync-secrets
+          env:
+            - name: DISPLAY_API_BASE_URL
+              value: http://inky-image-display-api.svc:8000
+            - name: WORKER_MQTT_HOST
+              value: mosquitto.mqtt.svc.cluster.local
+            - name: WORKER_ENABLE_IMMICH
+              value: "true"
+            - name: IMMICH_BASE_URL
+              value: https://photos.example.com
+            - name: S3_WRITER_ENDPOINT
+              value: garage.storage.svc:3900
+            - name: S3_WRITER_BUCKET
+              value: inky-images
 ```
 
-The CronJob only needs to fire frequently — each invocation asks the API for
-*due* jobs (per-job "Run every" intervals plus UI "Run now" flags) and exits
-immediately when nothing is due, so the frequent schedule stays cheap and no
-per-cadence CronJobs are needed.
+One long-running worker replaces the old per-family CronJobs. Per-job
+cadence is a cron schedule set in the UI; the API wakes the worker over
+MQTT when jobs are due (or when "Run now" is clicked), and the worker also
+polls on `WORKER_POLL_INTERVAL_SECONDS` (default 600) as a safety net, so
+a missed wake delays a run instead of losing it. Without `WORKER_MQTT_HOST`
+the worker runs in poll-only mode.
 
-For the Gemini batch sync, deploy a second `CronJob` with `args: ["gemini"]`
-and add `GEMINI_API_KEY` to the secret; cadence is likewise per job in the
-UI (Gemini jobs default to daily — generation is billed per image).
+Enable the other job families with `WORKER_ENABLE_GEMINI` /
+`WORKER_ENABLE_DISPLAY` and add `GEMINI_API_KEY` to the secret; cadence is
+likewise per job in the UI (Gemini jobs default to daily — generation is
+billed per image).

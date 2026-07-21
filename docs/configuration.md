@@ -123,18 +123,18 @@ display:
 
 ## Sync (`inky-image-display-sync`)
 
-Job cadence lives on the job rows in the API's database (each job's
-"Run every" setting in the UI), not in cron specs. Both subcommands
-(`immich`, `gemini`) support:
+Job cadence lives on the job rows in the API's database (each job's cron
+schedule in the UI), not in deployment cron specs. Production runs the
+**`worker`** subcommand: a long-running process that claims due jobs —
+jobs whose cron schedule has elapsed, plus jobs flagged by the UI's "Run
+now" button (active or not) — whenever the API rings its MQTT wake topic,
+on startup, and on a slow safety poll. The claim advances each job's
+schedule, so a duplicate wake never double-runs a job.
 
-- **Due runs** (no flag, the normal mode): claim due jobs from the API —
-  jobs whose interval has elapsed, plus jobs flagged by the UI's "Run now"
-  button (active or not). Run this on one frequent cron (every minute or
-  two); it exits immediately when nothing is due, so it stays cheap. The
-  claim advances each job's schedule, so overlapping invocations don't
-  double-run a job.
-- **`--all`**: ignore the per-job schedule and run every active job —
-  manual/debug invocations.
+The one-shot subcommands (`immich`, `gemini`, `display`) remain for
+manual/debug runs and support:
+
+- **`--all`**: ignore the per-job schedule and run every active job.
 - **`--dry-run`**: preview the jobs a run would process without claiming
   them (composable with `--all`).
 
@@ -142,6 +142,22 @@ Every completed job run POSTs a summary to `POST /api/sync-runs`
 (images added/skipped/deleted, status, errors); the UI shows it as each
 job's "Last run" line and it is what clears the run-now flag and stamps
 the job's `last_run_at`.
+
+### Worker (only the `worker` subcommand)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `WORKER_MQTT_HOST` | No | — | MQTT broker host. Unset = poll-only mode (no wakes, no status topic). |
+| `WORKER_MQTT_PORT` | No | `1883` | Broker port |
+| `WORKER_MQTT_USERNAME` / `WORKER_MQTT_PASSWORD` | No | — | Broker credentials |
+| `WORKER_MQTT_TLS` | No | `false` | Enable TLS to the broker |
+| `WORKER_MQTT_TRANSPORT` | No | `tcp` | `tcp` or `websockets` |
+| `WORKER_MQTT_WEBSOCKET_PATH` | No | `/mqtt` | Path for websocket transport |
+| `WORKER_MQTT_KEEP_ALIVE` | No | `30` | MQTT keep-alive (seconds) |
+| `WORKER_POLL_INTERVAL_SECONDS` | No | `600` | Safety-poll cadence; bounds how late a run can start if a wake is missed |
+| `WORKER_ENABLE_IMMICH` | No | `true` | Run Immich sync jobs in each cycle |
+| `WORKER_ENABLE_GEMINI` | No | `false` | Run Gemini batch jobs (needs `GEMINI_API_KEY`) |
+| `WORKER_ENABLE_DISPLAY` | No | `false` | Run display jobs (needs `GEMINI_API_KEY`) |
 
 ### Display API connection
 

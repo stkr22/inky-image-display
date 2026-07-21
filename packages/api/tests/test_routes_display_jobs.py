@@ -112,7 +112,7 @@ class TestDisplayJobCrud:
         payload = {
             "content_prompt": "Custom themes",
             "source_mode": "knowledge",
-            "interval_minutes": 1440,
+            "schedule_cron": "0 6 * * *",
             "slots": [{"row": 0, "col": 0, "parts": ["what", "why+takeaway", "qr"]}],
         }
         response = client.put(f"/api/display-jobs/{job['id']}", json=payload)
@@ -120,15 +120,15 @@ class TestDisplayJobCrud:
         body = response.json()
         assert body["content_prompt"] == "Custom themes"
         assert body["source_mode"] == "knowledge"
-        assert body["interval_minutes"] == 1440
+        assert body["schedule_cron"] == "0 6 * * *"
         assert body["next_run_at"] is not None
         assert body["slots"] == [{"row": 0, "col": 0, "parts": ["what", "why+takeaway", "qr"]}]
 
-    def test_update_clear_interval_sets_manual_only(self, client: TestClient) -> None:
+    def test_update_clear_schedule_sets_manual_only(self, client: TestClient) -> None:
         job = _create_job(client)
-        client.put(f"/api/display-jobs/{job['id']}", json={"interval_minutes": 60})
-        response = client.put(f"/api/display-jobs/{job['id']}", json={"clear_interval": True})
-        assert response.json()["interval_minutes"] is None
+        client.put(f"/api/display-jobs/{job['id']}", json={"schedule_cron": "0 * * * *"})
+        response = client.put(f"/api/display-jobs/{job['id']}", json={"clear_schedule": True})
+        assert response.json()["schedule_cron"] is None
         assert response.json()["next_run_at"] is None
 
     def test_update_pause_and_resume(self, client: TestClient) -> None:
@@ -166,11 +166,11 @@ class TestDisplayJobCrud:
         )
         assert response.status_code == 422
 
-    def test_create_with_interval_is_due_immediately(self, client: TestClient) -> None:
-        response = client.post("/api/display-jobs", json={"name": "cadenced", "interval_minutes": 1440})
+    def test_create_with_schedule_is_due_immediately(self, client: TestClient) -> None:
+        response = client.post("/api/display-jobs", json={"name": "cadenced", "schedule_cron": "0 6 * * *"})
         assert response.status_code == 201
         body = response.json()
-        assert body["interval_minutes"] == 1440
+        assert body["schedule_cron"] == "0 6 * * *"
         assert body["next_run_at"] is not None
 
     def test_delete_job(self, client: TestClient) -> None:
@@ -188,10 +188,10 @@ class TestDisplayJobCrud:
 class TestClaimDue:
     def test_claim_returns_due_job_with_resolved_slots(self, client: TestClient, seed_device: Device) -> None:
         grid_id = _create_grid(client, seed_device)
-        # Creating with an interval makes the job due immediately (a PUT
+        # Creating with a schedule makes the job due immediately (a PUT
         # would rebase the schedule into the future instead).
         job = client.post(
-            "/api/display-jobs", json={"name": "due-job", "target_grid_id": grid_id, "interval_minutes": 1440}
+            "/api/display-jobs", json={"name": "due-job", "target_grid_id": grid_id, "schedule_cron": "0 6 * * *"}
         ).json()
         client.put(
             f"/api/display-jobs/{job['id']}",
@@ -219,13 +219,13 @@ class TestClaimDue:
 
     def test_job_without_grid_is_never_due(self, client: TestClient) -> None:
         job = _create_job(client)
-        client.put(f"/api/display-jobs/{job['id']}", json={"interval_minutes": 60})
+        client.put(f"/api/display-jobs/{job['id']}", json={"schedule_cron": "0 * * * *"})
         assert client.post("/api/display-jobs/claim-due").json() == []
 
     def test_paused_job_is_not_due_but_run_now_wins(self, client: TestClient, seed_device: Device) -> None:
         grid_id = _create_grid(client, seed_device)
         job = _create_job(client, grid_id)
-        client.put(f"/api/display-jobs/{job['id']}", json={"interval_minutes": 60, "is_active": False})
+        client.put(f"/api/display-jobs/{job['id']}", json={"schedule_cron": "0 * * * *", "is_active": False})
         assert client.post("/api/display-jobs/claim-due").json() == []
 
         assert client.post(f"/api/display-jobs/{job['id']}/run-now").status_code == 200
@@ -242,7 +242,7 @@ class TestClaimDue:
     ) -> None:
         grid_id = _create_grid(client, seed_device)
         job = client.post(
-            "/api/display-jobs", json={"name": "due-job", "target_grid_id": grid_id, "interval_minutes": 60}
+            "/api/display-jobs", json={"name": "due-job", "target_grid_id": grid_id, "schedule_cron": "0 * * * *"}
         ).json()
         client.post("/api/display-jobs/claim-due")
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -282,11 +282,15 @@ class TestQueueTick:
         assert db_device.claimed_by_grid_id is None
 
     @pytest.mark.asyncio
-    async def test_due_schedule_shows_next_entry_once_per_day(
+    async def test_due_schedule_shows_next_entry_and_advances_lease(
         self, async_engine, mock_settings, mock_s3_service, seed_profile, mqtt
     ) -> None:
         grid, _device = await _grid_with_device(
-            async_engine, seed_profile, display_schedule_enabled=True, display_time="00:00", display_weekday_mask=127
+            async_engine,
+            seed_profile,
+            display_schedule_enabled=True,
+            display_cron="0 0 * * *",
+            display_next_at=NOW - timedelta(minutes=1),
         )
         group = ImageGroup(name="story", target_grid_id=grid.id)
         screen = _image(group_id=group.id, slot=(0, 0))
@@ -298,59 +302,42 @@ class TestQueueTick:
         async with AsyncSession(async_engine) as session:
             db_grid = (await session.exec(select(Grid).where(Grid.id == grid.id))).one()
         assert db_grid.current_group_id == group.id
-        assert db_grid.last_displayed_on is not None
+        # The lease advanced to the next cron occurrence, strictly future.
+        assert db_grid.display_next_at is not None
+        assert db_grid.display_next_at > utcnow()
         mqtt.send_command.assert_awaited_once()
 
-        # A second tick the same day is a no-op.
+        # A second tick before the next occurrence is a no-op.
         await queue_service.queue_tick(app)
         mqtt.send_command.assert_awaited_once()
 
 
 class TestDisplayDue:
-    def test_due_at_display_time_once_per_day(self) -> None:
+    def test_due_when_lease_elapsed(self) -> None:
         grid = Grid(
             name="wall",
             width_cm=10,
             height_cm=10,
             display_schedule_enabled=True,
-            display_time="00:00",
-            display_weekday_mask=127,
+            display_next_at=NOW - timedelta(minutes=1),
         )
         assert queue_service.display_due(grid, NOW) is True
-        grid.last_displayed_on = queue_service.local_today(grid, NOW)
+        grid.display_next_at = NOW + timedelta(hours=1)
         assert queue_service.display_due(grid, NOW) is False
 
-    def test_not_due_while_hold_active_or_disabled(self) -> None:
+    def test_not_due_while_hold_active_disabled_or_unstamped(self) -> None:
         grid = Grid(
             name="wall",
             width_cm=10,
             height_cm=10,
             display_schedule_enabled=True,
-            display_time="00:00",
-            display_weekday_mask=127,
+            display_next_at=NOW - timedelta(minutes=1),
         )
         grid.hold_until = NOW + timedelta(hours=1)
         assert queue_service.display_due(grid, NOW) is False
         grid.hold_until = None
         grid.display_schedule_enabled = False
         assert queue_service.display_due(grid, NOW) is False
-
-
-class TestNextDisplayAt:
-    def test_disabled_schedule_has_no_occurrence(self) -> None:
-        grid = Grid(name="wall", width_cm=10, height_cm=10, display_schedule_enabled=False)
-        assert queue_service.next_display_at(grid, NOW) is None
-
-    def test_next_occurrence_skips_today_when_already_shown(self) -> None:
-        grid = Grid(
-            name="wall",
-            width_cm=10,
-            height_cm=10,
-            display_schedule_enabled=True,
-            display_time="18:00",
-            display_weekday_mask=127,
-        )
-        noon = datetime(2026, 7, 20, 12, 0)
-        assert queue_service.next_display_at(grid, noon) == datetime(2026, 7, 20, 18, 0)
-        grid.last_displayed_on = date(2026, 7, 20)
-        assert queue_service.next_display_at(grid, noon) == datetime(2026, 7, 21, 18, 0)
+        grid.display_schedule_enabled = True
+        grid.display_next_at = None
+        assert queue_service.display_due(grid, NOW) is False

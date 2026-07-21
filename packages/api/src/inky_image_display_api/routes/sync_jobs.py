@@ -1,7 +1,6 @@
 """REST endpoints for Immich sync job management."""
 
 import logging
-from datetime import timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
@@ -11,7 +10,12 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.schemas import SyncJobCreate, SyncJobResponse, SyncJobUpdate
-from inky_image_display_api.services.sync_job_scheduling import begin_runs, claim_due_jobs, due_clause
+from inky_image_display_api.services.sync_job_scheduling import (
+    begin_runs,
+    claim_due_jobs,
+    due_clause,
+    next_cron_run,
+)
 
 router = APIRouter(prefix="/api/sync-jobs", tags=["sync-jobs"])
 logger = logging.getLogger(__name__)
@@ -69,7 +73,7 @@ async def get_sync_job(request: Request, job_id: UUID) -> ImmichSyncJob:
 async def create_sync_job(request: Request, body: SyncJobCreate) -> ImmichSyncJob:
     """Create a new sync job."""
     job = ImmichSyncJob(**body.model_dump())
-    if job.interval_minutes is not None:
+    if job.schedule_cron is not None:
         # Due immediately: a freshly created job should deliver right away.
         job.next_run_at = utcnow()
     async with AsyncSession(request.app.state.engine) as session:
@@ -90,12 +94,16 @@ async def update_sync_job(request: Request, job_id: UUID, body: SyncJobUpdate) -
             raise HTTPException(status_code=404, detail="Sync job not found")
 
         update_data = body.model_dump(exclude_unset=True)
+        if update_data.get("schedule_timezone") is None:
+            # The column is non-nullable; an explicit null means "leave it".
+            update_data.pop("schedule_timezone", None)
         for key, value in update_data.items():
             setattr(job, key, value)
-        if "interval_minutes" in update_data:
-            # Rebase the schedule on the new cadence (null = manual only).
-            interval = job.interval_minutes
-            job.next_run_at = None if interval is None else utcnow() + timedelta(minutes=interval)
+        if "schedule_cron" in update_data or "schedule_timezone" in update_data:
+            # Rebase the schedule on the new cadence (null cron = manual only).
+            job.next_run_at = (
+                None if job.schedule_cron is None else next_cron_run(job.schedule_cron, job.schedule_timezone, utcnow())
+            )
         job.updated_at = utcnow()
 
         session.add(job)
@@ -108,11 +116,12 @@ async def update_sync_job(request: Request, job_id: UUID, body: SyncJobUpdate) -
 
 @router.post("/{job_id}/run-now", response_model=SyncJobResponse)
 async def request_sync_job_run(request: Request, job_id: UUID) -> ImmichSyncJob:
-    """Flag a job for an out-of-band worker run.
+    """Flag a job for an out-of-band worker run and wake the worker.
 
-    The frequent worker cron claims flagged jobs (active or not — running a
-    paused job on demand is the point of the button) and the posted run
-    report clears the flag.
+    The worker claims flagged jobs (active or not — running a paused job
+    on demand is the point of the button) and the posted run report
+    clears the flag. The wake makes Run-now near-instant; if it is lost
+    the worker's safety poll still picks the flag up.
     """
     async with AsyncSession(request.app.state.engine) as session:
         result = await session.exec(select(ImmichSyncJob).where(col(ImmichSyncJob.id) == job_id))
@@ -123,6 +132,7 @@ async def request_sync_job_run(request: Request, job_id: UUID) -> ImmichSyncJob:
         session.add(job)
         await session.commit()
         await session.refresh(job)
+    await request.app.state.mqtt.publish_wake("immich")
     logger.info("Run requested for sync job %s (%s)", job_id, job.name)
     return job
 

@@ -1,11 +1,10 @@
 # inky-image-display Helm chart
 
 Deploys the API (which serves the operator UI and `/media` proxy), the
-persistent volume for its SQLite database, an Ingress, and the Immich /
-Gemini sync CronJobs. The CronJobs only poll the API for *due* jobs on a
-frequent schedule — the actual per-job cadence is set in the web UI.
-Display jobs (the MOTD) need no extra workload at all — their generation
-intervals and the grids' display schedules run inside the API process.
+persistent volume for its SQLite database, an Ingress, and one long-running
+sync worker Deployment. Per-job cadence is a cron schedule set in the web
+UI; the API wakes the worker over MQTT when jobs are due (with a slow
+safety poll as fallback), so there are no CronJob schedules to tune.
 
 The chart is published on every GitHub release, version-locked to the
 container images built from the same tag:
@@ -73,7 +72,7 @@ sync:
 - The PVC carries `helm.sh/resource-policy: keep`, so `helm uninstall`
   leaves the database intact. Reuse it later via
   `persistence.existingClaim`.
-- Sync CronJobs reach the API through the in-cluster service by default;
+- The sync worker reaches the API through the in-cluster service by default;
   set `sync.apiBaseUrl` to route through the ingress instead (e.g. when
   network policies restrict pod-to-pod traffic).
 - Pods run as the image's non-root user (uid/gid 1001); `fsGroup` keeps

@@ -1,7 +1,7 @@
 """Display-job configuration and worker hand-off.
 
 A display job is a pure content generator with the same claim model as
-the sync jobs: the external worker claims due jobs (interval + next-run
+the sync jobs: the external worker claims due jobs (cron + next-run
 lease, or a Run-now flag), generates the story and per-panel screens out
 of process, and registers the result as an image group targeting the
 job's grid. *Displaying* groups is the grid queue's business (see
@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from inky_image_display_shared.models import DisplayJob, DisplayJobSlot, Grid, Image, ImageGroup
 from sqlmodel import col, or_, select
 
-from inky_image_display_api.services.sync_job_scheduling import advance_schedule
+from inky_image_display_api.services.sync_job_scheduling import next_cron_run
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -74,7 +74,7 @@ def due_clause(now: datetime) -> ColumnElement[bool]:
     """
     scheduled = (
         (col(DisplayJob.is_active).is_(True))
-        & (col(DisplayJob.interval_minutes).is_not(None))
+        & (col(DisplayJob.schedule_cron).is_not(None))
         & (col(DisplayJob.next_run_at) <= now)
     )
     return (col(DisplayJob.target_grid_id).is_not(None)) & or_(col(DisplayJob.run_requested_at).is_not(None), scheduled)
@@ -92,8 +92,8 @@ async def claim_due_jobs(session: AsyncSession, now: datetime) -> list[DisplayJo
     result = await session.exec(select(DisplayJob).where(due_clause(now)))
     jobs = list(result.all())
     for job in jobs:
-        if job.interval_minutes is not None and job.next_run_at is not None and job.next_run_at <= now:
-            job.next_run_at = advance_schedule(job.next_run_at, timedelta(minutes=job.interval_minutes), now)
+        if job.schedule_cron is not None and job.next_run_at is not None and job.next_run_at <= now:
+            job.next_run_at = next_cron_run(job.schedule_cron, job.schedule_timezone, now)
             session.add(job)
     await session.commit()
     for job in jobs:

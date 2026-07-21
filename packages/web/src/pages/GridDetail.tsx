@@ -8,6 +8,7 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, Dialog } from '../components/Dialog'
 import { Button, NumberField, Switch, TextField } from '../components/fields'
+import { describeCron, ScheduleEditor, type ScheduleValue } from '../components/ScheduleEditor'
 import { GridLayoutEditor, layoutRowsFromGrid, type LayoutRows } from '../components/GridLayoutEditor'
 import { useNotify } from '../components/Toast'
 import { Badge, EmptyNote, ErrorNote, Spinner } from '../components/ui'
@@ -100,8 +101,8 @@ function GridHeader({ grid, devices, onChanged }: { grid: Grid; devices: Device[
         </span>
         <span className="ink-small">
           {grid.display_schedule_enabled
-            ? `Shows daily at ${grid.display_time} (${grid.display_timezone})`
-            : 'No daily display schedule'}
+            ? `Shows ${describeCron(grid.display_cron, grid.display_timezone)}`
+            : 'No display schedule'}
         </span>
       </div>
       <div className="row gap-2 items-center">
@@ -190,58 +191,16 @@ function EditGridDialog({
 
 // --- Display-job content schedule ------------------------------------------------
 
-const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-
-// Explicit 24h hour/minute inputs: the native time input renders 12h on
-// AM/PM-locale browsers, and the operator wants 24h everywhere.
-function DisplayTimeFields({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: string
-  onChange: (value: string) => void
-  disabled?: boolean
-}) {
-  const [hour = 8, minute = 0] = value.split(':').map((piece) => Number(piece) || 0)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const clamp = (n: number | '', max: number) => Math.min(Math.max(Number(n) || 0, 0), max)
-  return (
-    <>
-      <NumberField
-        label="Show at (hour, 24h)"
-        value={hour}
-        onChange={(v) => onChange(`${pad(clamp(v, 23))}:${pad(minute)}`)}
-        min={0}
-        max={23}
-        disabled={disabled}
-        className="flex-1"
-      />
-      <NumberField
-        label="Minute"
-        value={minute}
-        onChange={(v) => onChange(`${pad(hour)}:${pad(clamp(v, 59))}`)}
-        min={0}
-        max={59}
-        disabled={disabled}
-        className="flex-1"
-      />
-    </>
-  )
-}
-
-// The grid's daily display schedule: when the newest generated group
-// front-runs the queue, and for how long. What is generated (and its
-// cadence) lives on the job pages; the live queue state is the card above.
 function DisplayScheduleCard({ grid, onChanged }: { grid: Grid; onChanged: () => void }) {
   const notify = useNotify()
   const { data: jobs } = useQuery({ queryKey: ['display-jobs'], queryFn: api.listDisplayJobs })
   const targetingJobs = (jobs ?? []).filter((job) => job.target_grid_id === grid.id)
 
   const [enabled, setEnabled] = useState(grid.display_schedule_enabled)
-  const [displayTime, setDisplayTime] = useState(grid.display_time)
-  const [weekdayMask, setWeekdayMask] = useState(grid.display_weekday_mask)
-  const [timezone, setTimezone] = useState(grid.display_timezone)
+  const [schedule, setSchedule] = useState<ScheduleValue>({
+    cron: grid.display_cron,
+    timezone: grid.display_timezone,
+  })
   const [untilReleased, setUntilReleased] = useState(grid.display_duration_seconds === null)
   const [durationMinutes, setDurationMinutes] = useState<number | ''>(
     grid.display_duration_seconds ? Math.round(grid.display_duration_seconds / 60) : 60,
@@ -254,9 +213,8 @@ function DisplayScheduleCard({ grid, onChanged }: { grid: Grid; onChanged: () =>
       const durationSeconds = untilReleased ? null : Math.max(Number(durationMinutes) || 0, 1) * 60
       await api.updateGrid(grid.id, {
         display_schedule_enabled: enabled,
-        display_time: displayTime,
-        display_weekday_mask: weekdayMask,
-        display_timezone: timezone,
+        display_cron: schedule.cron,
+        display_timezone: schedule.timezone || 'UTC',
         display_duration_seconds: durationSeconds,
         clear_display_duration: untilReleased,
       })
@@ -272,7 +230,7 @@ function DisplayScheduleCard({ grid, onChanged }: { grid: Grid; onChanged: () =>
   return (
     <div className="ink-card" style={{ gap: 12 }}>
       <div className="row w-full items-center gap-3 wrap">
-        <h3 className="ink-h3">Daily schedule</h3>
+        <h3 className="ink-h3">Display schedule</h3>
       </div>
       <span className="ink-small">
         {targetingJobs.length === 0 ? (
@@ -298,34 +256,8 @@ function DisplayScheduleCard({ grid, onChanged }: { grid: Grid; onChanged: () =>
           </>
         )}
       </span>
-      <Switch checked={enabled} onChange={setEnabled} label="Show automatically every day" />
-      <div className="row gap-3 w-full wrap">
-        <DisplayTimeFields value={displayTime} onChange={setDisplayTime} disabled={!enabled} />
-        <TextField
-          label="Timezone (IANA)"
-          value={timezone}
-          onChange={setTimezone}
-          placeholder="Europe/Berlin"
-          disabled={!enabled}
-          className="flex-1"
-        />
-      </div>
-      <div className="row gap-2 wrap">
-        {WEEKDAYS.map((day, index) => {
-          const selected = Boolean(weekdayMask & (1 << index))
-          return (
-            <Button
-              key={day}
-              flat={!selected}
-              primary={selected}
-              disabled={!enabled}
-              onClick={() => setWeekdayMask((mask) => mask ^ (1 << index))}
-            >
-              {day}
-            </Button>
-          )
-        })}
-      </div>
+      <Switch checked={enabled} onChange={setEnabled} label="Show automatically on a schedule" />
+      <ScheduleEditor value={schedule} onChange={setSchedule} allowManual={false} disabled={!enabled} />
       <div className="row gap-3 w-full items-end wrap">
         <Switch checked={untilReleased} onChange={setUntilReleased} label="Show until released manually" />
         {!untilReleased && (

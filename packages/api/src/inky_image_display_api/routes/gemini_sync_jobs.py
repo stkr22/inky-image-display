@@ -1,7 +1,6 @@
 """REST endpoints for Gemini batch sync job management."""
 
 import logging
-from datetime import timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
@@ -15,7 +14,12 @@ from inky_image_display_api.schemas import (
     GeminiSyncJobResponse,
     GeminiSyncJobUpdate,
 )
-from inky_image_display_api.services.sync_job_scheduling import begin_runs, claim_due_jobs, due_clause
+from inky_image_display_api.services.sync_job_scheduling import (
+    begin_runs,
+    claim_due_jobs,
+    due_clause,
+    next_cron_run,
+)
 
 router = APIRouter(prefix="/api/genai/jobs", tags=["genai"])
 logger = logging.getLogger(__name__)
@@ -73,7 +77,7 @@ async def get_gemini_sync_job(request: Request, job_id: UUID) -> GeminiSyncJob:
 async def create_gemini_sync_job(request: Request, body: GeminiSyncJobCreate) -> GeminiSyncJob:
     """Create a new Gemini sync job."""
     job = GeminiSyncJob(**body.model_dump())
-    if job.interval_minutes is not None:
+    if job.schedule_cron is not None:
         # Due immediately: a freshly created job should deliver right away.
         job.next_run_at = utcnow()
     async with AsyncSession(request.app.state.engine) as session:
@@ -93,12 +97,16 @@ async def update_gemini_sync_job(request: Request, job_id: UUID, body: GeminiSyn
         if job is None:
             raise HTTPException(status_code=404, detail="Gemini sync job not found")
         update_data = body.model_dump(exclude_unset=True)
+        if update_data.get("schedule_timezone") is None:
+            # The column is non-nullable; an explicit null means "leave it".
+            update_data.pop("schedule_timezone", None)
         for key, value in update_data.items():
             setattr(job, key, value)
-        if "interval_minutes" in update_data:
-            # Rebase the schedule on the new cadence (null = manual only).
-            interval = job.interval_minutes
-            job.next_run_at = None if interval is None else utcnow() + timedelta(minutes=interval)
+        if "schedule_cron" in update_data or "schedule_timezone" in update_data:
+            # Rebase the schedule on the new cadence (null cron = manual only).
+            job.next_run_at = (
+                None if job.schedule_cron is None else next_cron_run(job.schedule_cron, job.schedule_timezone, utcnow())
+            )
         job.updated_at = utcnow()
         session.add(job)
         await session.commit()
@@ -118,6 +126,7 @@ async def request_gemini_job_run(request: Request, job_id: UUID) -> GeminiSyncJo
         session.add(job)
         await session.commit()
         await session.refresh(job)
+    await request.app.state.mqtt.publish_wake("gemini")
     logger.info("Run requested for gemini sync job %s (%s)", job_id, job.name)
     return job
 

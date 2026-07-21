@@ -100,10 +100,10 @@ class TestRunNow:
 
 
 class TestDueScheduling:
-    async def test_interval_job_is_due_and_claim_advances_schedule(
+    async def test_scheduled_job_is_due_and_claim_advances_schedule(
         self, client: TestClient, async_engine, seed_profile
     ) -> None:
-        job = await _seed_job(async_engine, seed_profile, interval_minutes=30, next_run_at=utcnow())
+        job = await _seed_job(async_engine, seed_profile, schedule_cron="*/30 * * * *", next_run_at=utcnow())
 
         claimed = client.post("/api/sync-jobs/claim-due").json()
         assert [j["id"] for j in claimed] == [str(job.id)]
@@ -114,26 +114,35 @@ class TestDueScheduling:
             result = await session.exec(select(ImmichSyncJob).where(col(ImmichSyncJob.id) == job.id))
             next_run_at = result.one().next_run_at
             assert next_run_at is not None
-            assert next_run_at > utcnow() + timedelta(minutes=29)
+            # Advanced to the next tick on the cron grid, strictly in the future.
+            assert next_run_at > utcnow()
+            assert next_run_at.minute % 30 == 0
+            assert next_run_at.second == 0
 
-    async def test_late_claim_keeps_fixed_grid_and_skips_missed_ticks(
+    async def test_late_claim_keeps_cron_grid_and_skips_missed_ticks(
         self, client: TestClient, async_engine, seed_profile
     ) -> None:
-        """A worker offline for hours runs the job once and the cadence stays anchored."""
+        """A worker offline for hours runs the job once and the cadence stays on the grid."""
         anchor = utcnow() - timedelta(minutes=100)
-        job = await _seed_job(async_engine, seed_profile, interval_minutes=30, next_run_at=anchor)
+        job = await _seed_job(async_engine, seed_profile, schedule_cron="0 * * * *", next_run_at=anchor)
 
         claimed = client.post("/api/sync-jobs/claim-due").json()
         assert [j["id"] for j in claimed] == [str(job.id)]
 
         async with AsyncSession(async_engine) as session:
             result = await session.exec(select(ImmichSyncJob).where(col(ImmichSyncJob.id) == job.id))
-            # 100 minutes late: ticks at +30/+60/+90 are skipped, next is +120 on the original grid.
-            assert result.one().next_run_at == anchor + timedelta(minutes=120)
+            # 100 minutes late: the missed hourly ticks are skipped in one
+            # jump; next run is the next top of the hour, not a replay.
+            next_run_at = result.one().next_run_at
+            assert next_run_at is not None
+            now = utcnow()
+            assert next_run_at > now
+            assert next_run_at - now <= timedelta(hours=1)
+            assert next_run_at.minute == 0
 
     async def test_run_now_claim_does_not_shift_schedule(self, client: TestClient, async_engine, seed_profile) -> None:
         future = utcnow() + timedelta(minutes=17)
-        job = await _seed_job(async_engine, seed_profile, interval_minutes=30, next_run_at=future)
+        job = await _seed_job(async_engine, seed_profile, schedule_cron="*/30 * * * *", next_run_at=future)
         client.post(f"/api/sync-jobs/{job.id}/run-now")
 
         claimed = client.post("/api/sync-jobs/claim-due").json()
@@ -160,21 +169,21 @@ class TestDueScheduling:
             json={
                 "name": "manual-job",
                 "target_device_profile_id": str(seed_profile.id),
-                "interval_minutes": None,
+                "schedule_cron": None,
             },
         ).json()
-        assert created["interval_minutes"] is None
+        assert created["schedule_cron"] is None
         assert created["next_run_at"] is None
         assert client.get("/api/sync-jobs", params={"due": "true"}).json() == []
 
-    async def test_update_interval_rebases_next_run(self, client: TestClient, async_engine, seed_profile) -> None:
-        job = await _seed_job(async_engine, seed_profile, interval_minutes=30, next_run_at=utcnow())
+    async def test_update_schedule_rebases_next_run(self, client: TestClient, async_engine, seed_profile) -> None:
+        job = await _seed_job(async_engine, seed_profile, schedule_cron="*/30 * * * *", next_run_at=utcnow())
 
-        updated = client.put(f"/api/sync-jobs/{job.id}", json={"interval_minutes": 120}).json()
-        assert updated["interval_minutes"] == 120
+        updated = client.put(f"/api/sync-jobs/{job.id}", json={"schedule_cron": "0 */2 * * *"}).json()
+        assert updated["schedule_cron"] == "0 */2 * * *"
         assert updated["next_run_at"] is not None
 
         # Explicit null switches to manual-only and clears the schedule.
-        updated = client.put(f"/api/sync-jobs/{job.id}", json={"interval_minutes": None}).json()
-        assert updated["interval_minutes"] is None
+        updated = client.put(f"/api/sync-jobs/{job.id}", json={"schedule_cron": None}).json()
+        assert updated["schedule_cron"] is None
         assert updated["next_run_at"] is None

@@ -1,15 +1,15 @@
-"""Background task for automatic content rotation."""
+"""Background task for automatic content rotation and job scheduling."""
 
 import asyncio
 import logging
 
 from fastapi import FastAPI
-from inky_image_display_shared.models import Device
+from inky_image_display_shared.models import Device, DisplayJob, GeminiSyncJob, ImmichSyncJob
 from inky_image_display_shared.time import utcnow
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from inky_image_display_api.services import queue_service
+from inky_image_display_api.services import display_job_service, queue_service, sync_job_scheduling
 from inky_image_display_api.services.app_settings_service import get_quiet_hours, is_quiet_now
 from inky_image_display_api.services.image_service import (
     build_display_command,
@@ -22,11 +22,15 @@ logger = logging.getLogger(__name__)
 
 
 async def rotation_loop(app: FastAPI) -> None:
-    """Continuously drive grid schedules and solo-device rotation.
+    """Continuously drive grid schedules, solo-device rotation and job wakes.
 
     Runs every 30 seconds. Grids show content only via their daily display
     schedule (the queue tick, which also expires holds and hands panels
-    back); solo devices rotate their FIFO pool on their refresh interval.
+    back); solo devices rotate their FIFO pool on their refresh interval;
+    job cron schedules turn into MQTT wakes for the sync worker.
+
+    ponytail: single-replica scheduler (the chart pins replicas: 1) — needs
+    a leader lock before the API can scale out.
 
     Args:
         app: The running FastAPI application (provides engine, settings,
@@ -39,6 +43,10 @@ async def rotation_loop(app: FastAPI) -> None:
             await queue_service.queue_tick(app)
         except Exception:
             logger.exception("Error in scheduled-display tick")
+        try:
+            await wake_due_job_workers(app)
+        except Exception:
+            logger.exception("Error in job-wake tick")
         # Quiet hours pause only the interval-driven rotation below. The
         # queue tick above stays live because its schedule is an explicit
         # operator choice (and a hold-expiry release pushes nothing — the
@@ -53,6 +61,25 @@ async def rotation_loop(app: FastAPI) -> None:
             await _rotate_due_devices(app)
         except Exception:
             logger.exception("Error in rotation loop")
+
+
+async def wake_due_job_workers(app: FastAPI) -> None:
+    """Ring the worker's doorbell for every job type with due work.
+
+    Due-ness is decided here (the API is the scheduler); the actual
+    hand-out stays with the claim endpoints, so a duplicate wake between
+    two ticks is harmless — the second claim simply returns nothing.
+    """
+    now = utcnow()
+    async with AsyncSession(app.state.engine) as session:
+        checks = (
+            ("immich", select(col(ImmichSyncJob.id)).where(sync_job_scheduling.due_clause(ImmichSyncJob, now))),
+            ("gemini", select(col(GeminiSyncJob.id)).where(sync_job_scheduling.due_clause(GeminiSyncJob, now))),
+            ("display", select(col(DisplayJob.id)).where(display_job_service.due_clause(now))),
+        )
+        for job_type, stmt in checks:
+            if (await session.exec(stmt.limit(1))).first() is not None:
+                await app.state.mqtt.publish_wake(job_type)
 
 
 async def _in_quiet_hours(app: FastAPI) -> bool:

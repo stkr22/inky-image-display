@@ -28,6 +28,7 @@ dependencies = [
     "qrcode~=8.2",
     "authlib~=1.6.5",
     "itsdangerous~=2.2.0",
+    "cronsim~=2.6",
 ]
 
 [project.scripts]

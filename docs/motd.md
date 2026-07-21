@@ -2,7 +2,7 @@
 
 A **display job** is a pure content generator that targets a **grid** (see
 [grids.md](grids.md)). It uses the same external-worker claim model as the
-Immich/Gemini sync jobs: the sync worker's `display` cron claims due jobs
+Immich/Gemini sync jobs: the MQTT-woken sync worker claims due jobs
 (`POST /api/display-jobs/claim-due`), generates the story and per-panel
 screens out of process, and registers the result as an **image group**
 targeting the job's grid. *When* that content appears on the panels is the
@@ -59,8 +59,9 @@ break parsing.
 
 ## Generation: the worker flow
 
-Jobs schedule exactly like the sync jobs: `interval_minutes` (null =
-manual only) with a `next_run_at` lease advanced at claim time, an
+Jobs schedule exactly like the sync jobs: `schedule_cron` (null =
+manual only, evaluated in `schedule_timezone`) with a `next_run_at`
+lease advanced at claim time, an
 `is_active` pause switch, and a `run_requested_at` Run-now flag cleared by
 the posted run report. Each claim records a `running` row in
 `sync_job_runs` (job_type `display`) so the UI can show "in progress" vs
@@ -83,8 +84,9 @@ One worker run per claimed job:
 5. The run report (`POST /api/sync-runs`, job_type `display`) records the
    outcome and clears the Run-now flag.
 
-The worker cron is opt-in in the Helm chart (`sync.display.enabled`,
-frequent schedule like the other workers) and needs the Gemini secret.
+Display-job generation is opt-in in the Helm chart
+(`sync.display.enabled` on the worker Deployment) and needs the Gemini
+secret.
 
 ## Display: groups in the grid queue
 
@@ -92,8 +94,8 @@ Displaying is no longer a separate "session" system — a generated group is
 queue content like any curated group or pool image (see
 [grids.md](grids.md) for queue semantics). What replaces the session:
 
-- **Scheduled daily display**: at the grid's `display_time` (weekday mask,
-  IANA timezone) the grid shows its **next queue entry** and **holds** it —
+- **Scheduled display**: on the grid's `display_cron` schedule (IANA
+  timezone) the grid shows its **next queue entry** and **holds** it —
   for `display_duration_seconds`, or until manual release when that is
   null. A freshly generated group is never-shown, so it naturally
   front-runs the replay of older content.
@@ -117,7 +119,8 @@ In `packages/shared/.../models/display_job.py`, `image_group.py`,
 
 - `display_jobs` — job config (name, `job_type`, `target_grid_id`, content
   prompt/source/preset/model) + worker schedule (`is_active`,
-  `interval_minutes`, `next_run_at`, `last_run_at`, `run_requested_at`).
+  `schedule_cron`, `schedule_timezone`, `next_run_at`, `last_run_at`,
+  `run_requested_at`).
 - `display_job_slots` — the content part per grid slot (one part per slot;
   groups are frozen spreads). Slots address grid positions (`row`/`col`),
   not devices.
@@ -137,9 +140,9 @@ Job configuration and worker hand-off under `/api/display-jobs`:
 | Endpoint | Purpose |
 |----------|---------|
 | `GET /` | List jobs incl. slot mappings |
-| `POST /` | Create a job (`name`, `job_type`, optional `target_grid_id`, `interval_minutes`) |
+| `POST /` | Create a job (`name`, `job_type`, optional `target_grid_id`, `schedule_cron` + `schedule_timezone`) |
 | `GET /{id}` | Single job |
-| `PUT /{id}` | Partial update; `slots` replaces the whole mapping; `is_active` pauses; `clear_interval` switches to manual generation |
+| `PUT /{id}` | Partial update; `slots` replaces the whole mapping; `is_active` pauses; `clear_schedule` switches to manual generation |
 | `DELETE /{id}` | Delete; generated groups stay (provenance goes NULL) |
 | `POST /claim-due` | Worker: claim due jobs with resolved slots (lease + running run rows + retention pruning) |
 | `POST /render-part` | Worker: render one story part at one panel size (JPEG) |
@@ -155,15 +158,15 @@ Display jobs live on the **Jobs** page (`/jobs?tab=display`): the tab lists
 jobs like the sync jobs (schedule with a quick-edit dialog, run history
 with in-progress/waiting states, Run now, pause switch) and links each to
 its editor at `/display-jobs/{id}` — content prompt, source mode, image
-preset, generation interval, and the target grid with one part per slot
+preset, generation schedule, and the target grid with one part per slot
 plus a mini layout preview showing which panel gets which part. A
 "Generated groups — last 7 days" list previews and redisplays retained
 groups. The page header shows an overview of upcoming runs and recent
 executions across all job types.
 
 The **grid page** owns the display side: the "Up next" queue card (order,
-reorder, show-now, release) and the "Daily schedule" card (24h time,
-weekdays, timezone, duration or "until released"). Groups themselves are
+reorder, show-now, release) and the "Display schedule" card (same cron
+preset editor as the jobs, duration or "until released"). Groups themselves are
 listed and edited in the Groups overview on the **Images page**
 (generated ones read-only + delete; curated ones: rename, grid, panel
 assignments).

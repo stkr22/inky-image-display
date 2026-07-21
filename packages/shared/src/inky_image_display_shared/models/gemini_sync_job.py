@@ -51,11 +51,11 @@ class GeminiSyncJob(SQLModel, table=True):
     # Scheduling lives on the job row (see ImmichSyncJob for the rationale
     # and why the defaults are None). The API create schema defaults Gemini
     # batches to daily — generation costs real quota.
-    interval_minutes: int | None = Field(
+    schedule_cron: str | None = Field(
         default=None,
-        ge=1,
-        description="Auto-run cadence in minutes; None = manual runs only",
+        description="Five-field cron expression; None = manual runs only",
     )
+    schedule_timezone: str = Field(default="UTC")
     next_run_at: datetime | None = Field(
         default=None,
         description="When the job is next due; advanced by the claim-due hand-out",

@@ -17,6 +17,7 @@ from inky_image_display_shared.schemas.responses import (
     GridSlotStatus,
     GroupDisplayResult,
 )
+from inky_image_display_shared.time import utcnow
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -31,6 +32,7 @@ from inky_image_display_api.schemas import (
 )
 from inky_image_display_api.services import grid_service, queue_service
 from inky_image_display_api.services.queue_service import QueueError
+from inky_image_display_api.services.sync_job_scheduling import next_cron_run
 
 router = APIRouter(prefix="/api/grids", tags=["grids"])
 logger = logging.getLogger(__name__)
@@ -98,10 +100,20 @@ async def update_grid(request: Request, grid_id: UUID, body: GridUpdate) -> Grid
         grid = await grid_service.get_grid_or_404(session, grid_id)
         if body.name is not None:
             grid.name = body.name
-        for field_name in ("display_schedule_enabled", "display_time", "display_weekday_mask", "display_timezone"):
+        schedule_edited = False
+        for field_name in ("display_schedule_enabled", "display_cron", "display_timezone"):
             value = getattr(body, field_name)
             if value is not None:
                 setattr(grid, field_name, value)
+                schedule_edited = True
+        if schedule_edited:
+            # Rebase the lease like the job routes: next cron occurrence
+            # while enabled, cleared while disabled.
+            grid.display_next_at = (
+                next_cron_run(grid.display_cron, grid.display_timezone, utcnow())
+                if grid.display_schedule_enabled
+                else None
+            )
         if body.clear_display_duration:
             grid.display_duration_seconds = None
         elif body.display_duration_seconds is not None:

@@ -27,8 +27,8 @@ class DisplayJob(SQLModel, table=True):
     its SET NULL behaviour; they are generic enough that future text-based
     job types can reuse them.
 
-    Scheduling matches the sync jobs (interval + next-run lease) so all job
-    kinds read the same in the Jobs UI; ``interval_minutes`` ``None`` means
+    Scheduling matches the sync jobs (cron + next-run lease) so all job
+    kinds read the same in the Jobs UI; ``schedule_cron`` ``None`` means
     manual generation only.
     """
 
@@ -55,7 +55,8 @@ class DisplayJob(SQLModel, table=True):
     # the external worker claims due jobs (``next_run_at`` advanced as a
     # lease at claim) and generates the content out of process.
     is_active: bool = Field(default=True)
-    interval_minutes: int | None = Field(default=None, ge=1)
+    schedule_cron: str | None = Field(default=None)
+    schedule_timezone: str = Field(default="UTC")
     next_run_at: datetime | None = Field(default=None)
     last_run_at: datetime | None = Field(default=None)
     run_requested_at: datetime | None = Field(default=None)

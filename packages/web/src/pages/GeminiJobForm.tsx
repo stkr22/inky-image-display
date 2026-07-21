@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Button, ChipsInput, Icon, NumberField, SelectField, Switch, TextField } from '../components/fields'
+import { ScheduleEditor, type ScheduleValue } from '../components/ScheduleEditor'
 import { useNotify } from '../components/Toast'
 import { PageHeader, Spinner } from '../components/ui'
 import { api, ApiError } from '../lib/api'
@@ -30,7 +31,7 @@ export function GeminiJobForm() {
   const [retentionDays, setRetentionDays] = useState<number | ''>('')
   const [subjects, setSubjects] = useState<string[]>([])
   const [active, setActive] = useState(true)
-  const [intervalMinutes, setIntervalMinutes] = useState<number | ''>(1440)
+  const [schedule, setSchedule] = useState<ScheduleValue>({ cron: '0 0 * * *', timezone: 'UTC' })
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -43,7 +44,7 @@ export function GeminiJobForm() {
     setRetentionDays(typeof job.retention_days === 'number' ? job.retention_days : '')
     setSubjects(job.subjects ?? [])
     setActive(job.is_active)
-    setIntervalMinutes(typeof job.interval_minutes === 'number' ? job.interval_minutes : '')
+    setSchedule({ cron: job.schedule_cron, timezone: job.schedule_timezone || 'UTC' })
   }, [job])
 
   useEffect(() => {
@@ -63,13 +64,11 @@ export function GeminiJobForm() {
     if (!presetId) return setError('Preset is required')
     const cleanSubjects = subjects.map((s) => s.trim()).filter(Boolean)
     if (cleanSubjects.length === 0) return setError('At least one subject is required')
-    if (intervalMinutes !== '' && (!Number.isInteger(Number(intervalMinutes)) || Number(intervalMinutes) < 1)) {
-      return setError('Run interval must be at least 1 minute (or blank for manual runs only)')
-    }
     const body = {
       name,
       is_active: active,
-      interval_minutes: intervalMinutes === '' ? null : Number(intervalMinutes),
+      schedule_cron: schedule.cron,
+      schedule_timezone: schedule.timezone || 'UTC',
       target_device_profile_id: targetProfile,
       prompt_preset_id: presetId,
       orientation: orientation || 'portrait',
@@ -148,14 +147,8 @@ export function GeminiJobForm() {
       <div className="bento-tile w-full" style={{ padding: 24 }}>
         <div className="ink-form-section w-full">
           <span className="ink-eyebrow">Schedule</span>
-          <NumberField
-            label="Run every (minutes, blank = manual only)"
-            value={intervalMinutes}
-            onChange={setIntervalMinutes}
-            min={1}
-            step={1}
-            help="How often the worker runs this job automatically, on a fixed cadence — manual runs don't shift it. Gemini batches spend generation quota — daily (1440) is a sensible default."
-          />
+          <ScheduleEditor value={schedule} onChange={setSchedule} />
+          <span className="ink-small">Gemini batches spend generation quota — daily is a sensible default.</span>
           <Switch
             label="Active"
             checked={active}
