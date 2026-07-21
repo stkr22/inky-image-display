@@ -1,5 +1,16 @@
 # Changelog
 
+## [6.0.0](https://github.com/stkr22/inky-image-display/compare/v5.14.1...v6.0.0) (2026-07-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* make grids schedule-driven only, groups frozen spreads
+
+### Features
+
+* make grids schedule-driven only, groups frozen spreads ([8279624](https://github.com/stkr22/inky-image-display/commit/8279624f09649e77657fa3ce2e03c742d9d17f85))
+
 ## [5.14.1](https://github.com/stkr22/inky-image-display/compare/v5.14.0...v5.14.1) (2026-07-20)
 
 

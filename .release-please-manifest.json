@@ -1,5 +1,5 @@
 {
-  ".": "5.14.1",
-  "packages/shared": "4.10.1",
+  ".": "6.0.0",
+  "packages/shared": "5.0.0",
   "packages/controller": "4.5.2"
 }
