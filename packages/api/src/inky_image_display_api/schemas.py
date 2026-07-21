@@ -463,7 +463,6 @@ class GridCreate(BaseModel):
 
     name: str
     rows: list[list[UUID]] = Field(min_length=1)
-    refresh_interval_seconds: RefreshIntervalSeconds | None = None
 
     _rows_not_empty = field_validator("rows")(_validate_layout_rows)
 
@@ -478,8 +477,6 @@ class GridUpdate(BaseModel):
 
     name: str | None = None
     rows: list[list[UUID]] | None = Field(default=None, min_length=1)
-    refresh_interval_seconds: RefreshIntervalSeconds | None = None
-    clear_refresh_interval: bool = False
     display_schedule_enabled: bool | None = None
     display_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     display_weekday_mask: int | None = Field(default=None, ge=1, le=127)

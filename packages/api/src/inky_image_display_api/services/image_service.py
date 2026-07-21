@@ -3,7 +3,7 @@
 import random
 from datetime import datetime, timedelta
 
-from inky_image_display_shared.models import Device, DeviceProfile, Grid, Image
+from inky_image_display_shared.models import Device, DeviceProfile, Image
 from inky_image_display_shared.schemas import DisplayCommand
 from inky_image_display_shared.time import utcnow
 from sqlmodel import col, select
@@ -13,15 +13,15 @@ from inky_image_display_api.config import Settings
 from inky_image_display_api.services.app_settings_service import get_default_refresh_seconds
 
 
-def next_refresh_at(entity: Device | Grid, default_seconds: int, now: datetime) -> datetime:
-    """Compute the next scheduled refresh time for a device or grid.
+def next_refresh_at(device: Device, default_seconds: int, now: datetime) -> datetime:
+    """Compute the next scheduled refresh time for a device.
 
-    ``refresh_interval_seconds`` on the entity wins; ``None`` falls back to
+    ``refresh_interval_seconds`` on the device wins; ``None`` falls back to
     the operator-configured default (resolved by the caller via
     :func:`app_settings_service.get_default_refresh_seconds`) so untouched
     devices keep their historic behaviour.
     """
-    seconds = entity.refresh_interval_seconds or default_seconds
+    seconds = device.refresh_interval_seconds or default_seconds
     return now + timedelta(seconds=seconds)
 
 

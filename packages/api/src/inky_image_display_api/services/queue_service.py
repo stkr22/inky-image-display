@@ -1,16 +1,18 @@
 """Grid content-queue playback.
 
-One queue per grid replaces the former MOTD session machinery: image
-groups and loose pool images are interleaved in operator order, and every
-way content reaches the panels — interval rotation, the scheduled daily
-display, manual "show now", release — is a step through that queue.
+One queue per grid: image groups and loose pool images are interleaved
+in operator order. A grid shows content only when told to — by its daily
+display schedule (which steps the queue one entry forward), or by an
+operator action ("show now" / "next"). There is no interval rotation for
+grids: every display holds until ``display_duration_seconds`` elapses
+(or an explicit release when unset), and then the member panels return
+to their own solo rotation.
 
 Playback order: never-shown entries first in ``queue_position`` order,
 then the least recently shown entry cycles, so fresh content always
-front-runs the replay loop. A group is a panel spread: its slot-assigned
-images show simultaneously, one per panel; slots holding several images
-rotate one step per refresh, so a group occupies one refresh per frame
-(longest slot). Loose pool images cover-crop across the whole grid.
+front-runs the replay loop. A group is a frozen panel spread — exactly
+one image per slot, shown simultaneously. Loose pool images cover-crop
+across the whole grid.
 """
 
 from __future__ import annotations
@@ -30,19 +32,14 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.services import grid_service
 from inky_image_display_api.services.app_settings_service import get_default_refresh_seconds
-from inky_image_display_api.services.image_service import next_refresh_at
 
 if TYPE_CHECKING:
-    from datetime import date
+    from datetime import date, tzinfo
     from uuid import UUID
 
     from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
-
-# Sentinel horizon for "hold until released manually" and for parked
-# single-frame holds — far enough that the rotation loop never fires.
-_FAR_FUTURE = timedelta(days=3650)
 
 # Panels released in lockstep would keep flashing simultaneously every
 # interval from then on; the rejoin jitter breaks the lockstep. Capped so
@@ -52,11 +49,6 @@ _RELEASE_JITTER_CAP_SECONDS = 3600
 
 class QueueError(Exception):
     """Raised when a queue action cannot run; message is user-facing."""
-
-
-def staggered_rejoin_at(interval_seconds: int, now: datetime) -> datetime:
-    """Randomized rotation rejoin time after a release."""
-    return now + timedelta(seconds=random.uniform(0, min(interval_seconds, _RELEASE_JITTER_CAP_SECONDS)))
 
 
 async def queue_entries(session: AsyncSession, grid_id: UUID) -> list[tuple[str, ImageGroup | Image]]:
@@ -90,31 +82,32 @@ async def queue_entries(session: AsyncSession, grid_id: UUID) -> list[tuple[str,
 
 
 async def group_images(session: AsyncSession, group_id: UUID) -> list[Image]:
-    """Return the group's images in frame/slot order."""
+    """Return the group's images in slot order."""
     result = await session.exec(
         select(Image).where(col(Image.group_id) == group_id).order_by(col(Image.queue_position), col(Image.created_at))
     )
     return list(result.all())
 
 
-def slot_sequences(images: list[Image]) -> dict[tuple[int, int], list[Image]]:
-    """Group a spread's images by panel slot, in rotation order.
+def slot_images(images: list[Image]) -> dict[tuple[int, int], Image]:
+    """Map a spread's images to their panel slot — one image per slot.
 
-    Images without a slot assignment are simply not shown — operators
-    assign panels in the Groups overview; the worker always sets slots.
+    A group is a frozen spread; extra images in the same slot are a data
+    error (logged, first wins). Images without a slot assignment are not
+    shown — operators assign panels in the Groups overview; the worker
+    always sets slots.
     """
-    slotted: dict[tuple[int, int], list[Image]] = {}
+    slotted: dict[tuple[int, int], Image] = {}
     for image in images:
-        if image.group_slot_row is not None and image.group_slot_col is not None:
-            slotted.setdefault((image.group_slot_row, image.group_slot_col), []).append(image)
-        else:
+        if image.group_slot_row is None or image.group_slot_col is None:
             logger.debug("Image %s in group %s has no panel assignment; not shown", image.id, image.group_id)
+            continue
+        key = (image.group_slot_row, image.group_slot_col)
+        if key in slotted:
+            logger.warning("Group %s has multiple images in slot %s; showing the first", image.group_id, key)
+            continue
+        slotted[key] = image
     return slotted
-
-
-def frame_count(images: list[Image]) -> int:
-    """Refresh frames the group occupies: the longest slot's rotation."""
-    return max((len(sequence) for sequence in slot_sequences(images).values()), default=0)
 
 
 async def _push_command(app: FastAPI, device: Device, image: Image) -> bool:
@@ -131,39 +124,37 @@ async def _push_command(app: FastAPI, device: Device, image: Image) -> bool:
     return True
 
 
-def _claim(device: Device, grid: Grid, image: Image, grid_next: datetime, now: datetime) -> None:
+def _claim(device: Device, grid: Grid, image: Image, now: datetime) -> None:
+    # While claimed the device's own ``scheduled_next_at`` is inert (solo
+    # rotation skips claimed devices); it is re-seeded with jitter on release.
     device.claimed_by_grid_id = grid.id
     device.current_image_id = image.id
     device.displayed_since = now
-    device.scheduled_next_at = grid_next
     device.updated_at = now
 
 
-async def _show_group_frame(  # noqa: PLR0913 — one push spans grid, group, and transport
+async def _show_group(  # noqa: PLR0913 — one push spans grid, group, and transport
     app: FastAPI,
     session: AsyncSession,
     grid: Grid,
     group: ImageGroup,
     images: list[Image],
-    frame: int,
     *,
-    grid_next: datetime,
     now: datetime,
 ) -> GroupDisplayResult:
-    """Push one frame of a group spread to the grid's panels. Does not commit."""
-    slotted = slot_sequences(images)
+    """Push a group spread to the grid's panels. Does not commit."""
+    slotted = slot_images(images)
     result = GroupDisplayResult(group_id=group.id, name=group.name, displayed=[], offline=[], skipped_no_content=[])
     targets = await grid_service.resolve_slot_targets(session, grid.id)
     for key, target in sorted(targets.items()):
-        sequence = slotted.get(key)
+        image = slotted.get(key)
         device = target.device
-        if not sequence:
+        if image is None:
             # Slot without content — the panel keeps what it was showing.
             result.skipped_no_content.append(device.device_id)
             continue
-        image = sequence[frame % len(sequence)]
         already_showing = device.current_image_id == image.id and device.claimed_by_grid_id == grid.id
-        _claim(device, grid, image, grid_next, now)
+        _claim(device, grid, image, now)
         session.add(device)
         if already_showing:
             # E-ink refreshes are slow and flashy — don't repaint a
@@ -173,16 +164,19 @@ async def _show_group_frame(  # noqa: PLR0913 — one push spans grid, group, an
         pushed = await _push_command(app, device, image)
         (result.displayed if pushed else result.offline).append(device.device_id)
     grid.current_image_id = None
+    grid.current_group_id = group.id
+    grid.displayed_since = now
+    group.last_displayed_at = now
+    session.add(group)
     return result
 
 
-async def _push_canvas_image(  # noqa: PLR0913 — explicit deps mirror the frame push
+async def _push_canvas_image(
     app: FastAPI,
     session: AsyncSession,
     grid: Grid,
     image: Image,
     *,
-    grid_next: datetime,
     now: datetime,
 ) -> tuple[list[str], list[str]]:
     """Push one image cover-cropped across every panel. No commit."""
@@ -195,7 +189,7 @@ async def _push_canvas_image(  # noqa: PLR0913 — explicit deps mirror the fram
         if device.claimed_by_grid_id is not None and device.claimed_by_grid_id != grid.id:
             logger.warning("Device %s held by another grid; skipped", device.device_id)
             continue
-        _claim(device, grid, image, grid_next, now)
+        _claim(device, grid, image, now)
         session.add(device)
         crop_path = crop_paths.get(device.id)
         if crop_path is None or not app.state.mqtt.is_connected(device.device_id):
@@ -209,7 +203,9 @@ async def _push_canvas_image(  # noqa: PLR0913 — explicit deps mirror the fram
         except Exception:
             logger.exception("Failed to push grid crop to %s", device.device_id)
             offline.append(device.device_id)
+    grid.current_group_id = None
     grid.current_image_id = image.id
+    grid.displayed_since = now
     image.last_displayed_at = now
     session.add(image)
     return displayed, offline
@@ -220,138 +216,75 @@ async def _next_playable(session: AsyncSession, grid_id: UUID) -> tuple[str, Ima
     for kind, obj in await queue_entries(session, grid_id):
         if kind == "group":
             images = await group_images(session, obj.id)
-            if frame_count(images) == 0:
+            if not slot_images(images):
                 continue
             return kind, obj, images
         return kind, obj, []
     return None
 
 
-async def advance_grid(app: FastAPI, session: AsyncSession, grid: Grid, *, force_next: bool = False) -> None:
-    """Advance the grid one step; the single entry point for rotation.
+async def show_next(app: FastAPI, session: AsyncSession, grid: Grid) -> bool:
+    """Show the next queue entry and hold it; the queue's only step function.
 
-    Next frame of the current group while frames remain (or a hold is
-    active), otherwise the next queue entry. ``force_next`` abandons the
-    current group regardless (operator release / "next"). Commits.
+    Returns False (without touching the panels) when the queue has no
+    playable entry. Commits on success.
     """
-    now = utcnow()
-    default_seconds = await get_default_refresh_seconds(session, app.state.settings)
-    grid_next = next_refresh_at(grid, default_seconds, now)
-
-    if grid.current_group_id is not None:
-        group = await session.get(ImageGroup, grid.current_group_id)
-        images = await group_images(session, group.id) if group is not None else []
-        frames = frame_count(images)
-        holding = (not force_next) and grid.hold_until is not None and grid.hold_until > now
-        next_frame = grid.current_frame + 1
-        if group is not None and frames > 0 and not force_next and (holding or next_frame < frames):
-            if frames == 1:
-                # Single frame — nothing to rotate; park so the panels
-                # aren't repainted every interval while the hold lasts.
-                grid.scheduled_next_at = grid.hold_until or now + _FAR_FUTURE
-            else:
-                grid.current_frame = next_frame % frames
-                await _show_group_frame(
-                    app, session, grid, group, images, grid.current_frame, grid_next=grid_next, now=now
-                )
-                grid.scheduled_next_at = grid_next
-            grid.updated_at = now
-            session.add(grid)
-            await session.commit()
-            return
-        # Group finished (or released) — record the replay timestamp.
-        if group is not None:
-            group.last_displayed_at = now
-            session.add(group)
-        grid.current_group_id = None
-        grid.current_frame = 0
-        grid.hold_until = None
-
     entry = await _next_playable(session, grid.id)
     if entry is None:
-        logger.debug("Grid %s queue is empty; nothing to advance", grid.id)
-        grid.updated_at = now
-        session.add(grid)
-        await session.commit()
-        return
+        logger.debug("Grid %s queue is empty; nothing to show", grid.id)
+        return False
 
+    now = utcnow()
     kind, obj, images = entry
     if kind == "group" and isinstance(obj, ImageGroup):
-        grid.current_group_id = obj.id
-        grid.current_frame = 0
-        await _show_group_frame(app, session, grid, obj, images, 0, grid_next=grid_next, now=now)
+        await _show_group(app, session, grid, obj, images, now=now)
     elif isinstance(obj, Image):
-        await _push_canvas_image(app, session, grid, obj, grid_next=grid_next, now=now)
-    grid.scheduled_next_at = grid_next
+        await _push_canvas_image(app, session, grid, obj, now=now)
+    grid.hold_until = grid_service.hold_horizon(grid, now)
     grid.updated_at = now
     session.add(grid)
     await session.commit()
+    return True
 
 
 async def start_group(app: FastAPI, session: AsyncSession, grid: Grid, group: ImageGroup) -> GroupDisplayResult:
-    """Show a group now, front-running the queue, and hold it.
-
-    The hold lasts ``display_duration_seconds`` (or until an explicit
-    release when unset), matching the former session semantics. Commits.
-    """
+    """Show a specific group now, front-running the queue, and hold it. Commits."""
     now = utcnow()
     images = await group_images(session, group.id)
-    frames = frame_count(images)
-    if frames == 0:
+    if not slot_images(images):
         raise QueueError("The group has no panel assignments")
-    default_seconds = await get_default_refresh_seconds(session, app.state.settings)
-    grid_next = next_refresh_at(grid, default_seconds, now)
 
-    grid.current_group_id = group.id
-    grid.current_frame = 0
-    duration = grid.display_duration_seconds
-    grid.hold_until = now + timedelta(seconds=duration) if duration else now + _FAR_FUTURE
-    result = await _show_group_frame(app, session, grid, group, images, 0, grid_next=grid_next, now=now)
+    result = await _show_group(app, session, grid, group, images, now=now)
     if not result.displayed and not result.offline:
         await session.rollback()
         raise QueueError("No panel has content to display for this group")
-    grid.scheduled_next_at = grid_next if frames > 1 else grid.hold_until
+    grid.hold_until = grid_service.hold_horizon(grid, now)
     grid.updated_at = now
-    group.last_displayed_at = now
     session.add(grid)
-    session.add(group)
     await session.commit()
     return result
 
 
 async def release_queue(app: FastAPI, session: AsyncSession, grid: Grid) -> None:
-    """Operator release: resume the queue immediately, jitter what follows.
+    """End the grid's display and hand the panels back to solo rotation.
 
-    The panels update right away (the point of releasing), but the *next*
-    refresh is randomized so grids released together don't flash in
-    lockstep every interval from then on. With an empty queue the member
-    devices are handed back to jittered solo rotation instead. Commits.
+    Runs on hold expiry and on operator release alike. The panels keep
+    their last image until their own (jittered) rotation replaces it —
+    jittered so grids released together don't flash in lockstep. Commits.
     """
     now = utcnow()
     default_seconds = await get_default_refresh_seconds(session, app.state.settings)
+    grid.current_group_id = None
+    grid.current_image_id = None
     grid.hold_until = None
-    if await _next_playable(session, grid.id) is None:
-        if grid.current_group_id is not None:
-            group = await session.get(ImageGroup, grid.current_group_id)
-            if group is not None:
-                group.last_displayed_at = now
-                session.add(group)
-        grid.current_group_id = None
-        grid.current_frame = 0
-        devices = await session.exec(select(Device).where(col(Device.claimed_by_grid_id) == grid.id))
-        for device in devices.all():
-            device.claimed_by_grid_id = None
-            device.scheduled_next_at = staggered_rejoin_at(device.refresh_interval_seconds or default_seconds, now)
-            device.updated_at = now
-            session.add(device)
-        grid.updated_at = now
-        session.add(grid)
-        await session.commit()
-        return
-
-    await advance_grid(app, session, grid, force_next=True)
-    await session.refresh(grid)
-    grid.scheduled_next_at = staggered_rejoin_at(grid.refresh_interval_seconds or default_seconds, now)
+    devices = await session.exec(select(Device).where(col(Device.claimed_by_grid_id) == grid.id))
+    for device in devices.all():
+        jitter = random.uniform(0, min(device.refresh_interval_seconds or default_seconds, _RELEASE_JITTER_CAP_SECONDS))
+        device.claimed_by_grid_id = None
+        device.scheduled_next_at = now + timedelta(seconds=jitter)
+        device.updated_at = now
+        session.add(device)
+    grid.updated_at = now
     session.add(grid)
     await session.commit()
 
@@ -364,19 +297,42 @@ def _local_now(grid: Grid, now: datetime) -> datetime:
     return now.replace(tzinfo=UTC).astimezone(ZoneInfo(grid.display_timezone))
 
 
+def _display_on_day(grid: Grid, day: date, tz: tzinfo | None) -> datetime:
+    """Return the grid's display moment on a grid-local day, as naive UTC."""
+    hour, minute = (int(piece) for piece in grid.display_time.split(":"))
+    return datetime.combine(day, time(hour, minute), tzinfo=tz).astimezone(UTC).replace(tzinfo=None)
+
+
 def _display_at_utc(grid: Grid, now: datetime) -> datetime | None:
     """Today's display time (grid-local) as naive UTC, or None off-schedule days."""
     local = _local_now(grid, now)
     if not grid.display_weekday_mask & (1 << local.weekday()):
         return None
-    hour, minute = (int(piece) for piece in grid.display_time.split(":"))
-    local_display = datetime.combine(local.date(), time(hour, minute), tzinfo=local.tzinfo)
-    return local_display.astimezone(UTC).replace(tzinfo=None)
+    return _display_on_day(grid, local.date(), local.tzinfo)
 
 
 def local_today(grid: Grid, now: datetime) -> date:
     """Today's date on the operator's calendar (grid display timezone)."""
     return _local_now(grid, now).date()
+
+
+def next_display_at(grid: Grid, now: datetime) -> datetime | None:
+    """Return the next scheduled display occurrence as naive UTC (None if disabled).
+
+    Scans a week of grid-local days: today counts if the time is still
+    ahead and today's display has not already run.
+    """
+    if not grid.display_schedule_enabled:
+        return None
+    local = _local_now(grid, now)
+    for offset in range(8):
+        day = local.date() + timedelta(days=offset)
+        if not grid.display_weekday_mask & (1 << day.weekday()) or grid.last_displayed_on == day:
+            continue
+        display_at = _display_on_day(grid, day, local.tzinfo)
+        if display_at > now:
+            return display_at
+    return None
 
 
 def display_due(grid: Grid, now: datetime) -> bool:
@@ -393,23 +349,17 @@ def display_due(grid: Grid, now: datetime) -> bool:
     return now >= display_at
 
 
-async def latest_generated_group(session: AsyncSession, grid_id: UUID) -> ImageGroup | None:
-    """Return the newest worker-generated group for this grid.
-
-    Newest wins — no per-job arbitration config.
-    """
-    result = await session.exec(
-        select(ImageGroup)
-        .where(col(ImageGroup.target_grid_id) == grid_id, col(ImageGroup.display_job_id).is_not(None))
-        .order_by(col(ImageGroup.created_at).desc())
-        .limit(1)
-    )
-    return result.first()
-
-
 async def queue_tick(app: FastAPI) -> None:
-    """Start due scheduled displays; called from the rotation loop."""
+    """Expire holds and start due scheduled displays; runs from the rotation loop."""
     now = utcnow()
+    # expire_on_commit=False: release_queue commits per grid, and the next
+    # loop iteration still reads the already-loaded grid rows.
+    async with AsyncSession(app.state.engine, expire_on_commit=False) as session:
+        expired = await session.exec(select(Grid).where(col(Grid.hold_until).is_not(None), col(Grid.hold_until) <= now))
+        for grid in expired.all():
+            await release_queue(app, session, grid)
+            logger.info("Grid %s display ended; panels returned to solo rotation", grid.id)
+
     async with AsyncSession(app.state.engine) as session:
         grids_result = await session.exec(select(Grid).where(col(Grid.display_schedule_enabled).is_(True)))
         due_ids = [grid.id for grid in grids_result.all() if display_due(grid, now)]
@@ -419,21 +369,13 @@ async def queue_tick(app: FastAPI) -> None:
             grid = await session.get(Grid, grid_id)
             if grid is None or not display_due(grid, now):
                 continue
-            group = await latest_generated_group(session, grid.id)
-            if group is None:
-                logger.debug("Grid %s scheduled display skipped — no generated group", grid.id)
+            # An empty queue is not marked displayed — the next tick retries
+            # until content (e.g. the day's generated group) exists.
+            if not await show_next(app, session, grid):
                 continue
-            group_id = group.id
-            try:
-                await start_group(app, session, grid, group)
-            except QueueError as exc:
-                # Not marked displayed — the next tick retries until content
-                # actually reaches the panels.
-                logger.warning("Grid %s scheduled display could not start: %s", grid.id, exc)
-                continue
-            grid = await session.get(Grid, grid_id)  # start_group committed; re-fetch
+            grid = await session.get(Grid, grid_id)  # show_next committed; re-fetch
             if grid is not None:
                 grid.last_displayed_on = local_today(grid, now)
                 session.add(grid)
                 await session.commit()
-            logger.info("Grid %s scheduled display started (group %s)", grid_id, group_id)
+            logger.info("Grid %s scheduled display started", grid_id)

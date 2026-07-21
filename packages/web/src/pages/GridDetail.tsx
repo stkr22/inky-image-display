@@ -7,12 +7,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, Dialog } from '../components/Dialog'
-import { Button, IntervalInputs, NumberField, Switch, TextField, totalSeconds } from '../components/fields'
+import { Button, NumberField, Switch, TextField } from '../components/fields'
 import { GridLayoutEditor, layoutRowsFromGrid, type LayoutRows } from '../components/GridLayoutEditor'
 import { useNotify } from '../components/Toast'
 import { Badge, EmptyNote, ErrorNote, Spinner } from '../components/ui'
 import { api, ApiError } from '../lib/api'
-import { formatDatetime, formatIntervalSeconds, formatRelative, splitHoursMinutes } from '../lib/format'
+import { formatRelative } from '../lib/format'
 import { CROP_NEGLIGIBLE, cropText, imageFit, maxDevicePxcm, recommendedDims, resolutionBand } from '../lib/quality'
 import { imageTitle, mediaUrl, type Device, type Grid, type Image } from '../lib/types'
 
@@ -99,8 +99,9 @@ function GridHeader({ grid, devices, onChanged }: { grid: Grid; devices: Device[
           Canvas: {grid.width_cm.toFixed(1)} x {grid.height_cm.toFixed(1)} cm · {grid.devices?.length ?? 0} device(s)
         </span>
         <span className="ink-small">
-          Refresh every {formatIntervalSeconds(grid.refresh_interval_seconds)} · next {formatDatetime(grid.scheduled_next_at)} (
-          {formatRelative(grid.scheduled_next_at)})
+          {grid.display_schedule_enabled
+            ? `Shows daily at ${grid.display_time} (${grid.display_timezone})`
+            : 'No daily display schedule'}
         </span>
       </div>
       <div className="row gap-2 items-center">
@@ -139,17 +140,11 @@ function EditGridDialog({
   onSaved: () => void
 }) {
   const notify = useNotify()
-  const { data: settings } = useQuery({ queryKey: ['app-settings'], queryFn: api.getAppSettings })
   const { data: profiles } = useQuery({ queryKey: ['device-profiles'], queryFn: api.listDeviceProfiles })
-  const defaultLabel = settings ? formatIntervalSeconds(settings.default_refresh_seconds) : 'default'
 
   const initialRows = useMemo(() => layoutRowsFromGrid(grid.devices ?? []), [grid.devices])
   const [name, setName] = useState(grid.name)
   const [rows, setRows] = useState<LayoutRows>(initialRows)
-  const [initialHours, initialMinutes] = splitHoursMinutes(grid.refresh_interval_seconds)
-  const [useDefault, setUseDefault] = useState(grid.refresh_interval_seconds == null)
-  const [hours, setHours] = useState<number | ''>(initialHours)
-  const [minutes, setMinutes] = useState<number | ''>(initialMinutes)
 
   const submit = async () => {
     const cleanRows = rows.filter((row) => row.length > 0)
@@ -160,16 +155,6 @@ function EditGridDialog({
     const payload: Record<string, unknown> = {}
     if (name && name !== grid.name) payload.name = name
     if (JSON.stringify(cleanRows) !== JSON.stringify(layoutRowsFromGrid(grid.devices ?? []))) payload.rows = cleanRows
-    if (useDefault) {
-      if (grid.refresh_interval_seconds != null) payload.clear_refresh_interval = true
-    } else {
-      const total = totalSeconds(hours, minutes)
-      if (total <= 0) {
-        notify('Pick at least 1 minute, or switch to default.', 'warning')
-        return
-      }
-      if (total !== (grid.refresh_interval_seconds ?? -1)) payload.refresh_interval_seconds = total
-    }
     if (Object.keys(payload).length === 0) {
       onClose()
       return
@@ -191,9 +176,6 @@ function EditGridDialog({
       <TextField label="Name" value={name} onChange={setName} />
       <span className="ink-eyebrow">Layout</span>
       <GridLayoutEditor rows={rows} onChange={setRows} devices={devices} profiles={profiles ?? []} excludeGridId={grid.id} />
-      <span className="ink-eyebrow">Refresh schedule</span>
-      <Switch label={`Use default interval (${defaultLabel})`} checked={useDefault} onChange={setUseDefault} />
-      <IntervalInputs hours={hours} minutes={minutes} onHours={setHours} onMinutes={setMinutes} disabled={useDefault} />
       <div className="row w-full justify-end gap-2">
         <Button flat onClick={onClose}>
           Cancel
@@ -428,12 +410,7 @@ function QueueCard({ grid, onChanged }: { grid: Grid; onChanged: () => void }) {
     <div className="ink-card" style={{ gap: 12 }}>
       <div className="row w-full items-center gap-3 wrap">
         <h3 className="ink-h3">Up next</h3>
-        {status?.group_name && (
-          <span className="ink-small">
-            Now showing “{status.group_name}”
-            {status.frame_count > 1 ? ` (frame ${status.frame + 1}/${status.frame_count})` : ''}
-          </span>
-        )}
+        {status?.group_name && <span className="ink-small">Now showing “{status.group_name}”</span>}
         {held && <Badge tone="accent">Held</Badge>}
         <div className="flex-1" />
         <Button
@@ -485,7 +462,7 @@ function QueueCard({ grid, onChanged }: { grid: Grid; onChanged: () => void }) {
               {entry.name ?? 'Untitled'} {entry.is_current && <Badge tone="ok">showing</Badge>}
             </span>
             <span className="ink-small">
-              {entry.kind === 'group' ? `Group · ${entry.frame_count} frame(s)` : 'Image'} ·{' '}
+              {entry.kind === 'group' ? 'Group' : 'Image'} ·{' '}
               {entry.last_displayed_at ? `shown ${formatRelative(entry.last_displayed_at)}` : 'not shown yet'}
             </span>
           </div>

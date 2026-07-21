@@ -1,8 +1,8 @@
 """Tests for the device-health gate on automatic image dispatch.
 
 A stuck panel keeps acking and stays "online", so the scheduler must not keep
-pushing fresh images at it. Rotation (solo + grid) and GenAI dispatch all skip
-devices whose last refresh failed *recently*; a never-acked device
+pushing fresh images at it. Solo rotation and GenAI dispatch skip devices
+whose last refresh failed *recently*; a never-acked device
 (last_refresh_ok is None) stays eligible. Recovery is automatic two ways: a
 success ack clears the flag, and a failure older than the configured backoff
 expires — the controller-side retry lives only in device memory, so a
@@ -18,8 +18,8 @@ from uuid import uuid4
 
 import pytest
 from inky_image_display_api.services.generation_service import generate_and_publish
-from inky_image_display_api.services.rotation import _advance_single_grid, _rotate_due_devices
-from inky_image_display_shared.models import Device, DeviceProfile, Grid, GridDevice, Image, PromptBlock, PromptPreset
+from inky_image_display_api.services.rotation import _rotate_due_devices
+from inky_image_display_shared.models import Device, DeviceProfile, Image, PromptBlock, PromptPreset
 from inky_image_display_shared.time import utcnow
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -142,59 +142,6 @@ class TestSoloRotationGate:
         await _rotate_due_devices(_app(async_engine, mock_settings, mock_s3_service, mock_mqtt))
 
         assert {call.args[0] for call in mock_mqtt.send_command.call_args_list} == {"stale"}
-
-
-class TestGridRotationGate:
-    @pytest.mark.asyncio
-    async def test_grid_paused_when_a_member_is_errored(
-        self, async_engine, mock_settings, mock_s3_service, mock_mqtt, seed_profile
-    ) -> None:
-        grid = Grid(id=uuid4(), name="wall", width_cm=80.0, height_cm=40.0, scheduled_next_at=PAST)
-        member = _due_device(seed_profile, "grid-member", last_refresh_ok=False)
-        placement = GridDevice(
-            grid_id=grid.id,
-            device_id=member.id,
-            top_left_x_cm=0.0,
-            top_left_y_cm=0.0,
-            width_cm=40.0,
-            height_cm=40.0,
-        )
-        grid_id = grid.id
-        await _add(async_engine, grid, member, placement)
-
-        await _advance_single_grid(_app(async_engine, mock_settings, mock_s3_service, mock_mqtt), grid_id)
-
-        # Gate fires before any rendering or pushing happens.
-        mock_s3_service.upload_image.assert_not_called()
-        mock_mqtt.send_command.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_grid_resumes_once_member_error_is_stale(
-        self, async_engine, mock_settings, mock_s3_service, mock_mqtt, seed_profile
-    ) -> None:
-        grid = Grid(id=uuid4(), name="wall", width_cm=80.0, height_cm=40.0, scheduled_next_at=PAST)
-        member = _due_device(seed_profile, "grid-member", last_refresh_ok=False, last_error_at=STALE_ERROR_AT)
-        placement = GridDevice(
-            grid_id=grid.id,
-            device_id=member.id,
-            top_left_x_cm=0.0,
-            top_left_y_cm=0.0,
-            width_cm=40.0,
-            height_cm=40.0,
-        )
-        grid_id = grid.id
-        await _add(async_engine, grid, member, placement)
-
-        # The stale member must no longer pause the grid: the tick has to get
-        # past the health gate and reach queue advancement (which the paused
-        # case never does).
-        with patch(
-            "inky_image_display_api.services.rotation.queue_service.advance_grid",
-            new=AsyncMock(return_value=None),
-        ) as advance:
-            await _advance_single_grid(_app(async_engine, mock_settings, mock_s3_service, mock_mqtt), grid_id)
-
-        advance.assert_awaited_once()
 
 
 class TestGenAiGate:

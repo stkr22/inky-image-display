@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import timedelta
 from io import BytesIO
 from typing import TYPE_CHECKING
 
@@ -25,21 +26,28 @@ from PIL import ImageOps
 from PIL.Image import Resampling
 from sqlmodel import col, select
 
-from inky_image_display_api.services.app_settings_service import get_default_refresh_seconds
-from inky_image_display_api.services.image_service import next_refresh_at
-
 if TYPE_CHECKING:
+    from datetime import datetime
     from uuid import UUID
 
     from sqlmodel.ext.asyncio.session import AsyncSession
 
-    from inky_image_display_api.config import Settings
     from inky_image_display_api.mqtt import MQTTService
     from inky_image_display_api.services.s3_service import S3Service
 
 pillow_heif.register_heif_opener()
 
 logger = logging.getLogger(__name__)
+
+
+def hold_horizon(grid: Grid, now: datetime) -> datetime:
+    """When the current display ends: duration-based, or manual release only.
+
+    The no-duration fallback is ~10 years out — far enough that the
+    hold-expiry tick never fires on its own.
+    """
+    duration = grid.display_duration_seconds
+    return now + timedelta(seconds=duration) if duration else now + timedelta(days=3650)
 
 
 class GridValidationError(HTTPException):
@@ -323,18 +331,19 @@ def _fetch_image_bytes(s3: S3Service, storage_path: str) -> bytes:
         response.release_conn()
 
 
-async def claim_devices_and_push(  # noqa: PLR0913 — explicit deps mirror the route call site
+async def claim_devices_and_push(
     session: AsyncSession,
     grid: Grid,
     image: Image,
     crop_paths: dict[UUID, str],
     mqtt: MQTTService,
-    settings: Settings,
 ) -> None:
     """Claim every grid member device and push its slice via MQTT.
 
-    Aborts (raises 409) without partial state changes if any member is
-    already claimed by a different grid.
+    The display is held like any queue content: for the grid's display
+    duration, or until an explicit release when unset. Aborts (raises 409)
+    without partial state changes if any member is already claimed by a
+    different grid.
     """
     now = utcnow()
     placements = await list_grid_devices(session, grid.id)
@@ -350,17 +359,14 @@ async def claim_devices_and_push(  # noqa: PLR0913 — explicit deps mirror the 
             )
         devices.append(device)
 
-    # Apply claims and push commands. Cadence is grid-owned now — every
-    # member tracks the same ``scheduled_next_at`` as the grid itself so
-    # the rotation loop drives them in lockstep.
-    default_seconds = await get_default_refresh_seconds(session, settings)
-    grid_next = next_refresh_at(grid, default_seconds, now)
+    # Apply claims and push commands. While claimed the devices' own
+    # ``scheduled_next_at`` is inert — solo rotation skips them; the
+    # release path re-seeds it with jitter.
     for device in devices:
         path = crop_paths[device.id]
         device.claimed_by_grid_id = grid.id
         device.current_image_id = image.id
         device.displayed_since = now
-        device.scheduled_next_at = grid_next
         device.updated_at = now
         session.add(device)
 
@@ -380,7 +386,7 @@ async def claim_devices_and_push(  # noqa: PLR0913 — explicit deps mirror the 
 
     grid.current_image_id = image.id
     grid.displayed_since = now
-    grid.scheduled_next_at = grid_next
+    grid.hold_until = hold_horizon(grid, now)
     grid.updated_at = now
     image.last_displayed_at = now
     session.add(grid)

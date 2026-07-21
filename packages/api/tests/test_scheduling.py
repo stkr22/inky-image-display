@@ -1,9 +1,9 @@
 """Tests for the rotation cadence feature.
 
-Covers the per-entity refresh interval (`next_refresh_at` helper), the
-PATCH /api/devices/{id} route, the extended PUT /api/grids/{id} route,
-the new GET /api/schedule/upcoming endpoint, and the UTC serializer
-that emits offset-aware ISO strings.
+Covers the per-device refresh interval (`next_refresh_at` helper), the
+PATCH /api/devices/{id} route, the grid display-schedule update, the
+GET /api/schedule/upcoming endpoint, and the UTC serializer that emits
+offset-aware ISO strings.
 """
 
 from datetime import datetime, timedelta
@@ -13,14 +13,14 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from inky_image_display_api.services.image_service import next_refresh_at
-from inky_image_display_api.services.rotation import _advance_single_grid
 from inky_image_display_shared.models import Device, Grid
+from inky_image_display_shared.time import utcnow
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 
 class TestNextRefreshAt:
-    """The cadence helper should prefer the per-entity override."""
+    """The cadence helper should prefer the per-device override."""
 
     def test_override_wins(self):
         device = Device(
@@ -41,11 +41,6 @@ class TestNextRefreshAt:
         )
         now = datetime(2026, 5, 17, 12, 0, 0)
         assert next_refresh_at(device, 900, now) == now + timedelta(seconds=900)
-
-    def test_works_for_grids(self):
-        grid = Grid(id=uuid4(), name="hallway", width_cm=80.0, height_cm=40.0)
-        now = datetime(2026, 5, 17, 12, 0, 0)
-        assert next_refresh_at(grid, 1800, now) == now + timedelta(seconds=1800)
 
 
 class TestPatchDevice:
@@ -93,7 +88,7 @@ class TestPatchDevice:
 
 
 class TestGridScheduleUpdate:
-    """PUT /api/grids/{grid_id} accepts the refresh_interval fields."""
+    """PUT /api/grids/{grid_id} edits the daily display schedule."""
 
     @pytest.fixture
     async def seed_grid(self, async_engine: AsyncEngine) -> Grid:
@@ -104,20 +99,15 @@ class TestGridScheduleUpdate:
             await session.refresh(grid)
         return grid
 
-    def test_sets_and_clears_interval(self, client: TestClient, seed_grid: Grid):
+    def test_sets_display_schedule(self, client: TestClient, seed_grid: Grid):
         resp = client.put(
             f"/api/grids/{seed_grid.id}",
-            json={"refresh_interval_seconds": 1800},
+            json={"display_schedule_enabled": True, "display_time": "07:30", "display_timezone": "Europe/Berlin"},
         )
         assert resp.status_code == 200
-        assert resp.json()["refresh_interval_seconds"] == 1800
-
-        resp = client.put(
-            f"/api/grids/{seed_grid.id}",
-            json={"clear_refresh_interval": True},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["refresh_interval_seconds"] is None
+        body = resp.json()
+        assert body["display_schedule_enabled"] is True
+        assert body["display_time"] == "07:30"
 
 
 @pytest.fixture
@@ -125,31 +115,38 @@ async def seed_schedule_entities(
     async_engine: AsyncEngine,
     seed_profile,
 ) -> tuple[str, str, str]:
-    """Seed two solo devices, one grid, and one grid-claimed device.
+    """Seed two solo devices, one scheduled grid, and one grid-claimed device.
 
-    Staggered ``scheduled_next_at`` so the merged queue tests both
-    chronological ordering and the exclusion of claimed devices.
+    The grid's daily display time is two hours ahead so its computed
+    occurrence lands between the two solo devices; the claimed device
+    must be excluded from the merged queue.
     """
+    now = utcnow()
     grid = Grid(
         id=uuid4(),
         name="hallway",
         width_cm=80.0,
         height_cm=40.0,
-        scheduled_next_at=datetime(2026, 5, 17, 12, 0, 30),
+        display_schedule_enabled=True,
+        # Next occurrence of "now + 2h" wall-clock is always ~2h away,
+        # even across midnight, so it sorts between the solo devices.
+        display_time=(now + timedelta(hours=2)).strftime("%H:%M"),
+        display_weekday_mask=127,
+        display_timezone="UTC",
     )
     solo_a = Device(
         id=uuid4(),
         device_id="solo-a",
         device_profile_id=seed_profile.id,
         is_online=True,
-        scheduled_next_at=datetime(2026, 5, 17, 12, 0, 0),
+        scheduled_next_at=now + timedelta(hours=1),
     )
     solo_b = Device(
         id=uuid4(),
         device_id="solo-b",
         device_profile_id=seed_profile.id,
         is_online=True,
-        scheduled_next_at=datetime(2026, 5, 17, 12, 1, 0),
+        scheduled_next_at=now + timedelta(hours=3),
     )
     claimed = Device(
         id=uuid4(),
@@ -157,7 +154,7 @@ async def seed_schedule_entities(
         device_profile_id=seed_profile.id,
         is_online=True,
         claimed_by_grid_id=grid.id,
-        scheduled_next_at=datetime(2026, 5, 17, 12, 0, 15),
+        scheduled_next_at=now + timedelta(minutes=90),
     )
     # Capture strings before the session closes — SQLAlchemy expires
     # attributes on commit/close, so reading after the context exits
@@ -203,42 +200,6 @@ class TestScheduleUpcoming:
         assert len(entries) == 1
         assert entries[0]["refresh_interval_seconds"] is None
         assert entries[0]["effective_interval_seconds"] == mock_settings.default_display_duration
-
-
-class TestRotationSkipsEmptyGrid:
-    """Regression: the background rotation tick must not raise when a
-    grid has no devices placed — operators routinely create a grid in
-    the UI before adding any devices, and a 400 from ``render_and_upload``
-    used to bubble up as a stack trace every 30 seconds."""
-
-    async def test_returns_without_error_when_no_placements(
-        self,
-        async_engine,
-        mock_settings: MagicMock,
-        mock_s3_service: MagicMock,
-        mock_mqtt: MagicMock,
-    ):
-        grid = Grid(
-            id=uuid4(),
-            name="empty",
-            width_cm=80.0,
-            height_cm=40.0,
-            scheduled_next_at=datetime(2026, 5, 17, 12, 0, 0),
-        )
-        grid_id = grid.id  # capture before commit expires the attribute
-        async with AsyncSession(async_engine) as session:
-            session.add(grid)
-            await session.commit()
-
-        app = MagicMock()
-        app.state.engine = async_engine
-        app.state.s3_service = mock_s3_service
-        app.state.mqtt = mock_mqtt
-        app.state.settings = mock_settings
-
-        # No raise, no S3 calls — empty-grid path is silent.
-        await _advance_single_grid(app, grid_id)
-        mock_s3_service.upload_image.assert_not_called()
 
 
 class TestUtcSerialization:

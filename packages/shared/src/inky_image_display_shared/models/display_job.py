@@ -65,14 +65,14 @@ class DisplayJob(SQLModel, table=True):
 
 
 class DisplayJobSlot(SQLModel, table=True):
-    """Which content parts one grid slot shows, in rotation order.
+    """Which content part one grid slot shows.
 
     Slots address grid positions (``row``/``col`` on ``grid_devices``), not
     devices, so swapping a panel in the grid layout keeps the job mapping
-    intact. ``parts`` is a JSON-encoded ordered list of part keys (see
-    ``inky_image_display_shared.motd``). The worker renders one image per
-    (slot, part) into the run's image group; multi-part slots become that
-    slot's frame sequence.
+    intact. ``parts`` is a JSON-encoded list of part keys (see
+    ``inky_image_display_shared.motd``). Groups are frozen spreads — one
+    image per slot — so only the first part of a slot is ever shown;
+    configure one part per slot.
     """
 
     __tablename__ = "display_job_slots"
