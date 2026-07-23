@@ -109,6 +109,7 @@ async def update_display_state(
     device: Device,
     image: Image,
     settings: Settings,
+    stagger: tuple[int, int] | None = None,
 ) -> None:
     """Update database after a display command has been sent.
 
@@ -117,6 +118,8 @@ async def update_display_state(
         device: Device that received the command.
         image: Image being displayed.
         settings: Application settings (for display duration).
+        stagger: Optional ``(index, count)``: spread simultaneously
+            rotated panels' next refreshes evenly across the interval.
 
     """
     now = utcnow()
@@ -133,7 +136,11 @@ async def update_display_state(
     if image.display_duration_seconds is not None:
         device.scheduled_next_at = now + timedelta(seconds=image.display_duration_seconds)
     else:
-        device.scheduled_next_at = next_refresh_at(device, default_seconds, now)
+        next_at = next_refresh_at(device, default_seconds, now)
+        if stagger is not None:
+            index, count = stagger
+            next_at = now + (next_at - now) * ((index + 1) / count)
+        device.scheduled_next_at = next_at
     device.updated_at = now
 
     session.add(image)

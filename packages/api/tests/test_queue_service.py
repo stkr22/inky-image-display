@@ -220,7 +220,7 @@ class TestShowHoldRelease:
         mqtt.send_command.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_release_returns_devices_to_jittered_solo_rotation(
+    async def test_release_makes_devices_immediately_due_for_solo_rotation(
         self, async_engine, mock_settings, mock_s3_service, seed_profile, mqtt
     ) -> None:
         grid, device = await _grid_with_device(async_engine, seed_profile)
@@ -237,7 +237,7 @@ class TestShowHoldRelease:
         release_time = utcnow()
         async with AsyncSession(async_engine) as session:
             db_grid = (await session.exec(select(Grid).where(Grid.id == grid.id))).one()
-            await queue_service.release_queue(app, session, db_grid)
+            await queue_service.release_queue(session, db_grid)
 
         async with AsyncSession(async_engine) as session:
             db_grid = (await session.exec(select(Grid).where(Grid.id == grid.id))).one()
@@ -245,9 +245,10 @@ class TestShowHoldRelease:
         assert db_grid.hold_until is None
         assert db_grid.current_group_id is None
         assert db_device.claimed_by_grid_id is None
-        # Rejoin is jittered within the default interval, not immediate lockstep.
-        interval = mock_settings.default_display_duration
-        assert db_device.scheduled_next_at <= release_time + timedelta(seconds=interval)
+        # The panel is due right away — the next rotation tick repaints it
+        # (the tick then staggers the *following* refreshes).
+        assert db_device.scheduled_next_at <= utcnow()
+        assert db_device.scheduled_next_at >= release_time
 
 
 class TestQueueTick:

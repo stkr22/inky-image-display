@@ -376,6 +376,7 @@ class AppSettingsResponse(BaseModel):
 
     default_refresh_seconds: int
     quiet_hours: QuietHoursSettings = QuietHoursSettings()
+    stagger_rotation: bool = True
 
 
 # --- Display jobs ---

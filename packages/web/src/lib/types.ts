@@ -241,6 +241,7 @@ export interface QuietHours {
 export interface AppSettings {
   default_refresh_seconds: number
   quiet_hours: QuietHours
+  stagger_rotation: boolean
 }
 
 export interface ImageStats {

@@ -103,8 +103,10 @@ queue content like any curated group or pool image (see
   retained `group_id`) or `POST /api/grids/{id}/display-group` shows a
   group now, with the same hold semantics.
 - **Hold expiry / release** (`POST /api/grids/{id}/release`): the panels
-  return to their own solo rotation, with a jittered rejoin so grids
-  released together don't flash in lockstep.
+  repaint with solo-rotation content on the next tick; their following
+  refreshes are spread evenly across the refresh interval (the
+  `stagger_rotation` app setting, on by default) so panels released
+  together don't keep flashing in lockstep.
 
 Slot-addressed screens show simultaneously, exactly one image per panel —
 a group is a frozen spread with no rotation inside it. Groups are retained

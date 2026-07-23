@@ -10,7 +10,7 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.services import display_job_service, queue_service, sync_job_scheduling
-from inky_image_display_api.services.app_settings_service import get_quiet_hours, is_quiet_now
+from inky_image_display_api.services.app_settings_service import get_quiet_hours, get_stagger_rotation, is_quiet_now
 from inky_image_display_api.services.image_service import (
     build_display_command,
     get_next_image_for_device,
@@ -114,18 +114,23 @@ async def _rotate_due_devices(app: FastAPI) -> None:
                 dispatch_allowed_clause(now, app.state.settings.refresh_error_backoff_seconds),
             )
         )
-        due_devices = result.all()
+        due_devices = [device for device in result.all() if app.state.mqtt.is_connected(device.device_id)]
+        stagger_enabled = await get_stagger_rotation(session)
 
-    for device in due_devices:
-        if not app.state.mqtt.is_connected(device.device_id):
-            continue
+    # Several devices due in one tick means a mass event — a grid release
+    # or the quiet-hours window ending. They all repaint now, but their
+    # *next* refreshes are spread evenly across the interval so they don't
+    # keep flashing simultaneously every interval from here on.
+    count = len(due_devices)
+    for index, device in enumerate(due_devices):
+        stagger = (index, count) if stagger_enabled and count > 1 else None
         try:
-            await _rotate_single_device(app, device)
+            await _rotate_single_device(app, device, stagger)
         except Exception:
             logger.exception("Failed to rotate device %s", device.device_id)
 
 
-async def _rotate_single_device(app: FastAPI, device: Device) -> None:
+async def _rotate_single_device(app: FastAPI, device: Device, stagger: tuple[int, int] | None = None) -> None:
     """Select and push the next image for a single device."""
     async with AsyncSession(app.state.engine) as session:
         result = await session.exec(select(Device).where(col(Device.id) == device.id))
@@ -142,5 +147,5 @@ async def _rotate_single_device(app: FastAPI, device: Device) -> None:
         device_id = db_device.device_id
         image_id = image.id
         await app.state.mqtt.send_command(device_id, command)
-        await update_display_state(session, db_device, image, app.state.settings)
+        await update_display_state(session, db_device, image, app.state.settings, stagger)
         logger.info("Rotated device %s to image %s", device_id, image_id)

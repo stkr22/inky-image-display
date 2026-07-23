@@ -183,7 +183,7 @@ async def advance_grid_rotation(request: Request, grid_id: UUID) -> dict[str, st
     async with AsyncSession(request.app.state.engine) as session:
         grid = await grid_service.get_grid_or_404(session, grid_id)
         if not await queue_service.show_next(request.app, session, grid):
-            await queue_service.release_queue(request.app, session, grid)
+            await queue_service.release_queue(session, grid)
         return {"status": "ok"}
 
 
@@ -191,12 +191,12 @@ async def advance_grid_rotation(request: Request, grid_id: UUID) -> dict[str, st
 async def release_grid_content(request: Request, grid_id: UUID) -> dict[str, str]:
     """End the grid's display and return the panels to solo rotation.
 
-    The panels keep their last image until their own (jittered) rotation
-    replaces it, so simultaneous releases don't flash in lockstep.
+    The panels repaint on the next rotation tick; their following
+    refreshes are staggered there so they don't stay in lockstep.
     """
     async with AsyncSession(request.app.state.engine) as session:
         grid = await grid_service.get_grid_or_404(session, grid_id)
-        await queue_service.release_queue(request.app, session, grid)
+        await queue_service.release_queue(session, grid)
         return {"status": "ok"}
 
 

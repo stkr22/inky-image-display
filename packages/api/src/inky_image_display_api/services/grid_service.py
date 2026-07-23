@@ -361,7 +361,7 @@ async def claim_devices_and_push(
 
     # Apply claims and push commands. While claimed the devices' own
     # ``scheduled_next_at`` is inert — solo rotation skips them; the
-    # release path re-seeds it with jitter.
+    # release path makes them due immediately.
     for device in devices:
         path = crop_paths[device.id]
         device.claimed_by_grid_id = grid.id

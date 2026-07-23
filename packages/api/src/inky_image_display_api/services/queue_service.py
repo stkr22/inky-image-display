@@ -18,8 +18,7 @@ across the whole grid.
 from __future__ import annotations
 
 import logging
-import random
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from inky_image_display_shared.models import Device, Grid, Image, ImageGroup
@@ -30,7 +29,6 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.services import grid_service
-from inky_image_display_api.services.app_settings_service import get_default_refresh_seconds
 from inky_image_display_api.services.sync_job_scheduling import next_cron_run
 
 if TYPE_CHECKING:
@@ -39,11 +37,6 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
-
-# Panels released in lockstep would keep flashing simultaneously every
-# interval from then on; the rejoin jitter breaks the lockstep. Capped so
-# long-interval panels don't hold finished content for hours.
-_RELEASE_JITTER_CAP_SECONDS = 3600
 
 
 class QueueError(Exception):
@@ -125,7 +118,7 @@ async def _push_command(app: FastAPI, device: Device, image: Image) -> bool:
 
 def _claim(device: Device, grid: Grid, image: Image, now: datetime) -> None:
     # While claimed the device's own ``scheduled_next_at`` is inert (solo
-    # rotation skips claimed devices); it is re-seeded with jitter on release.
+    # rotation skips claimed devices); release makes it due immediately.
     device.claimed_by_grid_id = grid.id
     device.current_image_id = image.id
     device.displayed_since = now
@@ -264,23 +257,23 @@ async def start_group(app: FastAPI, session: AsyncSession, grid: Grid, group: Im
     return result
 
 
-async def release_queue(app: FastAPI, session: AsyncSession, grid: Grid) -> None:
+async def release_queue(session: AsyncSession, grid: Grid) -> None:
     """End the grid's display and hand the panels back to solo rotation.
 
-    Runs on hold expiry and on operator release alike. The panels keep
-    their last image until their own (jittered) rotation replaces it —
-    jittered so grids released together don't flash in lockstep. Commits.
+    Runs on hold expiry and on operator release alike. Every panel is due
+    immediately, so the next rotation tick repaints them all at once; that
+    mass rotation then staggers each panel's *following* refresh (see
+    ``rotation._rotate_due_devices``) so they don't keep flashing in
+    lockstep every interval. Commits.
     """
     now = utcnow()
-    default_seconds = await get_default_refresh_seconds(session, app.state.settings)
     grid.current_group_id = None
     grid.current_image_id = None
     grid.hold_until = None
     devices = await session.exec(select(Device).where(col(Device.claimed_by_grid_id) == grid.id))
     for device in devices.all():
-        jitter = random.uniform(0, min(device.refresh_interval_seconds or default_seconds, _RELEASE_JITTER_CAP_SECONDS))
         device.claimed_by_grid_id = None
-        device.scheduled_next_at = now + timedelta(seconds=jitter)
+        device.scheduled_next_at = now
         device.updated_at = now
         session.add(device)
     grid.updated_at = now
@@ -314,7 +307,7 @@ async def queue_tick(app: FastAPI) -> None:
     async with AsyncSession(app.state.engine, expire_on_commit=False) as session:
         expired = await session.exec(select(Grid).where(col(Grid.hold_until).is_not(None), col(Grid.hold_until) <= now))
         for grid in expired.all():
-            await release_queue(app, session, grid)
+            await release_queue(session, grid)
             logger.info("Grid %s display ended; panels returned to solo rotation", grid.id)
 
     async with AsyncSession(app.state.engine) as session:

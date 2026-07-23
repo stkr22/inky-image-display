@@ -676,7 +676,7 @@ requires-dist = [
 
 [[package]]
 name = "inky-image-display-controller"
-version = "4.5.2"
+version = "4.6.0"
 source = { editable = "packages/controller" }
 dependencies = [
     { name = "aiomqtt" },
@@ -712,7 +712,7 @@ provides-extras = ["rpi"]
 
 [[package]]
 name = "inky-image-display-shared"
-version = "5.0.0"
+version = "6.0.0"
 source = { editable = "packages/shared" }
 dependencies = [
     { name = "coloraide" },
@@ -764,7 +764,7 @@ requires-dist = [
 
 [[package]]
 name = "inky-image-display-workspace"
-version = "6.0.0"
+version = "7.0.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
