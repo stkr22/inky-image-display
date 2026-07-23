@@ -1,5 +1,13 @@
 # Changelog
 
+## [6.1.0](https://github.com/stkr22/inky-image-display/compare/shared-v6.0.0...shared-v6.1.0) (2026-07-23)
+
+
+### Features
+
+* repaint panels immediately on grid release, stagger rejoin evenly ([7a5d082](https://github.com/stkr22/inky-image-display/commit/7a5d082b4c4634ae2754f12ab55a2bbf61f97f72))
+* repaint panels immediately on grid release, stagger rejoin evenly ([8349a77](https://github.com/stkr22/inky-image-display/commit/8349a77eacf055904710be7e65b6eabd47de4233))
+
 ## [6.0.0](https://github.com/stkr22/inky-image-display/compare/shared-v5.0.0...shared-v6.0.0) (2026-07-21)
 
 
