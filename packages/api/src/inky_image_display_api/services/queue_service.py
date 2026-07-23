@@ -107,7 +107,7 @@ async def _push_command(app: FastAPI, device: Device, image: Image) -> bool:
     if not app.state.mqtt.is_connected(device.device_id):
         logger.info("Device %s offline; push deferred to reconnect", device.device_id)
         return False
-    command = DisplayCommand(action="display", image_path=image.storage_path, image_id=str(image.id), title=image.title)
+    command = DisplayCommand(action="display", image_path=image.storage_path, image_id=str(image.id))
     try:
         await app.state.mqtt.send_command(device.device_id, command)
     except Exception:
@@ -188,7 +188,7 @@ async def _push_canvas_image(
             offline.append(device.device_id)
             continue
         # Canvas pushes address the per-device crop object, not the source.
-        command = DisplayCommand(action="display", image_path=crop_path, image_id=str(image.id), title=image.title)
+        command = DisplayCommand(action="display", image_path=crop_path, image_id=str(image.id))
         try:
             await app.state.mqtt.send_command(device.device_id, command)
             displayed.append(device.device_id)

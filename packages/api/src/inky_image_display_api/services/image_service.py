@@ -1,7 +1,7 @@
 """FIFO image selection for display devices."""
 
 import random
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from inky_image_display_shared.models import Device, DeviceProfile, Image
 from inky_image_display_shared.schemas import DisplayCommand
@@ -11,19 +11,6 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.config import Settings
 from inky_image_display_api.services.app_settings_service import get_default_refresh_seconds
-
-
-def next_refresh_at(device: Device, default_seconds: int, now: datetime) -> datetime:
-    """Compute the next scheduled refresh time for a device.
-
-    ``refresh_interval_seconds`` on the device wins; ``None`` falls back to
-    the operator-configured default (resolved by the caller via
-    :func:`app_settings_service.get_default_refresh_seconds`) so untouched
-    devices keep their historic behaviour.
-    """
-    seconds = device.refresh_interval_seconds or default_seconds
-    return now + timedelta(seconds=seconds)
-
 
 # How many least-recently-shown candidates the picker samples from. Strict
 # oldest-first replays the pool in an identical order every cycle, which
@@ -100,7 +87,6 @@ def build_display_command(image: Image) -> DisplayCommand:
         action="display",
         image_path=image.storage_path,
         image_id=str(image.id),
-        title=image.title,
     )
 
 
@@ -136,7 +122,8 @@ async def update_display_state(
     if image.display_duration_seconds is not None:
         device.scheduled_next_at = now + timedelta(seconds=image.display_duration_seconds)
     else:
-        next_at = next_refresh_at(device, default_seconds, now)
+        # Per-device override wins; None falls back to the operator default.
+        next_at = now + timedelta(seconds=device.refresh_interval_seconds or default_seconds)
         if stagger is not None:
             index, count = stagger
             next_at = now + (next_at - now) * ((index + 1) / count)

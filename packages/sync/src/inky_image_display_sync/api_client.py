@@ -125,10 +125,6 @@ class DisplayAPIError(Exception):
     """Raised when the Display API returns an unexpected error."""
 
 
-class DisplayAPINotFoundError(DisplayAPIError):
-    """Raised when the Display API returns 404."""
-
-
 class ImageTooSmallError(DisplayAPIError):
     """Raised when /api/images/process rejects an image as too small (HTTP 422).
 
@@ -163,8 +159,6 @@ class DisplayAPIClient:
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         response = await self._client.request(method, path, **kwargs)
-        if response.status_code == HTTPStatus.NOT_FOUND:
-            raise DisplayAPINotFoundError(f"Not found: {path}")
         response.raise_for_status()
         return response
 
@@ -268,8 +262,3 @@ class DisplayAPIClient:
         """Fetch a single device profile by primary-key UUID."""
         response = await self._request("GET", f"/api/device-profiles/{profile_id}")
         return DeviceProfileItem.model_validate(response.json())
-
-    async def get_device_profiles(self) -> list[DeviceProfileItem]:
-        """Fetch all seeded device profiles."""
-        response = await self._request("GET", "/api/device-profiles")
-        return [DeviceProfileItem.model_validate(p) for p in response.json()]

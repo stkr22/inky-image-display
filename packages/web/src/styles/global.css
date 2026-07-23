@@ -76,7 +76,6 @@ button { font-family: inherit; }
   gap: 16px;
   width: 100%;
 }
-.col-span-3 { grid-column: span 3 / span 3; }
 .col-span-4 { grid-column: span 4 / span 4; }
 .col-span-6 { grid-column: span 6 / span 6; }
 .col-span-8 { grid-column: span 8 / span 8; }
@@ -626,12 +625,3 @@ input[type='range']::-moz-range-thumb {
   -webkit-font-feature-settings: 'liga';
   -webkit-font-smoothing: antialiased;
 }
-
-/* Draggable device rectangles on the grid layout preview */
-.ink-canvas-placement {
-  cursor: grab;
-  touch-action: none; /* keep touch drags from scrolling the page mid-move */
-  user-select: none;
-}
-.ink-canvas-placement.dragging { cursor: grabbing; }
-.ink-canvas-placement.disabled { cursor: default; }

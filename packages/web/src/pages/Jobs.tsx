@@ -10,7 +10,7 @@ import { Button, Switch, TextField } from '../components/fields'
 import { describeCron, ScheduleEditor, type ScheduleValue } from '../components/ScheduleEditor'
 import { useNotify } from '../components/Toast'
 import { Badge, EmptyNote, PageHeader, Spinner } from '../components/ui'
-import { api, ApiError } from '../lib/api'
+import { api, errMessage } from '../lib/api'
 import { formatDatetime, formatRelative } from '../lib/format'
 import type { DisplayJob, GeminiJob, SyncJob, SyncJobRun } from '../lib/types'
 
@@ -21,10 +21,6 @@ function scheduleSummary(
   const cadence = describeCron(job.schedule_cron, job.schedule_timezone)
   if (job.is_active === false) return `${cadence} (paused)`
   return job.next_run_at ? `${cadence} · next ${formatRelative(job.next_run_at)}` : cadence
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof ApiError ? err.detail || err.message : String(err)
 }
 
 // A job is waiting for a worker when it is due (Run-now flagged, or

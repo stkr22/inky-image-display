@@ -96,3 +96,11 @@ export function Spinner() {
 export function ErrorNote({ children }: { children: ReactNode }) {
   return <span style={{ color: 'var(--ink-danger)', fontSize: 14 }}>{children}</span>
 }
+
+export function BackLink({ to, title }: { to: string; title: string }) {
+  return (
+    <Link to={to} className="ink-btn ink-btn-flat ink-btn-icon" title={title}>
+      <span className="material-icons">arrow_back</span>
+    </Link>
+  )
+}

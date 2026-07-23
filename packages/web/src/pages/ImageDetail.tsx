@@ -2,12 +2,12 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, Dialog } from '../components/Dialog'
 import { Button, Expansion, NumberField, Switch, TextArea, TextField } from '../components/fields'
 import { useNotify } from '../components/Toast'
-import { Badge, ErrorNote, PageHeader, Spinner } from '../components/ui'
-import { api, ApiError, DeviceNotConnectedError } from '../lib/api'
+import { BackLink, Badge, ErrorNote, PageHeader, Spinner } from '../components/ui'
+import { api, ApiError, DeviceNotConnectedError, errMessage } from '../lib/api'
 import { formatDatetime } from '../lib/format'
 import { maxDevicePxcm, recommendedDims } from '../lib/quality'
 import { einkPreviewUrl, imageTitle, mediaUrl, type Device, type DeviceProfile, type Grid, type Image } from '../lib/types'
@@ -68,7 +68,7 @@ export function ImageDetail() {
       queryClient.invalidateQueries({ queryKey: ['image', imageId] })
       notify('Saved', 'positive')
     },
-    onError: (err) => notify(`Update failed: ${err instanceof ApiError ? err.detail || err.message : err}`, 'negative'),
+    onError: (err) => notify(`Update failed: ${errMessage(err)}`, 'negative'),
   })
 
   const deleteMutation = useMutation({
@@ -80,7 +80,7 @@ export function ImageDetail() {
       notify('Deleted', 'positive')
       navigate('/images')
     },
-    onError: (err) => notify(`Delete failed: ${err instanceof ApiError ? err.detail || err.message : err}`, 'negative'),
+    onError: (err) => notify(`Delete failed: ${errMessage(err)}`, 'negative'),
   })
 
   // Dirty vs the loaded record.
@@ -101,9 +101,7 @@ export function ImageDetail() {
   return (
     <>
       <div className="row w-full items-center gap-2">
-        <Link to="/images" className="ink-btn ink-btn-flat ink-btn-icon" title="Back to library">
-          <span className="material-icons">arrow_back</span>
-        </Link>
+        <BackLink to="/images" title="Back to library" />
         <PageHeader eyebrow="Image" title={imageTitle(image)} />
         {image.excluded_from_rotation && <Badge tone="muted">Excluded from rotation</Badge>}
       </div>
@@ -275,7 +273,7 @@ function SendDialog({ image, onClose }: { image: Image; onClose: () => void }) {
       if (err instanceof DeviceNotConnectedError) {
         notify(`${device.device_id} is offline — command dropped`, 'warning')
       } else {
-        notify(`Send failed: ${err instanceof ApiError ? err.detail || err.message : err}`, 'negative')
+        notify(`Send failed: ${errMessage(err)}`, 'negative')
       }
       return
     }
@@ -287,7 +285,7 @@ function SendDialog({ image, onClose }: { image: Image; onClose: () => void }) {
     try {
       await api.displayGridImage(grid.id, image.id)
     } catch (err) {
-      notify(`Send failed: ${err instanceof ApiError ? err.detail || err.message : err}`, 'negative')
+      notify(`Send failed: ${errMessage(err)}`, 'negative')
       return
     }
     notify(`Sent to grid ${grid.name}`, 'positive')

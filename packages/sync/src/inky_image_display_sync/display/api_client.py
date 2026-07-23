@@ -10,34 +10,15 @@ from __future__ import annotations
 
 from uuid import UUID  # noqa: TC003 -- pydantic needs this at runtime
 
+from inky_image_display_shared.schemas.responses import (
+    DisplayJobClaim as DisplayJobClaimItem,
+)
+from inky_image_display_shared.schemas.responses import (
+    DisplayJobClaimSlot as DisplayJobSlotItem,
+)
 from pydantic import BaseModel
 
 from inky_image_display_sync.gemini.api_client import GeminiDisplayAPIClient
-
-
-class DisplayJobSlotItem(BaseModel):
-    """One resolved grid slot handed out at claim time."""
-
-    row: int
-    col: int
-    parts: list[str]
-    device_id: str
-    width: int
-    height: int
-    is_portrait: bool
-
-
-class DisplayJobClaimItem(BaseModel):
-    """One claimed display job returned by POST /api/display-jobs/claim-due."""
-
-    id: UUID
-    name: str
-    target_grid_id: UUID
-    content_prompt: str
-    source_mode: str
-    image_preset_id: UUID | None
-    text_model_name: str
-    slots: list[DisplayJobSlotItem]
 
 
 class ImageGroupCreatePayload(BaseModel):

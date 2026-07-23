@@ -134,13 +134,10 @@ def mock_s3_service() -> MagicMock:
 def mock_mqtt() -> MagicMock:
     """Provide a stand-in for ``MQTTService`` in route-level tests.
 
-    Routes only touch ``is_connected``, ``send_command`` and
-    ``connected_device_ids``; mock those.
+    Routes only touch ``is_connected`` and ``send_command``; mock those.
     """
     mqtt = MagicMock()
-    mqtt.online_devices = set()
     mqtt.is_connected = MagicMock(return_value=False)
-    mqtt.connected_device_ids = MagicMock(return_value=[])
     mqtt.send_command = AsyncMock()
     mqtt.publish_wake = AsyncMock()
     mqtt.worker_online = False

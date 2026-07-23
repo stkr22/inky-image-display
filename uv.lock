@@ -712,7 +712,7 @@ provides-extras = ["rpi"]
 
 [[package]]
 name = "inky-image-display-shared"
-version = "6.0.0"
+version = "6.1.0"
 source = { editable = "packages/shared" }
 dependencies = [
     { name = "coloraide" },
@@ -746,7 +746,6 @@ dependencies = [
     { name = "minio" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "pyyaml" },
     { name = "typer" },
 ]
 
@@ -758,13 +757,12 @@ requires-dist = [
     { name = "minio", specifier = "~=7.2.20" },
     { name = "pydantic", specifier = "~=2.12.5" },
     { name = "pydantic-settings", specifier = "~=2.13.1" },
-    { name = "pyyaml", specifier = "~=6.0.3" },
     { name = "typer", specifier = "~=0.24.1" },
 ]
 
 [[package]]
 name = "inky-image-display-workspace"
-version = "7.0.0"
+version = "7.1.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]

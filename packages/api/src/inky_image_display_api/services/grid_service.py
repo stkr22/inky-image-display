@@ -50,14 +50,6 @@ def hold_horizon(grid: Grid, now: datetime) -> datetime:
     return now + timedelta(seconds=duration) if duration else now + timedelta(days=3650)
 
 
-class GridValidationError(HTTPException):
-    """Raised when grid placement or claim invariants are violated."""
-
-    def __init__(self, status_code: int, detail: str) -> None:
-        """Initialise an HTTPException with a custom status code."""
-        super().__init__(status_code=status_code, detail=detail)
-
-
 def oriented_physical_dims(profile: DeviceProfile, orientation: str) -> tuple[float, float]:
     """Return (width_cm, height_cm) for the device as mounted.
 
@@ -133,9 +125,9 @@ async def apply_layout(session: AsyncSession, grid: Grid, device_rows: list[list
     """
     flat = [device_id for row in device_rows for device_id in row]
     if not flat:
-        raise GridValidationError(400, "A grid layout needs at least one device")
+        raise HTTPException(status_code=400, detail="A grid layout needs at least one device")
     if len(set(flat)) != len(flat):
-        raise GridValidationError(400, "A device can appear only once in the layout")
+        raise HTTPException(status_code=400, detail="A device can appear only once in the layout")
 
     sized_rows: list[list[tuple[Device, float, float]]] = []
     for row in device_rows:
@@ -149,7 +141,9 @@ async def apply_layout(session: AsyncSession, grid: Grid, device_rows: list[list
                 )
             )
             if other.first() is not None:
-                raise GridValidationError(409, f"Device {device.device_id} is already part of another grid")
+                raise HTTPException(
+                    status_code=409, detail=f"Device {device.device_id} is already part of another grid"
+                )
             profile = await get_profile(session, device.device_profile_id)
             width_cm, height_cm = oriented_physical_dims(profile, device.display_orientation)
             sized_row.append((device, width_cm, height_cm))
@@ -304,7 +298,7 @@ async def render_and_upload(
     if not placements:
         raise HTTPException(status_code=400, detail="Grid has no devices placed")
 
-    source_bytes = _fetch_image_bytes(s3, image.storage_path)
+    source_bytes = s3.get_object_bytes(image.storage_path)
 
     out: dict[UUID, str] = {}
     for placement in placements:
@@ -316,19 +310,6 @@ async def render_and_upload(
         s3.upload_image(path, crop_bytes, "image/jpeg")
         out[placement.device_id] = path
     return out
-
-
-def _fetch_image_bytes(s3: S3Service, storage_path: str) -> bytes:
-    """Download the source image bytes from S3."""
-    # The s3 service wraps minio; reach through to its underlying client.
-    client = s3._client
-    bucket = s3._bucket
-    response = client.get_object(bucket, storage_path)
-    try:
-        return response.read()
-    finally:
-        response.close()
-        response.release_conn()
 
 
 async def claim_devices_and_push(
@@ -375,7 +356,6 @@ async def claim_devices_and_push(
                 action="display",
                 image_path=path,
                 image_id=str(image.id),
-                title=image.title,
             )
             try:
                 await mqtt.send_command(device.device_id, command)

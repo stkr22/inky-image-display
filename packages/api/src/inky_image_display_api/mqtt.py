@@ -229,18 +229,9 @@ class MQTTService:
         # Whether the sync worker's retained status says it is online.
         self.worker_online = False
 
-    @property
-    def online_devices(self) -> set[str]:
-        """Return the set of devices currently considered online."""
-        return self._online
-
     def is_connected(self, device_id: str) -> bool:
         """Return whether the broker has reported the device as online."""
         return device_id in self._online
-
-    def connected_device_ids(self) -> list[str]:
-        """Return all currently online device ids as a list."""
-        return list(self._online)
 
     async def send_command(self, device_id: str, command: DisplayCommand) -> None:
         """Publish a command to ``inky/devices/{id}/cmd`` at QoS 1.

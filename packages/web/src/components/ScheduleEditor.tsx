@@ -5,7 +5,7 @@
 // operators see exactly when the schedule will fire before saving.
 
 import { useEffect, useState } from 'react'
-import { api, ApiError } from '../lib/api'
+import { api, errMessage } from '../lib/api'
 import { formatDatetime } from '../lib/format'
 import { Button, SelectField, TextField } from './fields'
 
@@ -110,7 +110,7 @@ export function ScheduleEditor({
         const result = await api.cronPreview(cron, value.timezone)
         setPreview({ runs: result.next_runs, error: '' })
       } catch (err) {
-        setPreview({ runs: [], error: err instanceof ApiError ? err.detail || err.message : String(err) })
+        setPreview({ runs: [], error: errMessage(err) })
       }
     }, 400)
     return () => clearTimeout(handle)

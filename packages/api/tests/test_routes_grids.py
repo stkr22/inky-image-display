@@ -179,10 +179,7 @@ class TestGridDisplay:
         mock_mqtt: MagicMock,
     ):
         # Source image bytes returned by the s3 fetch.
-        mock_response = MagicMock()
-        mock_response.read.return_value = _make_jpeg_bytes()
-        mock_s3_service._client.get_object.return_value = mock_response
-        mock_s3_service._bucket = "test-images"
+        mock_s3_service.get_object_bytes.return_value = _make_jpeg_bytes()
         mock_mqtt.is_connected.return_value = True
 
         grid_resp = client.post("/api/grids", json={"name": "g5", "rows": [[str(seed_device.id)]]})

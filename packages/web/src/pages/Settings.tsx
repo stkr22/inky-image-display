@@ -6,7 +6,7 @@ import { Dialog } from '../components/Dialog'
 import { Button, IntervalInputs, Switch, TextField, totalSeconds } from '../components/fields'
 import { useNotify } from '../components/Toast'
 import { ErrorNote, PageHeader, Spinner } from '../components/ui'
-import { api, ApiError } from '../lib/api'
+import { api, errMessage } from '../lib/api'
 import { formatDatetime, splitHoursMinutes } from '../lib/format'
 import type { AppSettings, GuestInvite } from '../lib/types'
 
@@ -34,7 +34,7 @@ export function Settings() {
     try {
       await api.updateAppSettings({ default_refresh_seconds: total })
     } catch (err) {
-      notify(`Update failed: ${err instanceof ApiError ? err.detail || err.message : err}`, 'negative')
+      notify(`Update failed: ${errMessage(err)}`, 'negative')
       return
     }
     notify('Default refresh interval updated', 'positive')
@@ -97,7 +97,7 @@ function QuietHoursCard({ settings }: { settings: AppSettings }) {
       notify('Quiet hours updated', 'positive')
       queryClient.invalidateQueries({ queryKey: ['app-settings'] })
     } catch (err) {
-      notify(`Update failed: ${err instanceof ApiError ? err.detail || err.message : err}`, 'negative')
+      notify(`Update failed: ${errMessage(err)}`, 'negative')
     } finally {
       setSaving(false)
     }
@@ -142,7 +142,7 @@ function StaggerRotationCard({ settings }: { settings: AppSettings }) {
       notify('Staggered rotation updated', 'positive')
       queryClient.invalidateQueries({ queryKey: ['app-settings'] })
     } catch (err) {
-      notify(`Update failed: ${err instanceof ApiError ? err.detail || err.message : err}`, 'negative')
+      notify(`Update failed: ${errMessage(err)}`, 'negative')
     } finally {
       setSaving(false)
     }
@@ -179,7 +179,7 @@ function GuestAccessCard() {
     try {
       setInvite(await api.createGuestInvite())
     } catch (err) {
-      notify(`Could not create invite: ${err instanceof ApiError ? err.detail || err.message : err}`, 'negative')
+      notify(`Could not create invite: ${errMessage(err)}`, 'negative')
     } finally {
       setCreating(false)
     }

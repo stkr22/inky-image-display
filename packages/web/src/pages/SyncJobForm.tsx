@@ -2,12 +2,12 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
-import { Button, Icon, NumberField, RefMultiSelect, SelectField, Slider, Switch, TextField } from '../components/fields'
+import { useNavigate, useParams } from 'react-router-dom'
+import { Button, NumberField, RefMultiSelect, SelectField, Slider, Switch, TextField } from '../components/fields'
 import { ScheduleEditor, type ScheduleValue } from '../components/ScheduleEditor'
 import { useNotify } from '../components/Toast'
-import { PageHeader, Spinner } from '../components/ui'
-import { api, ApiError } from '../lib/api'
+import { BackLink, PageHeader, Spinner } from '../components/ui'
+import { api, ApiError, errMessage } from '../lib/api'
 
 const MIN_COUNT = 1
 const MAX_COUNT = 1000
@@ -144,7 +144,7 @@ export function SyncJobForm() {
       if (isEdit) await api.updateSyncJob(jobId!, body)
       else await api.createSyncJob(body)
     } catch (err) {
-      setError(`Save failed: ${err instanceof ApiError ? err.detail || err.message : err}`)
+      setError(`Save failed: ${errMessage(err)}`)
       return
     }
     notify('Saved', 'positive')
@@ -154,9 +154,7 @@ export function SyncJobForm() {
   return (
     <>
       <div className="row w-full items-center gap-2">
-        <Link to="/jobs" className="ink-btn ink-btn-flat ink-btn-icon" title="Back to jobs">
-          <Icon name="arrow_back" />
-        </Link>
+        <BackLink to="/jobs" title="Back to jobs" />
         <PageHeader
           eyebrow={isEdit ? 'Automations / edit' : 'Automations / new'}
           title={isEdit ? 'Edit sync job' : 'New sync job'}

@@ -1,7 +1,6 @@
 """Tests for the rotation cadence feature.
 
-Covers the per-device refresh interval (`next_refresh_at` helper), the
-PATCH /api/devices/{id} route, the grid display-schedule update, the
+Covers the PATCH /api/devices/{id} route, the grid display-schedule update, the
 GET /api/schedule/upcoming endpoint, and the UTC serializer that emits
 offset-aware ISO strings.
 """
@@ -12,36 +11,11 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from inky_image_display_api.services.image_service import next_refresh_at
 from inky_image_display_api.services.sync_job_scheduling import next_cron_run, validate_cron
 from inky_image_display_shared.models import Device, Grid
 from inky_image_display_shared.time import utcnow
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel.ext.asyncio.session import AsyncSession
-
-
-class TestNextRefreshAt:
-    """The cadence helper should prefer the per-device override."""
-
-    def test_override_wins(self):
-        device = Device(
-            id=uuid4(),
-            device_id="kitchen",
-            device_profile_id=uuid4(),
-            refresh_interval_seconds=120,
-        )
-        now = datetime(2026, 5, 17, 12, 0, 0)
-        assert next_refresh_at(device, 3600, now) == now + timedelta(seconds=120)
-
-    def test_falls_back_to_default(self):
-        device = Device(
-            id=uuid4(),
-            device_id="kitchen",
-            device_profile_id=uuid4(),
-            refresh_interval_seconds=None,
-        )
-        now = datetime(2026, 5, 17, 12, 0, 0)
-        assert next_refresh_at(device, 900, now) == now + timedelta(seconds=900)
 
 
 class TestPatchDevice:

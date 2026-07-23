@@ -307,9 +307,6 @@ class TestFilterAssets:
         return ImmichAsset(
             id=asset_id,
             type="IMAGE",
-            originalFileName="test.jpg",
-            originalMimeType="image/jpeg",
-            checksum="abc",
             fileCreatedAt=datetime.now(),
             width=width,
             height=height,
@@ -425,9 +422,6 @@ class TestProcessAssetCallsApiForResize:
         return ImmichAsset(
             id="test-asset",
             type="IMAGE",
-            originalFileName="test.jpg",
-            originalMimeType="image/jpeg",
-            checksum="abc",
             fileCreatedAt=datetime.now(),
             width=4000,
             height=3000,
@@ -541,9 +535,6 @@ def _make_landscape_asset(asset_id: str) -> ImmichAsset:
     return ImmichAsset(
         id=asset_id,
         type="IMAGE",
-        originalFileName="test.jpg",
-        originalMimeType="image/jpeg",
-        checksum="abc",
         fileCreatedAt=datetime.now(),
         width=4000,
         height=3000,

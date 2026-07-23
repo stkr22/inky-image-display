@@ -2,12 +2,12 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
-import { Button, ChipsInput, Icon, NumberField, SelectField, Switch, TextField } from '../components/fields'
+import { useNavigate, useParams } from 'react-router-dom'
+import { Button, ChipsInput, NumberField, SelectField, Switch, TextField } from '../components/fields'
 import { ScheduleEditor, type ScheduleValue } from '../components/ScheduleEditor'
 import { useNotify } from '../components/Toast'
-import { PageHeader, Spinner } from '../components/ui'
-import { api, ApiError } from '../lib/api'
+import { BackLink, PageHeader, Spinner } from '../components/ui'
+import { api, errMessage } from '../lib/api'
 
 export function GeminiJobForm() {
   const { jobId } = useParams<{ jobId: string }>()
@@ -80,7 +80,7 @@ export function GeminiJobForm() {
       if (isEdit) await api.updateGeminiJob(jobId!, body)
       else await api.createGeminiJob(body)
     } catch (err) {
-      setError(`Save failed: ${err instanceof ApiError ? err.detail || err.message : err}`)
+      setError(`Save failed: ${errMessage(err)}`)
       return
     }
     notify('Saved', 'positive')
@@ -90,9 +90,7 @@ export function GeminiJobForm() {
   return (
     <>
       <div className="row w-full items-center gap-2">
-        <Link to="/jobs?tab=gemini" className="ink-btn ink-btn-flat ink-btn-icon" title="Back to jobs">
-          <Icon name="arrow_back" />
-        </Link>
+        <BackLink to="/jobs?tab=gemini" title="Back to jobs" />
         <PageHeader
           eyebrow={isEdit ? 'AI generation / edit' : 'AI generation / new'}
           title={isEdit ? 'Edit Gemini job' : 'New Gemini job'}
