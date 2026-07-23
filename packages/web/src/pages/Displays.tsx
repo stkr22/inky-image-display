@@ -9,7 +9,7 @@ import { Button, Icon, IntervalInputs, Switch, TextField, totalSeconds } from '.
 import { GridLayoutEditor, type LayoutRows } from '../components/GridLayoutEditor'
 import { useNotify } from '../components/Toast'
 import { Badge, EmptyNote, PageHeader, Spinner } from '../components/ui'
-import { api, ApiError, DeviceNotConnectedError } from '../lib/api'
+import { api, DeviceNotConnectedError, errMessage } from '../lib/api'
 import { formatDatetime, formatIntervalSeconds, formatRelative, splitHoursMinutes } from '../lib/format'
 import { imageTitle, mediaUrl, type Device, type DeviceProfile, type Grid, type ScheduleEntry } from '../lib/types'
 
@@ -23,10 +23,6 @@ export function Displays() {
       <GridsSection />
     </>
   )
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof ApiError ? err.detail || err.message : String(err)
 }
 
 // --- Schedule -------------------------------------------------------------

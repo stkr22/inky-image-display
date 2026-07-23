@@ -10,7 +10,7 @@ import { ConfirmDialog } from '../components/Dialog'
 import { Button, Expansion, SelectField, Switch, TextArea, TextField } from '../components/fields'
 import { useNotify } from '../components/Toast'
 import { Badge, EmptyNote } from '../components/ui'
-import { api, ApiError } from '../lib/api'
+import { api, errMessage } from '../lib/api'
 import { formatRelative } from '../lib/format'
 import {
   DEFAULT_GEMINI_MODEL,
@@ -23,10 +23,6 @@ import {
 
 const SUBJECT_MAX_CHARS = 200
 const BLOCK_PREVIEW_CHARS = 80
-
-function errMessage(err: unknown): string {
-  return err instanceof ApiError ? err.detail || err.message : String(err)
-}
 
 const GENAI_TABS = [
   { key: 'images', label: 'Images', icon: 'auto_awesome' },

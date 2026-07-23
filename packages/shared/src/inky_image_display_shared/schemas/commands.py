@@ -68,7 +68,6 @@ class DisplayCommand(BaseModel):
     action: Literal["display", "clear", "status"] = Field(description="Command action")
     image_path: str | None = Field(default=None, description="S3 object path for display action")
     image_id: str | None = Field(default=None, description="Image UUID for tracking")
-    title: str | None = Field(default=None, description="Image title for device logging")
 
 
 class DeviceAcknowledge(BaseModel):

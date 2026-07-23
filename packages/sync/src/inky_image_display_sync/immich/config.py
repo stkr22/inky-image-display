@@ -89,14 +89,6 @@ class ImmichSyncConfig(BaseSettings):
         default=True,
         description="Skip images already in database",
     )
-    target_width: int | None = Field(
-        default=None,
-        description="Process images to this width (None = no processing)",
-    )
-    target_height: int | None = Field(
-        default=None,
-        description="Process images to this height (None = no processing)",
-    )
     retention_days: int = Field(
         default=7,
         ge=0,
@@ -116,4 +108,3 @@ class DeviceRequirements(BaseModel):
     width: int
     height: int
     orientation: str  # "landscape" | "portrait" | "square"
-    display_model: str | None = None  # e.g., "inky_impression_spectra_6"

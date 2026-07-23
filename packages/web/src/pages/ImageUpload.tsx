@@ -3,12 +3,12 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type DragEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { CropDialog } from '../components/CropDialog'
 import { Button, Icon, SelectField, Switch, TextArea, TextField } from '../components/fields'
 import { useNotify } from '../components/Toast'
-import { PageHeader } from '../components/ui'
-import { api, ApiError } from '../lib/api'
+import { BackLink, PageHeader } from '../components/ui'
+import { api, errMessage } from '../lib/api'
 import type { CroppedResult } from '../lib/crop'
 import { cropText, imageFit, maxDevicePxcm, recommendedDims, resolutionBand } from '../lib/quality'
 import type { Grid } from '../lib/types'
@@ -132,7 +132,7 @@ export function ImageUpload() {
     try {
       await api.uploadImage(selected.file, metadata)
     } catch (err) {
-      setError(`Upload failed: ${err instanceof ApiError ? err.detail || err.message : err}`)
+      setError(`Upload failed: ${errMessage(err)}`)
       setBusy(false)
       return
     }
@@ -151,9 +151,7 @@ export function ImageUpload() {
   return (
     <>
       <div className="row w-full items-center gap-2">
-        <Link to="/images" className="ink-btn ink-btn-flat ink-btn-icon" title="Back to library">
-          <Icon name="arrow_back" />
-        </Link>
+        <BackLink to="/images" title="Back to library" />
         <PageHeader eyebrow="Library / new" title="Upload image" />
       </div>
 

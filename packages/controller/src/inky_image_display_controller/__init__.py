@@ -18,14 +18,12 @@ from inky_image_display_controller.config import Settings, load_settings
 from inky_image_display_controller.controller import DisplayController
 from inky_image_display_controller.exceptions import (
     CommunicationError,
-    ConfigurationError,
     DisplayControllerError,
     DisplayError,
 )
 
 __all__ = [
     "CommunicationError",
-    "ConfigurationError",
     "DeviceAcknowledge",
     "DeviceRegistration",
     "DisplayCommand",

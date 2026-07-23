@@ -39,6 +39,10 @@ export class ApiError extends Error {
 
 export class DeviceNotConnectedError extends ApiError {}
 
+export function errMessage(err: unknown): string {
+  return err instanceof ApiError ? err.detail || err.message : String(err)
+}
+
 interface RequestOptions {
   method?: string
   body?: unknown

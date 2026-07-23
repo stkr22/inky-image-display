@@ -17,13 +17,7 @@ class ImmichExifInfo(BaseModel):
     city: str | None = None
     state: str | None = None
     country: str | None = None
-    description: str | None = None
     date_time_original: datetime | None = Field(default=None, alias="dateTimeOriginal")
-    make: str | None = None
-    model: str | None = None
-    latitude: float | None = None
-    longitude: float | None = None
-    rating: int | None = None
     exif_image_width: int | None = Field(default=None, alias="exifImageWidth")
     exif_image_height: int | None = Field(default=None, alias="exifImageHeight")
 
@@ -47,13 +41,7 @@ class ImmichAsset(BaseModel):
 
     id: str
     type: Literal["IMAGE", "VIDEO"]
-    original_file_name: str = Field(alias="originalFileName")
-    original_mime_type: str = Field(alias="originalMimeType")
-    checksum: str  # Base64 SHA1 for deduplication
-
-    # Timestamps
     file_created_at: datetime = Field(alias="fileCreatedAt")
-    local_date_time: datetime | None = Field(default=None, alias="localDateTime")
 
     # Dimensions (top-level fields from API, available on all endpoints)
     width: int | None = None
@@ -72,8 +60,6 @@ class ImmichAlbum(BaseModel):
 
     id: str
     album_name: str = Field(alias="albumName")
-    description: str | None = None
-    asset_count: int = Field(alias="assetCount")
 
 
 # Response wrapper models for API endpoints

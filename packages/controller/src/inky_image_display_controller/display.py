@@ -423,7 +423,6 @@ class MockDisplay:
         self._width = width
         self._height = height
         self._last_image: Image.Image | None = None
-        self._display_count = 0
 
     @property
     def width(self) -> int:
@@ -439,11 +438,6 @@ class MockDisplay:
     def last_image(self) -> Image.Image | None:
         """The last image that was displayed."""
         return self._last_image
-
-    @property
-    def display_count(self) -> int:
-        """Number of times show_image was called."""
-        return self._display_count
 
     async def show_image(self, image: Image.Image, saturation: float = 0.5) -> None:
         """Store the image for inspection.
@@ -468,7 +462,6 @@ class MockDisplay:
             )
 
         self._last_image = image.copy()
-        self._display_count += 1
         logger.debug("Mock display: stored image %dx%d", image.width, image.height)
         # Simulate a brief delay (real display takes ~25s)
         await asyncio.sleep(0.1)
@@ -476,7 +469,6 @@ class MockDisplay:
     async def clear(self) -> None:
         """Clear the mock display."""
         self._last_image = None
-        self._display_count += 1
         logger.debug("Mock display: cleared")
         await asyncio.sleep(0.1)
 

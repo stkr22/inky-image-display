@@ -16,7 +16,6 @@ from pydantic import BaseModel
 from inky_image_display_sync.api_client import (
     DisplayAPIClient,
     DisplayAPIError,
-    DisplayAPINotFoundError,
     ImageItem,
     ImageRegisterPayload,
     ImageUpdatePayload,
@@ -73,7 +72,6 @@ class ImmichDisplayAPIClient(DisplayAPIClient):
 
 __all__ = [
     "DisplayAPIError",
-    "DisplayAPINotFoundError",
     "ImageItem",
     "ImageRegisterPayload",
     "ImageUpdatePayload",

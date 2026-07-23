@@ -70,4 +70,4 @@ jobs:
 
       - name: Run Pytest
         run: |
-          uv run pytest -m "not integration" --junitxml=junit/test-results.xml
+          uv run pytest --junitxml=junit/test-results.xml

@@ -125,7 +125,7 @@ async def claim_due_display_jobs(request: Request) -> list[DisplayJobClaim]:
 @router.post("/render-part")
 async def render_part(body: MotdRenderRequest) -> Response:
     """Render one story part at one panel size; returns JPEG bytes."""
-    screen = motd_renderer.render_part(body.part, body, None, body.width, body.height)
+    screen = motd_renderer.render_part(body.part, body, body.width, body.height)
     if screen is None:
         raise HTTPException(status_code=422, detail=f"Part {body.part!r} has no renderable content")
     return Response(content=screen, media_type="image/jpeg")

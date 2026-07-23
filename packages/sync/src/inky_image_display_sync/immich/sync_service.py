@@ -376,7 +376,6 @@ class ImmichSyncService:
             width=width,
             height=height,
             orientation=effective_orientation,
-            display_model=profile.model,
         )
 
     async def _count_job_images(self, job_name: str) -> int:

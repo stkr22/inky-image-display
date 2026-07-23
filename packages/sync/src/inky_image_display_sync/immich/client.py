@@ -42,15 +42,11 @@ class SearchFilterCombo:
     tag_ids: list[str] | None
 
 
-class ImmichClientError(Exception):
-    """Base exception for Immich client errors."""
-
-
-class ImmichAuthError(ImmichClientError):
+class ImmichAuthError(Exception):
     """Authentication failed."""
 
 
-class ImmichNotFoundError(ImmichClientError):
+class ImmichNotFoundError(Exception):
     """Resource not found."""
 
 

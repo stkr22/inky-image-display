@@ -12,14 +12,10 @@ import { describeCron, ScheduleEditor, type ScheduleValue } from '../components/
 import { GridLayoutEditor, layoutRowsFromGrid, type LayoutRows } from '../components/GridLayoutEditor'
 import { useNotify } from '../components/Toast'
 import { Badge, EmptyNote, ErrorNote, Spinner } from '../components/ui'
-import { api, ApiError } from '../lib/api'
+import { api, errMessage } from '../lib/api'
 import { formatRelative } from '../lib/format'
 import { CROP_NEGLIGIBLE, cropText, imageFit, maxDevicePxcm, recommendedDims, resolutionBand } from '../lib/quality'
 import { imageTitle, mediaUrl, type Device, type Grid, type Image } from '../lib/types'
-
-function errMessage(err: unknown): string {
-  return err instanceof ApiError ? err.detail || err.message : String(err)
-}
 
 export function GridDetail() {
   const { gridId } = useParams<{ gridId: string }>()

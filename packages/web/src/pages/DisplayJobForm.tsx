@@ -13,7 +13,7 @@ import { ScheduleEditor, type ScheduleValue } from '../components/ScheduleEditor
 import { GridMiniPreview } from '../components/GridMiniPreview'
 import { useNotify } from '../components/Toast'
 import { Badge, EmptyNote, ErrorNote, PageHeader, Spinner } from '../components/ui'
-import { api, ApiError } from '../lib/api'
+import { api, errMessage } from '../lib/api'
 import { formatRelative } from '../lib/format'
 import {
   MOTD_COMPOUND_PARTS,
@@ -26,10 +26,6 @@ import {
 } from '../lib/types'
 
 const PART_CHOICES = [...MOTD_PARTS, ...MOTD_COMPOUND_PARTS]
-
-function errMessage(err: unknown): string {
-  return err instanceof ApiError ? err.detail || err.message : String(err)
-}
 
 export function DisplayJobForm() {
   const { jobId } = useParams<{ jobId: string }>()
