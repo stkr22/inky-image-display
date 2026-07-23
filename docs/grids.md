@@ -121,9 +121,11 @@ The mechanism is the `devices.claimed_by_grid_id` column:
   solo rotation skips this device until the claim is released.
 
 Claims end automatically when the display hold expires, or via
-`POST /api/grids/{id}/release` — both hand the panels back to solo
-rotation with a jittered rejoin so simultaneous releases don't flash in
-lockstep. Removing the device from the layout also releases it. A manual
+`POST /api/grids/{id}/release` — both make the panels due immediately, so
+the next rotation tick repaints them all; that mass rotation spreads their
+*following* refreshes evenly across the refresh interval (the
+`stagger_rotation` app setting, on by default) so they don't keep flashing
+in lockstep. Removing the device from the layout also releases it. A manual
 image push while a group is showing is an operator override: the held
 group is dropped and the pushed image is held instead.
 
@@ -152,7 +154,7 @@ All under `/api/grids`.
 | `POST /{id}/display` (`{image_id}`) | Render slices + push to every member device          |
 | `POST /{id}/display-group` (`{group_id}`) | Show a group now, held per the grid's duration |
 | `POST /{id}/next`                   | Show the next queue entry now (empty queue: release the panels) |
-| `POST /{id}/release`                | End the display; panels return to (jittered) solo rotation |
+| `POST /{id}/release`                | End the display; panels repaint next tick, refreshes staggered |
 | `GET /{id}/queue`                   | The queue in predicted playback order                |
 | `PUT /{id}/queue`                   | Persist the operator's queue order (groups + images share one sequence) |
 | `GET /{id}/display-status`          | Current group/hold + per-panel content               |
@@ -224,9 +226,11 @@ curl -X POST localhost:8000/api/grids/<grid_id>/release
   shown (a group with none is skipped entirely); assign panels in the
   Groups overview on the Images page.
 - **Panels are only claimed while content is held.** When the hold expires
-  (or on `POST /release`) the member devices return to solo rotation with
-  a jittered rejoin, so several grids releasing together don't flash in
-  lockstep afterwards.
+  (or on `POST /release`) the member devices are due immediately and
+  repaint on the next rotation tick; that mass rotation staggers their
+  following refreshes evenly across the interval (unless the
+  `stagger_rotation` app setting is off), so several panels releasing
+  together don't flash in lockstep afterwards.
 - **Controllers are unchanged.** No grid-specific code lives on the device
   side; a controller just receives a normal display command with a path
   pointing into the `grids/` prefix.

@@ -88,3 +88,11 @@ class TestAppSettingsRoutes:
         assert resp.status_code == 422
         resp = client.put("/api/app-settings", json={"default_refresh_seconds": 7 * 24 * 3600 + 1})
         assert resp.status_code == 422
+
+    def test_stagger_rotation_defaults_on_and_round_trips(self, client: TestClient):
+        assert client.get("/api/app-settings").json()["stagger_rotation"] is True
+
+        resp = client.put("/api/app-settings", json={"stagger_rotation": False})
+        assert resp.status_code == 200
+        assert resp.json()["stagger_rotation"] is False
+        assert client.get("/api/app-settings").json()["stagger_rotation"] is False

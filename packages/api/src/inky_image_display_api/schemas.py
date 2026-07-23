@@ -516,12 +516,13 @@ class GridDisplayRequest(BaseModel):
 class AppSettingsUpdate(BaseModel):
     """Body for ``PUT /api/app-settings``.
 
-    Both sections are optional so the UI can save one card at a time
-    without re-submitting (and re-validating) the other.
+    All sections are optional so the UI can save one card at a time
+    without re-submitting (and re-validating) the others.
     """
 
     default_refresh_seconds: RefreshIntervalSeconds | None = None
     quiet_hours: QuietHoursSettings | None = None
+    stagger_rotation: bool | None = None
 
 
 # --- Display jobs ---

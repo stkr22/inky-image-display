@@ -67,6 +67,8 @@ export function Settings() {
 
       {settings && <QuietHoursCard settings={settings} />}
 
+      {settings && <StaggerRotationCard settings={settings} />}
+
       <GuestAccessCard />
     </>
   )
@@ -115,6 +117,46 @@ function QuietHoursCard({ settings }: { settings: AppSettings }) {
         <TextField label="Until (HH:MM)" value={end} onChange={setEnd} disabled={!enabled} />
       </div>
       <TextField label="Timezone (IANA)" value={timezone} onChange={setTimezone} disabled={!enabled} />
+      <div className="row w-full justify-end">
+        <Button primary icon="save" onClick={save} disabled={saving}>
+          Save
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+// After a grid release or the end of quiet hours every panel repaints at
+// once; without staggering they'd then keep flashing simultaneously every
+// interval (each next refresh is scheduled relative to the previous one).
+function StaggerRotationCard({ settings }: { settings: AppSettings }) {
+  const notify = useNotify()
+  const queryClient = useQueryClient()
+  const [enabled, setEnabled] = useState(settings.stagger_rotation)
+  const [saving, setSaving] = useState(false)
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await api.updateAppSettings({ stagger_rotation: enabled })
+      notify('Staggered rotation updated', 'positive')
+      queryClient.invalidateQueries({ queryKey: ['app-settings'] })
+    } catch (err) {
+      notify(`Update failed: ${err instanceof ApiError ? err.detail || err.message : err}`, 'negative')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="ink-card" style={{ maxWidth: 480, padding: 20 }}>
+      <h3 className="ink-h3">Staggered rotation</h3>
+      <span className="ink-small">
+        When panels rotate together — after a grid display ends or quiet hours lift — spread their next refreshes
+        evenly across the refresh interval so they stop flashing at the same moment. Disable to let every panel keep
+        its full interval instead.
+      </span>
+      <Switch label="Stagger simultaneous refreshes" checked={enabled} onChange={setEnabled} />
       <div className="row w-full justify-end">
         <Button primary icon="save" onClick={save} disabled={saving}>
           Save

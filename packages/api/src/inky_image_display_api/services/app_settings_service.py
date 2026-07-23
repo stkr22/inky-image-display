@@ -32,6 +32,30 @@ _MAX_REFRESH_SECONDS = 7 * 24 * 3600
 
 DEFAULT_REFRESH_SECONDS_KEY = "default_refresh_seconds"
 QUIET_HOURS_KEY = "quiet_hours"
+STAGGER_ROTATION_KEY = "stagger_rotation"
+
+
+async def get_stagger_rotation(session: AsyncSession) -> bool:
+    """Whether mass rotations spread the panels' next refreshes.
+
+    Applies after a grid release or the end of quiet hours: instead of
+    leaving simultaneously rotated panels in lockstep, their next
+    refreshes are spread evenly across the interval. Defaults to enabled;
+    a broken row can't disable it.
+    """
+    row = await _get(session, STAGGER_ROTATION_KEY)
+    if row is None:
+        return True
+    try:
+        return json.loads(row.value) is not False
+    except json.JSONDecodeError:
+        return True
+
+
+async def set_stagger_rotation(session: AsyncSession, enabled: bool) -> bool:
+    """Persist the stagger-rotation flag; returns the stored value."""
+    await _upsert(session, STAGGER_ROTATION_KEY, json.dumps(enabled))
+    return enabled
 
 
 async def get_default_refresh_seconds(session: AsyncSession, settings: Settings) -> int:
@@ -57,16 +81,7 @@ async def set_default_refresh_seconds(session: AsyncSession, seconds: int) -> in
     """Persist a new default refresh interval; returns the stored value."""
     if not _MIN_REFRESH_SECONDS <= seconds <= _MAX_REFRESH_SECONDS:
         raise ValueError(f"seconds must be between {_MIN_REFRESH_SECONDS} and {_MAX_REFRESH_SECONDS}")
-    encoded = json.dumps(seconds)
-    row = await _get(session, DEFAULT_REFRESH_SECONDS_KEY)
-    if row is None:
-        row = AppSetting(key=DEFAULT_REFRESH_SECONDS_KEY, value=encoded, updated_at=utcnow())
-        session.add(row)
-    else:
-        row.value = encoded
-        row.updated_at = utcnow()
-        session.add(row)
-    await session.commit()
+    await _upsert(session, DEFAULT_REFRESH_SECONDS_KEY, json.dumps(seconds))
     return seconds
 
 
@@ -87,15 +102,7 @@ async def get_quiet_hours(session: AsyncSession) -> QuietHoursSettings:
 
 async def set_quiet_hours(session: AsyncSession, quiet_hours: QuietHoursSettings) -> QuietHoursSettings:
     """Persist the quiet-hours window; returns the stored value."""
-    encoded = quiet_hours.model_dump_json()
-    row = await _get(session, QUIET_HOURS_KEY)
-    if row is None:
-        row = AppSetting(key=QUIET_HOURS_KEY, value=encoded, updated_at=utcnow())
-    else:
-        row.value = encoded
-        row.updated_at = utcnow()
-    session.add(row)
-    await session.commit()
+    await _upsert(session, QUIET_HOURS_KEY, quiet_hours.model_dump_json())
     return quiet_hours
 
 
@@ -124,3 +131,14 @@ def is_quiet_now(quiet_hours: QuietHoursSettings, now: datetime) -> bool:
 async def _get(session: AsyncSession, key: str) -> AppSetting | None:
     result = await session.exec(select(AppSetting).where(AppSetting.key == key))
     return result.first()
+
+
+async def _upsert(session: AsyncSession, key: str, encoded: str) -> None:
+    row = await _get(session, key)
+    if row is None:
+        row = AppSetting(key=key, value=encoded, updated_at=utcnow())
+    else:
+        row.value = encoded
+        row.updated_at = utcnow()
+    session.add(row)
+    await session.commit()
