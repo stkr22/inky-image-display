@@ -5,7 +5,7 @@
 	"remoteUser": "vscode",
 	"workspaceFolder": "/workspaces/inky-image-display",
     "features": {
-		"ghcr.io/stkr22/devcontainer-features/claude-code:2.0.3": {},
+		"ghcr.io/stkr22/devcontainer-features/claude-code:4.1.0": {},
         "ghcr.io/stkr22/devcontainer-features/uv:1.1.0": {},
 		"ghcr.io/devcontainer-community/devcontainer-features/starship.rs:1": {},
 		"ghcr.io/devcontainers/features/node:2.0.0": {
@@ -49,6 +49,9 @@
 			}
 		}
 	},
+    "remoteEnv": {
+        "CLAUDE_CODE_OAUTH_TOKEN": "${localEnv:CLAUDE_CODE_OAUTH_TOKEN}"
+    },
 	"postCreateCommand": {
 		"uv-sync": "uv sync --all-packages --group dev",
 		"uv-prek": "uv tool run prek install",
