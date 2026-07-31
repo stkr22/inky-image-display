@@ -1,5 +1,13 @@
 # Changelog
 
+## [7.1.1](https://github.com/stkr22/inky-image-display/compare/v7.1.0...v7.1.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* bound API image decode memory and stop worker heap parking high ([978c971](https://github.com/stkr22/inky-image-display/commit/978c971b125f3e63d7cebea721f721e2a719026d))
+* update claude-code feature version to 4.1.0 and add remote environment variable ([5529beb](https://github.com/stkr22/inky-image-display/commit/5529beb0c5760fd20d5a6a39457bab4c7cba5f3d))
+
 ## [7.1.0](https://github.com/stkr22/inky-image-display/compare/v7.0.0...v7.1.0) (2026-07-23)
 
 
