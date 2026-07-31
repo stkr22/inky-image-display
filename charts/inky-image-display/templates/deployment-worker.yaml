@@ -32,6 +32,13 @@ spec:
           imagePullPolicy: {{ .Values.sync.image.pullPolicy }}
           args: ["worker"]
           env:
+            # The worker buffers whole image originals during a sync batch and
+            # is then idle for hours. glibc's dynamic trim threshold grows to
+            # match those peaks and stops returning freed pages, so RSS parks
+            # near the batch high-water mark and the next batch has no room.
+            # Pinning the threshold keeps the arena trimmed back between runs.
+            - name: MALLOC_TRIM_THRESHOLD_
+              value: "131072"
             - name: DISPLAY_API_BASE_URL
               value: {{ include "inky-image-display.syncApiBaseUrl" . | quote }}
             - name: WORKER_MQTT_HOST

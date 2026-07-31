@@ -273,7 +273,10 @@ class ImmichClient:
             f"/api/assets/{asset_id}/original",
         ) as response:
             response.raise_for_status()
-            async for chunk in response.aiter_bytes(chunk_size=8192):
+            # 1 MiB chunks: callers buffer the whole original before POSTing it
+            # on, and 8KiB pieces meant thousands of small allocations per
+            # asset, which fragments the heap the worker never gives back.
+            async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
                 yield chunk
 
     async def get_asset(self, asset_id: str) -> ImmichAsset:

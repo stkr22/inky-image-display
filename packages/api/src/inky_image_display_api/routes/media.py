@@ -46,6 +46,28 @@ def _thumb_key(object_key: str, width: int) -> str:
     return f"{_THUMB_PREFIX}/w{width}/{object_key}"
 
 
+def _make_thumbnail(original_bytes: bytes, width: int) -> bytes | None:
+    """Decode-resize-encode one thumbnail; ``None`` when the source is not wider.
+
+    ``draft()`` asks the JPEG decoder for the nearest power-of-two-reduced
+    raster (1/2 … 1/8) instead of the full one, so a 24MP original costs a
+    few MB of RGB rather than ~70MB. That peak, multiplied by the number of
+    concurrent requests, is what made this path expensive.
+    """
+    with PILImage.open(io.BytesIO(original_bytes)) as parsed:
+        if parsed.width <= width:
+            return None
+        # Square request: guarantees the reduced raster still covers the
+        # target on whichever axis is short, whatever the aspect ratio.
+        parsed.draft("RGB", (width, width))
+        ratio = width / parsed.width
+        source = parsed if parsed.mode == "RGB" else parsed.convert("RGB")
+        resized = source.resize((width, max(1, round(parsed.height * ratio))))
+        buffer = io.BytesIO()
+        resized.save(buffer, format="JPEG", quality=_THUMB_JPEG_QUALITY)
+        return buffer.getvalue()
+
+
 def _stat_or_none(s3: S3Service, key: str):
     try:
         return s3.stat_object(key)
@@ -107,18 +129,19 @@ def get_media(object_key: str, request: Request, w: int | None = None) -> Respon
         raise HTTPException(status_code=404, detail="Not found")
 
     original_bytes = s3.get_object_bytes(object_key)
+    # Bounded on purpose: this handler is sync ``def``, so FastAPI runs it in
+    # the 40-slot AnyIO threadpool and a gallery page that misses the cache on
+    # every tile starts every decode at once. Unbounded, that OOM-killed the
+    # API at 1Gi.
     try:
-        with PILImage.open(io.BytesIO(original_bytes)) as parsed:
-            if parsed.width <= width:
-                # Never upscale; serve (and don't cache) the original.
-                return _stream_object(request, s3, object_key, original_stat)
-            ratio = width / parsed.width
-            resized = parsed.convert("RGB").resize((width, max(1, round(parsed.height * ratio))))
-            buffer = io.BytesIO()
-            resized.save(buffer, format="JPEG", quality=_THUMB_JPEG_QUALITY)
-            thumb_bytes = buffer.getvalue()
+        with request.app.state.thumb_gate:
+            thumb_bytes = _make_thumbnail(original_bytes, width)
     except PILImage.UnidentifiedImageError:
         logger.warning("Object %s is not a decodable image; serving original", object_key)
+        return _stream_object(request, s3, object_key, original_stat)
+
+    if thumb_bytes is None:
+        # Never upscale; serve (and don't cache) the original.
         return _stream_object(request, s3, object_key, original_stat)
 
     s3.upload_image(thumb_key, thumb_bytes, "image/jpeg")

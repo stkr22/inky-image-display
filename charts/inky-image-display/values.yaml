@@ -100,8 +100,11 @@ api:
     requests:
       cpu: 11m
       # The API streams images and generates thumbnails with Pillow on first
-      # request (one full-image decode at a time, in a threadpool); display-job
-      # rendering adds per-panel screen composition. 1Gi limit is ample.
+      # request; display-job rendering adds per-panel screen composition.
+      # Concurrent thumbnail decodes are capped by API_MEDIA_THUMBNAIL_CONCURRENCY
+      # (default 4) and each decodes at a reduced scale, so a gallery page full
+      # of cache misses stays well inside the 1Gi limit. Raise the limit before
+      # raising that knob via api.extraEnv, not after.
       memory: 256M
     limits:
       cpu: "1"
