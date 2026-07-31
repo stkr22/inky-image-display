@@ -37,14 +37,33 @@ def s3() -> MagicMock:
     return service
 
 
+class _CountingGate:
+    """Stands in for the thumbnail semaphore and records that it was taken."""
+
+    def __init__(self) -> None:
+        self.entered = 0
+
+    def __enter__(self) -> None:
+        self.entered += 1
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+
 @pytest.fixture
-def media_app(s3: MagicMock) -> FastAPI:
+def gate() -> _CountingGate:
+    return _CountingGate()
+
+
+@pytest.fixture
+def media_app(s3: MagicMock, gate: _CountingGate) -> FastAPI:
     app = FastAPI()
     settings = MagicMock()
     settings.media_cache_max_age = 3600
     settings.web_dist_path = None
     app.state.settings = settings
     app.state.s3_service = s3
+    app.state.thumb_gate = gate
     app.include_router(media.router)
     app.get("/{full_path:path}", include_in_schema=False)(serve_frontend)
     return app
@@ -122,6 +141,26 @@ class TestThumbnails:
     def test_missing_original_with_width_is_404(self, client: TestClient, s3: MagicMock) -> None:
         s3.stat_object.side_effect = [_no_such_key(), _no_such_key()]
         assert client.get("/media/manual/x.jpg", params={"w": 480}).status_code == 404
+
+    def test_generation_holds_the_concurrency_gate(
+        self, client: TestClient, s3: MagicMock, gate: _CountingGate
+    ) -> None:
+        s3.stat_object.side_effect = [_no_such_key(), MagicMock(etag="orig", content_type="image/jpeg")]
+        s3.get_object_bytes.return_value = _jpeg_bytes(1200, 800)
+
+        client.get("/media/manual/x.jpg", params={"w": 480})
+
+        assert gate.entered == 1
+
+    def test_reduced_scale_decode_keeps_aspect_ratio(self) -> None:
+        """draft() shrinks the decoded raster, so the resize ratio must be
+        computed against the *drafted* size — using the original width here
+        would silently squash every thumbnail."""
+        thumb_bytes = media._make_thumbnail(_jpeg_bytes(3000, 2000), 480)
+
+        assert thumb_bytes is not None
+        with PILImage.open(io.BytesIO(thumb_bytes)) as thumb:
+            assert thumb.size == (480, 320)
 
 
 class TestFrontendServing:

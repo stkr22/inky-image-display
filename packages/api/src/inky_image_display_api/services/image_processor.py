@@ -66,8 +66,11 @@ class ImageProcessor:
                 # center-crop the wrong axis.
                 oriented = ImageOps.exif_transpose(original) or original
 
-                # Convert to RGB if needed (for JPEG output), otherwise copy
-                processed = oriented.convert("RGB") if oriented.mode in ("RGBA", "P", "LA", "L") else oriented.copy()
+                # Convert to RGB if needed (for JPEG output). No defensive copy
+                # otherwise: exif_transpose already returned a new image, and
+                # copying a multi-megapixel raster doubled peak memory for
+                # nothing.
+                processed = oriented.convert("RGB") if oriented.mode in ("RGBA", "P", "LA", "L") else oriented
 
                 orig_width, orig_height = processed.size
 

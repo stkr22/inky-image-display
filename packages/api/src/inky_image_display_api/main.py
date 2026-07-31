@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import logging
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -66,6 +67,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.s3_service = s3_service
     app.state.mqtt = mqtt
     app.state.generation_tasks = GenerationTaskStore(engine)
+    # Memory ceiling for /media thumbnail generation — see the setting's docs.
+    app.state.thumb_gate = threading.BoundedSemaphore(settings.media_thumbnail_concurrency)
 
     # Auth: resolved config for the middleware; the OIDC client only exists
     # when an issuer is configured (auth disabled otherwise).

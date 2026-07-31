@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     # Browser-facing media proxy (/media/*): Cache-Control max-age for
     # originals and thumbnails.
     media_cache_max_age: int = 86400
+
+    # How many thumbnail decodes may run concurrently. Sized independently of
+    # FastAPI's threadpool (40 slots) because each in-flight decode holds a
+    # full raster — the threadpool is a latency knob, this one is a memory
+    # ceiling. Raise it only alongside the container memory limit.
+    media_thumbnail_concurrency: int = Field(default=4, gt=0)
 
     # Optional push notifications for refresh-health transitions (a panel
     # entering or leaving the failed state). The URL is POSTed a plain-text
