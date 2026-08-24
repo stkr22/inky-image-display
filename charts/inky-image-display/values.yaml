@@ -101,10 +101,12 @@ api:
       cpu: 11m
       # The API streams images and generates thumbnails with Pillow on first
       # request; display-job rendering adds per-panel screen composition.
-      # Concurrent thumbnail decodes are capped by API_MEDIA_THUMBNAIL_CONCURRENCY
-      # (default 4) and each decodes at a reduced scale, so a gallery page full
-      # of cache misses stays well inside the 1Gi limit. Raise the limit before
-      # raising that knob via api.extraEnv, not after.
+      # Both Pillow paths decode at a reduced scale and are capped: thumbnails
+      # by API_MEDIA_THUMBNAIL_CONCURRENCY (default 4), the sync workers'
+      # /api/images/process calls by API_IMAGE_PROCESS_CONCURRENCY (default 2).
+      # Uncapped, 12 parallel full-resolution decodes peaked at ~1.3Gi and
+      # OOM-killed this container. Raise the limit before raising either knob
+      # via api.extraEnv, not after.
       memory: 256M
     limits:
       cpu: "1"

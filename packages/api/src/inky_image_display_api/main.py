@@ -79,8 +79,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.s3_service = s3_service
     app.state.mqtt = mqtt
     app.state.generation_tasks = GenerationTaskStore(engine)
-    # Memory ceiling for /media thumbnail generation — see the setting's docs.
+    # Memory ceilings for the two Pillow decode paths — see the settings' docs.
+    # The thumbnail gate is a threading primitive because /media handlers are
+    # sync ``def``; the process gate is awaited on the event loop, so queued
+    # requests park there instead of occupying a threadpool slot.
     app.state.thumb_gate = threading.BoundedSemaphore(settings.media_thumbnail_concurrency)
+    app.state.process_gate = asyncio.Semaphore(settings.image_process_concurrency)
 
     # Auth: resolved config for the middleware; the OIDC client only exists
     # when an issuer is configured (auth disabled otherwise).
