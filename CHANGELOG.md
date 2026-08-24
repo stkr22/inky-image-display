@@ -1,5 +1,13 @@
 # Changelog
 
+## [7.2.0](https://github.com/stkr22/inky-image-display/compare/v7.1.1...v7.2.0) (2026-08-24)
+
+
+### Features
+
+* **api,sync:** add opt-in heap profiling ([8fb07f9](https://github.com/stkr22/inky-image-display/commit/8fb07f97ddf7268210d956d8d1880f8d11121d79))
+* **api,sync:** add opt-in heap profiling ([1628eec](https://github.com/stkr22/inky-image-display/commit/1628eec3beaeabc58c1f7532a656fdc267dcbfb8))
+
 ## [7.1.1](https://github.com/stkr22/inky-image-display/compare/v7.1.0...v7.1.1) (2026-07-31)
 
 
