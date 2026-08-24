@@ -1,5 +1,13 @@
 # Changelog
 
+## [6.2.1](https://github.com/stkr22/inky-image-display/compare/shared-v6.2.0...shared-v6.2.1) (2026-08-24)
+
+
+### Bug Fixes
+
+* **deps:** refresh all dependencies and migrate off EOL httpx ([a93a8e1](https://github.com/stkr22/inky-image-display/commit/a93a8e15b2c57ee5996eb5630ad8e94e7699ce95))
+* **deps:** refresh all dependencies and migrate off EOL httpx ([ccf3f93](https://github.com/stkr22/inky-image-display/commit/ccf3f932cb1df0a7bdd5d65fcaba4013b3d560c9))
+
 ## [6.2.0](https://github.com/stkr22/inky-image-display/compare/shared-v6.1.0...shared-v6.2.0) (2026-08-24)
 
 

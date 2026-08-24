@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.6.1](https://github.com/stkr22/inky-image-display/compare/controller-v4.6.0...controller-v4.6.1) (2026-08-24)
+
+
+### Bug Fixes
+
+* **deps:** refresh all dependencies and migrate off EOL httpx ([a93a8e1](https://github.com/stkr22/inky-image-display/commit/a93a8e15b2c57ee5996eb5630ad8e94e7699ce95))
+* **deps:** refresh all dependencies and migrate off EOL httpx ([ccf3f93](https://github.com/stkr22/inky-image-display/commit/ccf3f932cb1df0a7bdd5d65fcaba4013b3d560c9))
+
 ## [4.6.0](https://github.com/stkr22/inky-image-display/compare/controller-v4.5.2...controller-v4.6.0) (2026-07-21)
 
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## [7.2.2](https://github.com/stkr22/inky-image-display/compare/v7.2.1...v7.2.2) (2026-08-24)
+
+
+### Bug Fixes
+
+* **deps:** refresh all dependencies and migrate off EOL httpx ([a93a8e1](https://github.com/stkr22/inky-image-display/commit/a93a8e15b2c57ee5996eb5630ad8e94e7699ce95))
+* **deps:** refresh all dependencies and migrate off EOL httpx ([ccf3f93](https://github.com/stkr22/inky-image-display/commit/ccf3f932cb1df0a7bdd5d65fcaba4013b3d560c9))
+
 ## [7.2.1](https://github.com/stkr22/inky-image-display/compare/v7.2.0...v7.2.1) (2026-08-24)
 
 
