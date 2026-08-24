@@ -7,12 +7,12 @@
     },
     "packages/shared": {
       "release-type": "python",
-      "changelog-path": "packages/shared/CHANGELOG.md",
+      "changelog-path": "CHANGELOG.md",
       "component": "shared"
     },
     "packages/controller": {
       "release-type": "python",
-      "changelog-path": "packages/controller/CHANGELOG.md",
+      "changelog-path": "CHANGELOG.md",
       "component": "controller"
     }
   }
