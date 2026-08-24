@@ -1,5 +1,13 @@
 # Changelog
 
+## [7.2.1](https://github.com/stkr22/inky-image-display/compare/v7.2.0...v7.2.1) (2026-08-24)
+
+
+### Bug Fixes
+
+* **api:** bound peak memory of POST /api/images/process ([7d322d9](https://github.com/stkr22/inky-image-display/commit/7d322d970872ef91fdc77895ccbf9661e94625bd))
+* **api:** bound peak memory of POST /api/images/process ([db43dbe](https://github.com/stkr22/inky-image-display/commit/db43dbec66d9e72399929673b242fb1c6e6bc34e))
+
 ## [7.2.0](https://github.com/stkr22/inky-image-display/compare/v7.1.1...v7.2.0) (2026-08-24)
 
 
