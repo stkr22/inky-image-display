@@ -54,7 +54,7 @@ class MetadataBuilder:
         return ", ".join(parts) if parts else None
 
     @staticmethod
-    def build_description(  # noqa: PLR0913
+    def build_description(  # noqa: PLR0913, PLR0917
         people: list[str] | None = None,
         city: str | None = None,
         state: str | None = None,

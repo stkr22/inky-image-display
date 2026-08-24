@@ -72,7 +72,7 @@ class TestSettingsEnvMapping:
         for key, value in {**required, **auth_vars}.items():
             monkeypatch.setenv(key, value)
 
-        runtime = AuthRuntime.from_settings(Settings())  # ty: ignore[missing-argument]
+        runtime = AuthRuntime.from_settings(Settings())
         assert runtime.enabled
         assert runtime.public_base_url == "https://inky.test"
         assert runtime.session_secret == "env-session-secret"

@@ -152,7 +152,7 @@ class TestDevicePinAndHealth:
             (False, 3600, "failed_stale"),
         ],
     )
-    async def test_refresh_state_classification(  # noqa: PLR0913 — parametrized fixture set
+    async def test_refresh_state_classification(  # noqa: PLR0913, PLR0917 — parametrized fixture set
         self,
         client: TestClient,
         async_engine,

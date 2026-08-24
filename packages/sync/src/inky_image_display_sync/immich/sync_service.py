@@ -112,9 +112,9 @@ class ImmichSyncService:
         self.api_client = api_client
         self.logger = logger
 
-        self.connection_config = connection_config or ImmichConnectionConfig()  # ty: ignore[missing-argument]
+        self.connection_config = connection_config or ImmichConnectionConfig()
         self.sync_config = sync_config or ImmichSyncConfig()
-        self.s3_config = s3_config or S3WriterConfig()  # ty: ignore[missing-argument]
+        self.s3_config = s3_config or S3WriterConfig()
 
         self.immich = ImmichClient(
             config=self.connection_config,
@@ -452,7 +452,7 @@ class ImmichSyncService:
         """Find existing image by (source_name='immich', source_id=asset_id) via the API."""
         return await self.api_client.find_image_by_source(IMMICH_SOURCE_NAME, asset_id)
 
-    async def _upsert_image_record(  # noqa: PLR0913
+    async def _upsert_image_record(  # noqa: PLR0913, PLR0917
         self,
         asset: ImmichAsset,
         storage_path: str,

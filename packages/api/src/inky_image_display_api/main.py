@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage application startup and shutdown."""
-    settings = Settings()  # ty: ignore[missing-argument]
+    settings = Settings()
 
     # Started before anything else allocates, so the baseline covers the
     # steady-state heap and later reports show only what a batch added.

@@ -17,7 +17,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-import httpx
+import httpx2
 
 if TYPE_CHECKING:
     from inky_image_display_api.config import Settings
@@ -42,7 +42,7 @@ def notify_in_background(settings: Settings, title: str, message: str) -> None:
 
 async def _post(url: str, title: str, message: str) -> None:
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+        async with httpx2.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
             response = await client.post(url, content=message.encode(), headers={"Title": title})
             response.raise_for_status()
     except Exception:

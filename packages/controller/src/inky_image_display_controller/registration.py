@@ -7,7 +7,7 @@ credentials before opening the MQTT transport.
 
 import logging
 
-import httpx
+import httpx2
 from inky_image_display_shared.schemas import DeviceRegistration, RegistrationResponse
 
 from inky_image_display_controller.config import APIConfig
@@ -21,7 +21,7 @@ async def register(api_config: APIConfig, registration: DeviceRegistration) -> R
     headers = {"Content-Type": "application/json"}
     if api_config.token is not None:
         headers["x-api-key"] = api_config.token.get_secret_value()
-    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+    async with httpx2.AsyncClient(timeout=httpx2.Timeout(15.0)) as client:
         resp = await client.post(
             url,
             content=registration.model_dump_json(),

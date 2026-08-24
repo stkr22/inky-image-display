@@ -46,7 +46,7 @@ def _make_preset(blocks: list[PromptBlockItem]) -> PromptPresetItem:
     )
 
 
-def _make_job(  # noqa: PLR0913 — test factory mirrors job fields
+def _make_job(  # noqa: PLR0913, PLR0917 — test factory mirrors job fields
     name: str = "test-job",
     orientation: str = "landscape",
     subjects: list[str] | None = None,

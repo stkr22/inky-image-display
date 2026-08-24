@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2
 from fastapi import APIRouter, HTTPException, Request
 
 from inky_image_display_api.schemas import ImmichBrowseItem
@@ -33,7 +33,7 @@ async def _fetch_json(settings: Settings, path: str, params: dict[str, Any] | No
         raise HTTPException(status_code=503, detail="Immich browsing is not configured on the server.")
     base_url = settings.immich_base_url.rstrip("/")
     try:
-        async with httpx.AsyncClient(
+        async with httpx2.AsyncClient(
             base_url=base_url,
             headers={"x-api-key": settings.immich_api_key.get_secret_value()},
             timeout=settings.immich_timeout_seconds,
@@ -41,10 +41,10 @@ async def _fetch_json(settings: Settings, path: str, params: dict[str, Any] | No
             response = await client.get(path, params=params)
             response.raise_for_status()
             return response.json()
-    except httpx.HTTPStatusError as exc:
+    except httpx2.HTTPStatusError as exc:
         logger.warning("Immich request %s failed with status %s", path, exc.response.status_code)
         raise HTTPException(status_code=502, detail=f"Immich returned {exc.response.status_code}") from exc
-    except httpx.HTTPError as exc:
+    except httpx2.HTTPError as exc:
         logger.warning("Immich request %s failed: %s", path, exc)
         raise HTTPException(status_code=502, detail="Immich is unreachable") from exc
 

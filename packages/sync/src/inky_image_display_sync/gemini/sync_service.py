@@ -59,10 +59,10 @@ class GeminiSyncService:
         """Capture dependencies; configs default to environment-driven settings."""
         self.api_client = api_client
         self.logger = logger
-        self.gemini_config = gemini_config or GeminiConnectionConfig()  # ty: ignore[missing-argument]
+        self.gemini_config = gemini_config or GeminiConnectionConfig()
         self.sync_config = sync_config or GeminiSyncConfig()
         self.storage = S3StorageClient(
-            config=s3_config or S3WriterConfig(),  # ty: ignore[missing-argument]
+            config=s3_config or S3WriterConfig(),
             logger=logger,
         )
 

@@ -79,7 +79,7 @@ async def run_immich_sync(dry_run: bool, all_active: bool = False) -> None:
     setup_logging()
     logger = logging.getLogger("inky_image_display_sync")
 
-    api_config = APIClientConfig()  # ty: ignore[missing-argument]
+    api_config = APIClientConfig()
     api_client = ImmichDisplayAPIClient(config=api_config, logger=logger)
 
     try:
@@ -109,7 +109,7 @@ async def run_gemini_sync(dry_run: bool, all_active: bool = False) -> None:
     setup_logging()
     logger = logging.getLogger("inky_image_display_sync")
 
-    api_config = APIClientConfig()  # ty: ignore[missing-argument]
+    api_config = APIClientConfig()
     api_client = GeminiDisplayAPIClient(config=api_config, logger=logger)
 
     try:
@@ -141,7 +141,7 @@ async def run_display_sync() -> None:
     setup_logging()
     logger = logging.getLogger("inky_image_display_sync")
 
-    api_config = APIClientConfig()  # ty: ignore[missing-argument]
+    api_config = APIClientConfig()
     api_client = DisplayJobAPIClient(config=api_config, logger=logger)
     try:
         service = DisplayJobSyncService(api_client=api_client, logger=logger)
