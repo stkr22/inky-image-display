@@ -11,6 +11,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
+from inky_image_display_shared import heap_profile
 from inky_image_display_shared.logging import setup_logging
 
 from inky_image_display_api.auth import AuthRuntime, SessionAuthMiddleware
@@ -21,6 +22,7 @@ from inky_image_display_api.mqtt import MQTTService
 from inky_image_display_api.routes import (
     app_settings,
     auth,
+    debug,
     device_profiles,
     devices,
     display_jobs,
@@ -51,6 +53,16 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage application startup and shutdown."""
     settings = Settings()  # ty: ignore[missing-argument]
+
+    # Started before anything else allocates, so the baseline covers the
+    # steady-state heap and later reports show only what a batch added.
+    if settings.profile_heap:
+        heap_profile.start(settings.profile_heap_frames)
+        logger.warning(
+            "Heap profiling is ON (%d frames): tracemalloc adds memory overhead and "
+            "/api/debug/heap is exposed. Unset API_PROFILE_HEAP when the run is done.",
+            settings.profile_heap_frames,
+        )
 
     # Database
     engine = create_engine(settings)
@@ -88,6 +100,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         await engine.dispose()
+        heap_profile.stop()
         logger.info("Inky Image Display API stopped")
 
 
@@ -98,6 +111,7 @@ app = FastAPI(title="Inky Image Display API", lifespan=lifespan)
 app.add_middleware(SessionAuthMiddleware)
 app.include_router(health_router)
 app.include_router(auth.router)
+app.include_router(debug.router)
 app.include_router(images.router)
 app.include_router(image_groups.router)
 app.include_router(images_process.router)

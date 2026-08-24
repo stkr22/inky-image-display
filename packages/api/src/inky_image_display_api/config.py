@@ -146,6 +146,14 @@ class Settings(BaseSettings):
     sync_token: SecretStr | None = None
     device_token: SecretStr | None = None
 
+    # --- Heap profiling (docs/heap-profiling.md) ---
+    # Exposes /api/debug/heap and starts tracemalloc at boot. Off by default
+    # and meant to be temporary: tracemalloc keeps a traceback per live
+    # allocation, so it costs memory on a container already near its limit.
+    # Raise the memory limit for the run instead of profiling into an OOM.
+    profile_heap: bool = False
+    profile_heap_frames: int = Field(default=15, gt=0)
+
     @property
     def auth_enabled(self) -> bool:
         """Whether request authentication is enforced."""
