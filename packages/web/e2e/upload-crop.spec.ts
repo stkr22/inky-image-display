@@ -46,12 +46,17 @@ test('crop to a panel preset, upload, and verify exact dimensions', async ({ pag
   expect(thumb.ok()).toBeTruthy()
   expect(thumb.headers()['content-type']).toBe('image/jpeg')
 
+  // Assert page health *before* the cleanup below: the gallery is still open
+  // and lazily fetching this image's thumbnail, so deleting first lets that
+  // tile 404 and trip these assertions. Settle the network so the tile
+  // requests are genuinely covered rather than merely not yet sent.
+  await page.waitForLoadState('networkidle')
+  expect(problems.consoleErrors).toEqual([])
+  expect(problems.badResponses).toEqual([])
+
   // Clean up so reruns stay deterministic.
   const deleted = await request.delete(`/api/images/${rows[0].id}`)
   expect(deleted.status()).toBe(204)
-
-  expect(problems.consoleErrors).toEqual([])
-  expect(problems.badResponses).toEqual([])
 })
 
 test('gallery search finds by title', async ({ page, request }) => {
