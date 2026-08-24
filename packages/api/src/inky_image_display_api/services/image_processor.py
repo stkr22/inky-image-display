@@ -21,6 +21,35 @@ class ImageProcessingError(Exception):
     """Raised when image processing fails."""
 
 
+# EXIF tag 0x0112 (Orientation). Values 5-8 are the four transforms that
+# include a 90-degree rotation, i.e. the ones that swap width and height.
+_EXIF_ORIENTATION = 0x0112
+_ORIENTATION_SWAPS_AXES = 5
+
+
+def _draft_to_target(image: Image.Image, target_width: int, target_height: int) -> None:
+    """Ask the JPEG decoder for a reduced raster instead of the full one.
+
+    ``draft()`` picks the largest power-of-two reduction (1/2 … 1/8) whose
+    result still covers the requested size on both axes, so a 4000x3000
+    source costs ~9MB of RGB rather than ~36MB. That peak, multiplied by the
+    number of concurrent requests, is what OOM-killed the API at 1Gi.
+
+    The request is expressed in *source* coordinates: ``draft`` runs before
+    ``exif_transpose``, so for an orientation that rotates by 90 degrees the
+    target axes must be swapped first. Without that swap a 4000x3000 source
+    drafted against 1600x1200 would reduce to 2000x1500 and then transpose to
+    1500x2000 — one pixel column short of the 1600 the cover-crop needs.
+
+    No-op for anything that isn't a JPEG (notably HEIC via ``pillow_heif``)
+    and for a source already too small to reduce, so callers need no guard.
+    """
+    orientation = image.getexif().get(_EXIF_ORIENTATION, 1)
+    if isinstance(orientation, int) and orientation >= _ORIENTATION_SWAPS_AXES:
+        target_width, target_height = target_height, target_width
+    image.draft("RGB", (target_width, target_height))
+
+
 class ImageProcessor:
     """Handles image resizing and cropping for display devices.
 
@@ -60,6 +89,8 @@ class ImageProcessor:
         """
         try:
             with Image.open(BytesIO(image_data)) as original:
+                _draft_to_target(original, target_width, target_height)
+
                 # Apply EXIF orientation so portrait phone photos (which store
                 # landscape pixels + an Orientation tag) are rotated upright
                 # before we resize/crop. Without this, the pipeline would

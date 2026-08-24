@@ -37,6 +37,7 @@ All variables are prefixed with `API_`.
 | `API_DEVICE_MQTT_WEBSOCKET_PATH` | No | `/mqtt` | HTTP path controllers use for MQTT-over-WebSockets |
 | `API_DEVICE_MQTT_KEEP_ALIVE` | No | `30` | MQTT keep-alive interval advertised to controllers |
 | `API_GEMINI_API_KEY` | No | — | Google Generative AI key. Required only for `POST /api/genai/generate`; leave unset to disable on-demand generation (returns 503). |
+| `API_IMAGE_PROCESS_CONCURRENCY` | No | `2` | How many `POST /api/images/process` decodes may run at once. Each in-flight call holds a display-sized raster, so this is a memory ceiling, not a throughput knob — the sync workers fan out across parallel jobs, and uncapped they stack decodes until the container is OOM-killed. Excess requests queue. Raise the container memory limit before raising this. |
 | `API_IMMICH_BASE_URL` | No | — | Immich base URL for the read-only browse proxy (`GET /api/immich/albums`, `/people`, `/tags`) that powers name-based sync-job filter pickers in the UI. Leave unset to disable (returns 503; the UI falls back to raw-ID inputs). |
 | `API_IMMICH_API_KEY` | No | — | Immich API key for the browse proxy. Use the same values the sync service is configured with. Immich API keys carry granular permissions: the proxy needs `album.read`, `person.read` and `tag.read` (or "All"). A key missing one of these makes only that picker fail — the UI then shows a lookup error on the affected field and falls back to raw-ID input. |
 | `API_IMMICH_TIMEOUT_SECONDS` | No | `20.0` | Timeout for Immich browse-proxy requests (seconds). |

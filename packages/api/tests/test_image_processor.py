@@ -3,7 +3,7 @@
 from io import BytesIO
 
 import pytest
-from inky_image_display_api.services.image_processor import ImageProcessor
+from inky_image_display_api.services.image_processor import ImageProcessor, _draft_to_target
 from PIL import Image
 
 # EXIF 0x0112 = Orientation tag
@@ -101,3 +101,70 @@ class TestExifOrientation:
         assert processed is not None
         out = Image.open(BytesIO(processed))
         assert out.size == (150, 200)
+
+
+class TestDraftReduction:
+    """``draft()`` keeps peak RSS down by decoding JPEGs at a reduced scale.
+
+    These assert the *contract* the memory fix relies on — that the decoder is
+    actually asked for a smaller raster, and that it is never asked for one
+    too small to cover the target. RSS itself is not asserted: it is a
+    process-global high-water mark and far too noisy for a unit test.
+    """
+
+    @staticmethod
+    def _decoded_size(data: bytes, target: tuple[int, int]) -> tuple[int, int]:
+        """Size Pillow would actually decode for this source/target pair."""
+        with Image.open(BytesIO(data)) as img:
+            _draft_to_target(img, *target)
+            return img.size
+
+    def test_large_jpeg_decodes_at_reduced_scale(self) -> None:
+        """A 4000x3000 source for a 1600x1200 target must not decode at full
+        size — that 36MB raster times concurrent requests is the OOM."""
+        raw = Image.new("RGB", (4000, 3000), color=(90, 140, 190))
+        assert self._decoded_size(_make_jpeg(raw), (1600, 1200)) == (2000, 1500)
+
+    def test_reduced_raster_still_covers_target(self) -> None:
+        """draft() halves in powers of two, so the guarantee we need is only
+        that it never lands *below* the target on either axis."""
+        raw = Image.new("RGB", (4000, 3000), color=(90, 140, 190))
+        width, height = self._decoded_size(_make_jpeg(raw), (1200, 900))
+        assert width >= 1200 and height >= 900
+
+    def test_rotating_orientation_swaps_the_drafted_axes(self) -> None:
+        """Regression guard: draft() runs *before* exif_transpose, so for a
+        90-degree orientation the target axes have to be swapped first.
+        Drafting 4000x3000 against 1600x1200 gives 2000x1500, which transposes
+        to 1500x2000 — 100px short of the 1600 the cover-crop needs."""
+        raw = Image.new("RGB", (4000, 3000), color=(90, 140, 190))
+        data = _make_jpeg(raw, orientation=6)
+        # Portrait target, because Orientation=6 makes the upright image portrait.
+        assert self._decoded_size(data, (1200, 1600)) == (2000, 1500)
+
+    def test_rotated_source_still_produces_exact_target(self) -> None:
+        """End-to-end form of the above: output must match the target exactly,
+        not fall short because draft() over-reduced."""
+        raw = Image.new("RGB", (4000, 3000), color=(90, 140, 190))
+        processed = ImageProcessor.process_for_display(
+            _make_jpeg(raw, orientation=6), target_width=1200, target_height=1600
+        )
+        assert processed is not None
+        assert Image.open(BytesIO(processed)).size == (1200, 1600)
+
+    def test_source_smaller_than_target_is_not_reduced(self) -> None:
+        """Undersized sources must reach the upscale/None decision untouched."""
+        raw = Image.new("RGB", (1500, 1300), color=(90, 140, 190))
+        assert self._decoded_size(_make_jpeg(raw), (1600, 1200)) == (1500, 1300)
+
+    def test_non_jpeg_is_unaffected(self) -> None:
+        """PNG (and HEIC) have no scaled-decode support; draft() must no-op
+        rather than raise, so those paths keep working unchanged."""
+        raw = Image.new("RGB", (4000, 3000), color=(90, 140, 190))
+        buf = BytesIO()
+        raw.save(buf, format="PNG")
+        assert self._decoded_size(buf.getvalue(), (1600, 1200)) == (4000, 3000)
+
+        processed = ImageProcessor.process_for_display(buf.getvalue(), target_width=1600, target_height=1200)
+        assert processed is not None
+        assert Image.open(BytesIO(processed)).size == (1600, 1200)

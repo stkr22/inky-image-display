@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 
 from inky_image_display_api.services.image_processor import ImageProcessingError, ImageProcessor
@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 @router.post("/process")
 async def process_image(
+    request: Request,
     file: Annotated[UploadFile, File()],
     width: Annotated[int, Form(gt=0)],
     height: Annotated[int, Form(gt=0)],
@@ -29,15 +30,19 @@ async def process_image(
     data = await file.read()
     # PIL is synchronous and a multi-megapixel resize takes a few hundred ms;
     # off-load to a worker thread so the event loop keeps serving other
-    # sync workers in parallel.
+    # sync workers in parallel. Bounded on purpose: the threadpool has 40
+    # slots and the sync workers POST here from parallel jobs, so unbounded
+    # this is 40 concurrent display-sized rasters — that OOM-killed the API
+    # at 1Gi. See ``image_process_concurrency``.
     try:
-        processed = await asyncio.to_thread(
-            ImageProcessor.process_for_display,
-            data,
-            width,
-            height,
-            upscale=upscale,
-        )
+        async with request.app.state.process_gate:
+            processed = await asyncio.to_thread(
+                ImageProcessor.process_for_display,
+                data,
+                width,
+                height,
+                upscale=upscale,
+            )
     except ImageProcessingError as exc:
         logger.warning("Image processing failed: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -43,6 +43,16 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 10
           env:
+            # Pillow rasters come from raw malloc, not the Python allocator.
+            # Freeing them leaves glibc holding the pages: its dynamic trim
+            # threshold grows to match each decode peak and then stops
+            # returning anything, so RSS parks at the batch high-water mark.
+            # Pinning the threshold measurably flattens that (a 4000x3000 ->
+            # 1600x1200 loop retained +42MiB without it, +2.4MiB with).
+            # Deliberately no MALLOC_ARENA_MAX: setting it cancels this
+            # benefit outright in the same measurement.
+            - name: MALLOC_TRIM_THRESHOLD_
+              value: "131072"
             - name: API_DATABASE_PATH
               value: {{ .Values.config.databasePath | quote }}
             - name: API_S3_ENDPOINT

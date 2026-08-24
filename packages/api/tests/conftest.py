@@ -1,5 +1,6 @@
 """Shared test fixtures for the API package."""
 
+import asyncio
 import os
 import tempfile
 from collections.abc import AsyncIterator, Iterator
@@ -123,6 +124,8 @@ def mock_settings() -> MagicMock:
     # silently expose the debug heap routes to every other test.
     settings.profile_heap = False
     settings.profile_heap_frames = 15
+    # Real int: MagicMock attributes are not accepted by asyncio.Semaphore.
+    settings.image_process_concurrency = 2
     return settings
 
 
@@ -192,6 +195,7 @@ def test_app(
     app.state.s3_service = mock_s3_service
     app.state.mqtt = mock_mqtt
     app.state.auth = auth_runtime
+    app.state.process_gate = asyncio.Semaphore(mock_settings.image_process_concurrency)
 
     app.include_router(health_router)
     app.include_router(auth.router)

@@ -56,6 +56,15 @@ class Settings(BaseSettings):
     # ceiling. Raise it only alongside the container memory limit.
     media_thumbnail_concurrency: int = Field(default=4, gt=0)
 
+    # How many POST /api/images/process decodes may run concurrently. Same
+    # reasoning as the thumbnail gate above, but a lower default because this
+    # path targets display-sized rasters rather than thumbnails, so each
+    # in-flight decode holds far more: it is a memory ceiling, not a
+    # throughput knob. The sync workers fan out across parallel jobs, so
+    # without this the only bound is FastAPI's 40-slot threadpool. Raise it
+    # only alongside the container memory limit.
+    image_process_concurrency: int = Field(default=2, gt=0)
+
     # Optional push notifications for refresh-health transitions (a panel
     # entering or leaving the failed state). The URL is POSTed a plain-text
     # body with a ``Title`` header — the ntfy.sh convention, which also
