@@ -44,7 +44,7 @@ async def _seed_preset(engine: AsyncEngine) -> PromptPreset:
 
 
 @pytest.mark.asyncio
-async def test_generate_and_publish_success_path_does_not_touch_expired_attrs(  # noqa: PLR0913
+async def test_generate_and_publish_success_path_does_not_touch_expired_attrs(  # noqa: PLR0913, PLR0917
     async_engine: AsyncEngine,
     mock_settings: MagicMock,
     mock_s3_service: MagicMock,

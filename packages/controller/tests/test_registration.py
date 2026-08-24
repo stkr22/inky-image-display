@@ -1,6 +1,6 @@
 """Tests for the HTTP registration helper."""
 
-import httpx
+import httpx2
 import pytest
 from inky_image_display_controller.config import APIConfig
 from inky_image_display_controller.registration import register
@@ -25,22 +25,22 @@ async def test_register_posts_payload_and_parses_response(monkeypatch):
         mqtt_host="broker.test",
     ).model_dump_json()
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured["url"] = str(request.url)
         captured["content"] = request.content
         captured["api_key"] = request.headers.get("x-api-key")
-        return httpx.Response(200, content=response_body)
+        return httpx2.Response(200, content=response_body)
 
-    transport = httpx.MockTransport(handler)
+    transport = httpx2.MockTransport(handler)
 
-    # Patch httpx.AsyncClient so the helper uses our mock transport.
-    real_async_client = httpx.AsyncClient
+    # Patch httpx2.AsyncClient so the helper uses our mock transport.
+    real_async_client = httpx2.AsyncClient
 
     def factory(*args, **kwargs):
         kwargs["transport"] = transport
         return real_async_client(*args, **kwargs)
 
-    monkeypatch.setattr("inky_image_display_controller.registration.httpx.AsyncClient", factory)
+    monkeypatch.setattr("inky_image_display_controller.registration.httpx2.AsyncClient", factory)
 
     payload = DeviceRegistration(
         device_id="test-device",

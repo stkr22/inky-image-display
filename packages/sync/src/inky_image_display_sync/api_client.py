@@ -7,7 +7,7 @@ sync source needs. Per-source extensions live next to their own module:
 - Gemini-specific endpoints (prompt library, gemini jobs):
   ``inky_image_display_sync.gemini.api_client``
 
-Both extend :class:`DisplayAPIClient` so they reuse the same ``httpx`` session
+Both extend :class:`DisplayAPIClient` so they reuse the same ``httpx2`` session
 without duplicating connection setup or error handling.
 """
 
@@ -16,7 +16,7 @@ from __future__ import annotations
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
@@ -147,9 +147,9 @@ class DisplayAPIClient:
         # Machine auth mirrors the Immich client's x-api-key idiom; the API
         # ignores the header while auth is disabled.
         headers = {"x-api-key": config.token.get_secret_value()} if config.token else {}
-        self._client = httpx.AsyncClient(
+        self._client = httpx2.AsyncClient(
             base_url=self._base_url,
-            timeout=httpx.Timeout(config.timeout_seconds),
+            timeout=httpx2.Timeout(config.timeout_seconds),
             headers=headers,
         )
 
@@ -157,7 +157,7 @@ class DisplayAPIClient:
         """Close the underlying HTTP client."""
         await self._client.aclose()
 
-    async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+    async def _request(self, method: str, path: str, **kwargs: Any) -> httpx2.Response:
         response = await self._client.request(method, path, **kwargs)
         response.raise_for_status()
         return response

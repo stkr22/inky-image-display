@@ -47,7 +47,7 @@ def _status_topic(device_id: str) -> str:
 class MQTTClient:
     """Long-running MQTT client for the controller."""
 
-    def __init__(  # noqa: PLR0913
+    def __init__(  # noqa: PLR0913, PLR0917
         self,
         device_id: str,
         on_command: Callable[[DisplayCommand], Awaitable[None]],

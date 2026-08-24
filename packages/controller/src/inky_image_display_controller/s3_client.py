@@ -39,7 +39,7 @@ class S3ImageClient:
         self._bucket: str | None = None
         self._executor = executor or ThreadPoolExecutor(max_workers=2)
 
-    def configure(  # noqa: PLR0913
+    def configure(  # noqa: PLR0913, PLR0917
         self,
         endpoint: str,
         access_key: str,

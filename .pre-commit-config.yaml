@@ -21,7 +21,10 @@ repos:
       - id: trailing-whitespace
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.12
+    # Keep in step with the `ruff` pin in pyproject.toml's dev group: an older
+    # ruff here does not know rules the workspace ruff enforces, and strips
+    # their codes from `noqa` comments as unknown.
+    rev: v0.16.4
     hooks:
       - id: ruff
         args: [--fix]
@@ -44,7 +47,7 @@ repos:
     - id: python-check-blanket-type-ignore
 
   - repo: https://github.com/pypa/pip-audit
-    rev: v2.10.0
+    rev: v2.10.1
     hooks:
       - id: pip-audit
 

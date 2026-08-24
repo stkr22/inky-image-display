@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=list[ImageResponse])
-async def list_images(  # noqa: PLR0912 — one branch per optional filter
+async def list_images(  # noqa: PLR0912, PLR0917 — one branch/arg per optional filter
     request: Request,
     response: Response,
     source_name: str | None = None,

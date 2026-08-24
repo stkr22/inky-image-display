@@ -1,5 +1,5 @@
 [build-system]
-requires = ["uv_build>=0.11.6,<0.12"]
+requires = ["uv_build>=0.12.5,<0.13"]
 build-backend = "uv_build"
 
 [project]
@@ -12,11 +12,11 @@ authors = [
 license = "GPL-3.0-only"
 dependencies = [
     "inky-image-display-shared~=3.0",
-    "typer~=0.24.1",
-    "httpx~=0.28.1",
+    "typer~=0.27.1",
+    "httpx2~=2.12.0",
     "minio~=7.2.20",
-    "pydantic~=2.12.5",
-    "pydantic-settings~=2.13.1",
+    "pydantic~=2.13.4",
+    "pydantic-settings~=2.15.0",
     "aiomqtt~=2.5.1",
 ]
 

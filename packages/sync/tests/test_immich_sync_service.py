@@ -21,12 +21,12 @@ from pydantic import ValidationError
 class TestRetentionDaysConfig:
     def test_default_is_seven_and_negative_rejected(self) -> None:
         config = ImmichSyncConfig(
-            _env_file=None,  # ty: ignore[unknown-argument]
+            _env_file=None,
         )
         assert config.retention_days == 7
         with pytest.raises(ValidationError):
             ImmichSyncConfig(
-                _env_file=None,  # ty: ignore[unknown-argument]
+                _env_file=None,
                 retention_days=-1,
             )
 
@@ -40,7 +40,7 @@ def _make_service(
         api_client = AsyncMock(spec=ImmichDisplayAPIClient)
     logger = MagicMock()
     sync_config = ImmichSyncConfig(
-        _env_file=None,  # ty: ignore[unknown-argument]
+        _env_file=None,
         retention_days=retention_days,
     )
     s3_config = S3WriterConfig(

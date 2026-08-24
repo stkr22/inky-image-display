@@ -97,7 +97,7 @@ class _FakeInkyPanel:
     the warning-only path.
     """
 
-    def __init__(  # noqa: PLR0913 — test stub mirrors the driver's failure modes
+    def __init__(  # noqa: PLR0913, PLR0917 — test stub mirrors the driver's failure modes
         self,
         width: int = 1600,
         height: int = 1200,

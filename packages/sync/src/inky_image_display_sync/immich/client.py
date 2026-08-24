@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
 
-import httpx
+import httpx2
 
 from inky_image_display_sync.immich.api_client import SyncJobItem
 from inky_image_display_sync.immich.config import ImmichConnectionConfig
@@ -54,7 +54,7 @@ class ImmichClient:
     """Async client for Immich REST API.
 
     Handles authentication, request/response serialization, and error handling.
-    Uses httpx for async HTTP with connection pooling.
+    Uses httpx2 for async HTTP with connection pooling.
     """
 
     def __init__(
@@ -74,15 +74,15 @@ class ImmichClient:
         self.verify_ssl = config.verify_ssl
         self.api_key = config.api_key
         self.logger = logger
-        self._client: httpx.AsyncClient | None = None
+        self._client: httpx2.AsyncClient | None = None
 
     @asynccontextmanager
     async def connect(self) -> AsyncIterator["ImmichClient"]:
         """Context manager for HTTP client lifecycle."""
-        self._client = httpx.AsyncClient(
+        self._client = httpx2.AsyncClient(
             base_url=self.base_url,
             headers={"x-api-key": self.api_key},
-            timeout=httpx.Timeout(self.timeout),
+            timeout=httpx2.Timeout(self.timeout),
             verify=self.verify_ssl,
         )
         try:
@@ -96,7 +96,7 @@ class ImmichClient:
         method: str,
         path: str,
         **kwargs: Any,
-    ) -> httpx.Response:
+    ) -> httpx2.Response:
         """Make an authenticated request to Immich API."""
         if self._client is None:
             raise RuntimeError("Client not connected. Use async with client.connect():")

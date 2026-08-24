@@ -5,12 +5,12 @@
 	"remoteUser": "vscode",
 	"workspaceFolder": "/workspaces/inky-image-display",
     "features": {
-		"ghcr.io/stkr22/devcontainer-features/claude-code:4.1.0": {},
-        "ghcr.io/stkr22/devcontainer-features/uv:1.1.0": {},
+        "ghcr.io/stkr22/devcontainer-features/uv:1.2.1": {},
 		"ghcr.io/devcontainer-community/devcontainer-features/starship.rs:1": {},
-		"ghcr.io/devcontainers/features/node:2.0.0": {
+		"ghcr.io/devcontainers/features/node:2.1.0": {
 		"version": "lts"
-		}
+		},
+		"ghcr.io/stkr22/devcontainer-features/claude-code:4.1.0": {}
     },
 	"customizations": {
 		"vscode": {
