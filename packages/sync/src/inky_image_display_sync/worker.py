@@ -20,6 +20,7 @@ import logging
 from typing import TYPE_CHECKING, Literal
 
 import aiomqtt
+from inky_image_display_shared import heap_profile
 from inky_image_display_shared.schemas import DeviceStatus
 from pydantic import SecretStr  # noqa: TC002 — pydantic-settings resolves at runtime
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -61,6 +62,14 @@ class WorkerConfig(BaseSettings):
     enable_gemini: bool = False
     enable_display: bool = False
 
+    # Heap profiling (docs/heap-profiling.md). No HTTP surface here, so the
+    # report is logged after every cycle — a cycle is the unit RSS grows in,
+    # which a time-based dump would smear across batches. Temporary: see the
+    # overhead note in the API's equivalent settings.
+    profile_heap: bool = False
+    profile_heap_frames: int = 15
+    profile_heap_top: int = 10
+
 
 async def run_worker() -> None:
     """Claim-due cycles on wake, on startup, and on the safety poll.
@@ -72,6 +81,14 @@ async def run_worker() -> None:
     config = WorkerConfig()
     wake = asyncio.Event()
     wake.set()  # Startup cycle: catch anything armed while we were down.
+
+    if config.profile_heap:
+        heap_profile.start(config.profile_heap_frames)
+        logger.warning(
+            "Heap profiling is ON (%d frames): tracemalloc adds memory overhead. "
+            "Unset WORKER_PROFILE_HEAP when the run is done.",
+            config.profile_heap_frames,
+        )
 
     mqtt_task = asyncio.create_task(_mqtt_loop(config, wake)) if config.mqtt_host else None
     if mqtt_task is None:
@@ -85,6 +102,7 @@ async def run_worker() -> None:
             wake.clear()
             await _run_cycle(config)
     finally:
+        heap_profile.stop()
         if mqtt_task is not None:
             mqtt_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -112,6 +130,10 @@ async def _run_cycle(config: WorkerConfig) -> None:
             await run()
         except Exception:
             logger.exception("%s cycle failed; continuing with the next family", name)
+
+    # After the families, so the diff covers the whole cycle's retention.
+    if heap_profile.is_active():
+        heap_profile.log_report(logger, top=config.profile_heap_top)
 
 
 async def _mqtt_loop(config: WorkerConfig, wake: asyncio.Event) -> None:

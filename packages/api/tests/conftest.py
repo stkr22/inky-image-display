@@ -16,6 +16,7 @@ from inky_image_display_api.auth import AuthRuntime, SessionAuthMiddleware
 from inky_image_display_api.routes import (
     app_settings,
     auth,
+    debug,
     device_profiles,
     devices,
     display_jobs,
@@ -118,6 +119,10 @@ def mock_settings() -> MagicMock:
     settings.device_mqtt_transport = "websockets"
     settings.device_mqtt_websocket_path = "/mqtt"
     settings.device_mqtt_keep_alive = 30
+    # Explicit False: a bare MagicMock attribute is truthy, which would
+    # silently expose the debug heap routes to every other test.
+    settings.profile_heap = False
+    settings.profile_heap_frames = 15
     return settings
 
 
@@ -190,6 +195,7 @@ def test_app(
 
     app.include_router(health_router)
     app.include_router(auth.router)
+    app.include_router(debug.router)
     app.include_router(images.router)
     app.include_router(images_process.router)
     app.include_router(eink_preview.router)
