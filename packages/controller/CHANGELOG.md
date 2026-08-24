@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.6.2](https://github.com/stkr22/inky-image-display/compare/controller-v4.6.1...controller-v4.6.2) (2026-08-24)
+
+
+### Bug Fixes
+
+* **ci:** correct release-please changelog paths and de-flake upload e2e ([7051351](https://github.com/stkr22/inky-image-display/commit/705135125f33202ccd34333bbcb69e3ee8883d91))
+* **ci:** correct release-please changelog paths and de-flake upload e2e ([8a0c2e7](https://github.com/stkr22/inky-image-display/commit/8a0c2e7e69ddff9ace8031e0f8e342c3a25525a6))
+
 ## [4.6.1](https://github.com/stkr22/inky-image-display/compare/controller-v4.6.0...controller-v4.6.1) (2026-08-24)
 
 
