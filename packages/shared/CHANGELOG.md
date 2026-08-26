@@ -1,5 +1,18 @@
 # Changelog
 
+## [6.3.0](https://github.com/stkr22/inky-image-display/compare/shared-v6.2.2...shared-v6.3.0) (2026-08-26)
+
+
+### Features
+
+* **api,sync,web:** generate bookshelf images from a Calibre library ([00f7449](https://github.com/stkr22/inky-image-display/commit/00f7449acd35d5f5af2af3ff4eb942e80d9fc140))
+* generate bookshelf images from a Calibre library ([d85a6c7](https://github.com/stkr22/inky-image-display/commit/d85a6c76f7813581931f54f37b33c76c59c8c184))
+
+
+### Bug Fixes
+
+* **shared,api:** move off the retiring gemini-2.5-flash models ([6e4f5a2](https://github.com/stkr22/inky-image-display/commit/6e4f5a2aa3ada9b5ac1a6fb8402f2c8ee700fb7c))
+
 ## [6.2.2](https://github.com/stkr22/inky-image-display/compare/shared-v6.2.1...shared-v6.2.2) (2026-08-24)
 
 
