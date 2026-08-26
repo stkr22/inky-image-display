@@ -25,7 +25,7 @@ class PromptPreset(SQLModel, table=True):
     composition_block_id: UUID = Field(foreign_key="prompt_blocks.id")
     background_block_id: UUID = Field(foreign_key="prompt_blocks.id")
     model_name: str = Field(
-        default="gemini-2.5-flash-image",
+        default="gemini-3.1-flash-image",
         description="Gemini image model used when this preset is selected.",
     )
     is_default: bool = Field(default=False)
