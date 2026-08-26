@@ -51,6 +51,8 @@ spec:
               value: {{ .Values.sync.gemini.enabled | quote }}
             - name: WORKER_ENABLE_DISPLAY
               value: {{ .Values.sync.display.enabled | quote }}
+            - name: WORKER_ENABLE_CALIBRE
+              value: {{ .Values.sync.calibre.enabled | quote }}
             {{- if .Values.sync.immich.enabled }}
             - name: IMMICH_BASE_URL
               value: {{ required "config.immich.baseUrl is required when sync.immich.enabled" .Values.config.immich.baseUrl | quote }}
@@ -62,11 +64,17 @@ spec:
                   name: {{ required "existingSecrets.immich is required when sync.immich.enabled" .Values.existingSecrets.immich }}
                   key: apiKey
             {{- end }}
-            {{- if or .Values.sync.gemini.enabled .Values.sync.display.enabled }}
+            {{- if .Values.sync.calibre.enabled }}
+            - name: CALIBRE_BASE_URL
+              value: {{ required "config.calibre.baseUrl is required when sync.calibre.enabled" .Values.config.calibre.baseUrl | quote }}
+            - name: CALIBRE_CACHE_TTL_SECONDS
+              value: {{ .Values.sync.calibre.cacheTtlSeconds | quote }}
+            {{- end }}
+            {{- if or .Values.sync.gemini.enabled .Values.sync.display.enabled .Values.sync.calibre.enabled }}
             - name: GEMINI_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ required "existingSecrets.gemini is required when sync.gemini.enabled or sync.display.enabled" .Values.existingSecrets.gemini }}
+                  name: {{ required "existingSecrets.gemini is required when sync.gemini.enabled, sync.display.enabled or sync.calibre.enabled" .Values.existingSecrets.gemini }}
                   key: gemini-api-key
             {{- end }}
             {{- include "inky-image-display.syncApiTokenEnv" . | nindent 12 }}

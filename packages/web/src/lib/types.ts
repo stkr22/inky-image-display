@@ -121,7 +121,7 @@ export interface SyncJob {
 // worker claimed the job and has not reported back yet.
 export interface SyncJobRun {
   id: string
-  job_type: 'immich' | 'gemini' | 'display'
+  job_type: 'immich' | 'gemini' | 'display' | 'calibre'
   job_id: string
   job_name: string
   status: 'running' | 'success' | 'error'
@@ -164,6 +164,32 @@ export interface GeminiJob {
   subjects: string[]
   images_per_subject: number
   retention_days: number | null
+  schedule_cron: string | null
+  schedule_timezone: string
+  next_run_at: string | null
+  last_run_at: string | null
+  run_requested_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CalibreJob {
+  id: string
+  name: string
+  is_active: boolean
+  mode: string
+  target_device_profile_id: string
+  prompt_preset_id: string
+  tags: string[]
+  languages: string[]
+  series: string[]
+  authors: string[]
+  min_rating: number | null
+  books_per_shelf: number
+  images_per_run: number
+  retention_days: number | null
+  verify_spines: boolean
+  max_attempts: number
   schedule_cron: string | null
   schedule_timezone: string
   next_run_at: string | null

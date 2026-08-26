@@ -22,6 +22,7 @@ from inky_image_display_api.mqtt import MQTTService
 from inky_image_display_api.routes import (
     app_settings,
     auth,
+    calibre_sync_jobs,
     debug,
     device_profiles,
     devices,
@@ -131,6 +132,7 @@ app.include_router(sync_runs.router)
 app.include_router(prompt_blocks.router)
 app.include_router(prompt_presets.router)
 app.include_router(gemini_sync_jobs.router)
+app.include_router(calibre_sync_jobs.router)
 app.include_router(genai_generate.router)
 app.include_router(display_jobs.router)
 app.include_router(immich_browse.router)

@@ -23,7 +23,11 @@ from pydantic import BaseModel, ValidationError
 
 from inky_image_display_shared.ai.gemini import GeminiGenerationError
 
-DEFAULT_TEXT_MODEL = "gemini-2.5-flash"
+# gemini-2.5-flash is refused for API keys issued after its retirement
+# ("no longer available to new users"), so a fresh deployment could not
+# generate a story at all. This is the replacement Google names in that
+# error, and it is vision-capable too, matching DEFAULT_VISION_MODEL.
+DEFAULT_TEXT_MODEL = "gemini-3.6-flash"
 
 
 class MotdStory(BaseModel):

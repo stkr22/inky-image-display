@@ -61,6 +61,7 @@ class WorkerConfig(BaseSettings):
     enable_immich: bool = True
     enable_gemini: bool = False
     enable_display: bool = False
+    enable_calibre: bool = False
 
     # Heap profiling (docs/heap-profiling.md). No HTTP surface here, so the
     # report is logged after every cycle — a cycle is the unit RSS grows in,
@@ -113,6 +114,7 @@ async def _run_cycle(config: WorkerConfig) -> None:
     """One claim-everything pass; a failing family doesn't block the rest."""
     # Imported lazily: main.py imports this module for the CLI command.
     from inky_image_display_sync.main import (  # noqa: PLC0415 — breaks the import cycle with main
+        run_calibre_sync,
         run_display_sync,
         run_gemini_sync,
         run_immich_sync,
@@ -122,6 +124,7 @@ async def _run_cycle(config: WorkerConfig) -> None:
         ("immich", config.enable_immich, lambda: run_immich_sync(dry_run=False)),
         ("gemini", config.enable_gemini, lambda: run_gemini_sync(dry_run=False)),
         ("display", config.enable_display, run_display_sync),
+        ("calibre", config.enable_calibre, lambda: run_calibre_sync(dry_run=False)),
     ]
     for name, enabled, run in families:
         if not enabled:

@@ -176,7 +176,8 @@ assignments).
 ## Requirements
 
 The worker needs `GEMINI_API_KEY` (story text + illustration; text model
-per job `text_model_name`, image model from the selected prompt preset)
+per job `text_model_name`, default `gemini-3.6-flash`; image model from the
+selected prompt preset)
 and the shared S3 writer credentials. Fonts for the text screens (DejaVu
 Sans, bundled) and QR rendering (`qrcode`) ship with the API package,
 which is why rendering stays an API endpoint.

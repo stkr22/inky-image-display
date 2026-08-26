@@ -245,7 +245,7 @@ class PromptPresetResponse(BaseModel):
     legibility_block_id: UUID
     composition_block_id: UUID
     background_block_id: UUID
-    model_name: str = "gemini-2.5-flash-image"
+    model_name: str = "gemini-3.1-flash-image"
     is_default: bool = False
     created_at: datetime
     updated_at: datetime
@@ -268,6 +268,36 @@ class GeminiSyncJobResponse(BaseModel):
     subjects: list[str]
     images_per_subject: int
     retention_days: int | None
+    schedule_cron: str | None = None
+    schedule_timezone: str = "UTC"
+    next_run_at: UtcDatetime | None = None
+    last_run_at: UtcDatetime | None = None
+    run_requested_at: UtcDatetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CalibreSyncJobResponse(BaseModel):
+    """Calibre bookshelf job data returned by the API."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    is_active: bool
+    mode: str
+    target_device_profile_id: UUID
+    prompt_preset_id: UUID
+    tags: list[str]
+    languages: list[str]
+    series: list[str]
+    authors: list[str]
+    min_rating: int | None
+    books_per_shelf: int
+    images_per_run: int
+    retention_days: int | None
+    verify_spines: bool
+    max_attempts: int
     schedule_cron: str | None = None
     schedule_timezone: str = "UTC"
     next_run_at: UtcDatetime | None = None

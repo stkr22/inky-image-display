@@ -6,7 +6,7 @@
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/charliermarsh/ruff/main/assets/badge/v0.json)](https://github.com/charliermarsh/ruff)
 [![prek](https://img.shields.io/badge/prek-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://github.com/j178/prek)
 
-A centralised system for driving one or more [Pimoroni Inky](https://github.com/pimoroni/inky) e-ink displays from a single service, with automatic image sync from [Immich](https://immich.app/) and optional on-demand AI image generation via Gemini.
+A centralised system for driving one or more [Pimoroni Inky](https://github.com/pimoroni/inky) e-ink displays from a single service, with automatic image sync from [Immich](https://immich.app/), bookshelf art generated from a [Calibre-Web](https://github.com/janeczku/calibre-web) library, and optional on-demand AI image generation via Gemini.
 
 ## What it does
 
@@ -36,7 +36,7 @@ A centralised system for driving one or more [Pimoroni Inky](https://github.com/
 - **API** — FastAPI service. Device registry, image library, sync-job CRUD, MQTT command dispatch, grid pre-rendering, on-demand Gemini generation. Also serves the built web frontend and the `/media` image proxy (lazy, bucket-cached thumbnails).
 - **Controller** — Daemon on the Raspberry Pi attached to an Inky display. Registers over HTTP, then connects to MQTT, fetches images from S3, and refreshes the screen.
 - **Web frontend** — React SPA (`packages/web`) for browsing images, managing displays and grids, configuring sync jobs, and triggering AI generation. Built into the API container image. No auth — trusted LAN only.
-- **Sync** — CLI tool with `immich` and `gemini` subcommands, run from cron.
+- **Sync** — CLI tool with `immich`, `gemini`, `display` and `calibre` subcommands, plus the long-running `worker` that claims due jobs on MQTT wakes.
 
 See [docs/main.md](docs/main.md) for the full component breakdown and MQTT topic reference.
 

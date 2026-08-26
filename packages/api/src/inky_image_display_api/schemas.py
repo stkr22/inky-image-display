@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from inky_image_display_shared.motd import is_valid_part
 from inky_image_display_shared.schemas.responses import (
     AppSettingsResponse,
+    CalibreSyncJobResponse,
     DeviceProfileResponse,
     DeviceResponse,
     GeminiSyncJobResponse,
@@ -38,6 +39,9 @@ __all__ = [
     "AppSettingsResponse",
     "AppSettingsUpdate",
     "AuthMeResponse",
+    "CalibreSyncJobCreate",
+    "CalibreSyncJobResponse",
+    "CalibreSyncJobUpdate",
     "DeviceProfileResponse",
     "DeviceProfileUpdate",
     "DeviceResponse",
@@ -285,7 +289,7 @@ class SyncJobUpdate(BaseModel):
 class SyncJobRunReport(BaseModel):
     """Worker-posted summary of one completed job run."""
 
-    job_type: Literal["immich", "gemini", "display"]
+    job_type: Literal["immich", "gemini", "display", "calibre"]
 
     @field_validator("started_at", "finished_at", check_fields=False)
     @classmethod
@@ -342,7 +346,7 @@ class PromptPresetBase(BaseModel):
     legibility_block_id: UUID
     composition_block_id: UUID
     background_block_id: UUID
-    model_name: str = "gemini-2.5-flash-image"
+    model_name: str = "gemini-3.1-flash-image"
     is_default: bool = False
 
 
@@ -398,6 +402,58 @@ class GeminiSyncJobUpdate(BaseModel):
     subjects: list[str] | None = None
     images_per_subject: int | None = None
     retention_days: int | None = None
+
+
+# --- Calibre bookshelf jobs ---
+
+
+class CalibreSyncJobCreate(BaseModel):
+    """Payload for creating a Calibre bookshelf job."""
+
+    name: str
+    is_active: bool = True
+    # Weekly default: each run spends generation quota, and a shelf that
+    # changes daily stops being something you notice on the wall.
+    schedule_cron: CronExpression | None = "0 6 * * 0"
+    schedule_timezone: ScheduleTimezone = "UTC"
+    mode: Literal["shelf", "hero"] = "shelf"
+    target_device_profile_id: UUID
+    prompt_preset_id: UUID
+    tags: list[str] = []
+    languages: list[str] = []
+    series: list[str] = []
+    authors: list[str] = []
+    min_rating: int | None = Field(default=None, ge=1, le=5)
+    books_per_shelf: int = Field(default=6, ge=2, le=12)
+    images_per_run: int = Field(default=1, ge=1, le=10)
+    retention_days: int | None = None
+    verify_spines: bool = True
+    max_attempts: int = Field(default=4, ge=1, le=8)
+
+
+class CalibreSyncJobUpdate(BaseModel):
+    """Patch fields on an existing Calibre bookshelf job (all optional).
+
+    ``schedule_cron``: explicit ``null`` switches to manual-only runs.
+    """
+
+    name: str | None = None
+    is_active: bool | None = None
+    schedule_cron: CronExpression | None = None
+    schedule_timezone: ScheduleTimezone | None = None
+    mode: Literal["shelf", "hero"] | None = None
+    target_device_profile_id: UUID | None = None
+    prompt_preset_id: UUID | None = None
+    tags: list[str] | None = None
+    languages: list[str] | None = None
+    series: list[str] | None = None
+    authors: list[str] | None = None
+    min_rating: int | None = Field(default=None, ge=1, le=5)
+    books_per_shelf: int | None = Field(default=None, ge=2, le=12)
+    images_per_run: int | None = Field(default=None, ge=1, le=10)
+    retention_days: int | None = None
+    verify_spines: bool | None = None
+    max_attempts: int | None = Field(default=None, ge=1, le=8)
 
 
 # --- On-demand AI generation ---

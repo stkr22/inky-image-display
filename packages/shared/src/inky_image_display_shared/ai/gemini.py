@@ -16,7 +16,12 @@ from google.genai import types
 # Fallback model used when a preset/request leaves ``model_name`` unset.
 # The active model is stored on each ``PromptPreset`` row so it can be tuned
 # without redeploying — this constant only kicks in for legacy callers.
-DEFAULT_MODEL = "gemini-2.5-flash-image"
+#
+# gemini-2.5-flash-image retires 2026-10-02. This is the same tier rather
+# than the cheaper flash-lite, so replacing the default does not quietly
+# trade image quality for cost; presets that need better text rendering
+# (the bookshelf ones) name gemini-3-pro-image explicitly.
+DEFAULT_MODEL = "gemini-3.1-flash-image"
 
 
 class GeminiGenerationError(RuntimeError):
@@ -71,12 +76,23 @@ class RenderedPrompt:
         return "3:4" if self.is_portrait else "4:3"
 
 
-def _call_gemini_sync(api_key: str, model: str, prompt_text: str, aspect_ratio: str) -> bytes:
+def _call_gemini_sync(
+    api_key: str,
+    model: str,
+    prompt_text: str,
+    aspect_ratio: str,
+    reference_image: bytes | None = None,
+) -> bytes:
     """Blocking Gemini call. Returns raw image bytes from the first inline part."""
     client = genai.Client(api_key=api_key)
+    contents: types.ContentListUnionDict = [prompt_text]
+    if reference_image is not None:
+        # Reference first: the prompt then reads as instructions *about* the
+        # attached image rather than a description to be illustrated.
+        contents.insert(0, types.Part.from_bytes(data=reference_image, mime_type="image/jpeg"))
     response = client.models.generate_content(
         model=model,
-        contents=prompt_text,
+        contents=contents,
         config=types.GenerateContentConfig(
             response_modalities=["IMAGE"],
             image_config=types.ImageConfig(aspect_ratio=aspect_ratio),
@@ -86,7 +102,10 @@ def _call_gemini_sync(api_key: str, model: str, prompt_text: str, aspect_ratio: 
     content = candidates[0].content if candidates else None
     parts = content.parts if content else None
     if not parts:
-        raise GeminiGenerationError("Gemini returned no candidates or parts")
+        # A refused generation lands here too, and the reason distinguishes a
+        # transient failure from one that will never succeed on retry.
+        reason = getattr(candidates[0], "finish_reason", None) if candidates else None
+        raise GeminiGenerationError(f"Gemini returned no candidates or parts (finish_reason={reason})")
     for part in parts:
         if part.inline_data is None or part.inline_data.data is None:
             continue
@@ -100,6 +119,7 @@ async def generate_image_bytes(
     subject: str,
     *,
     model: str = DEFAULT_MODEL,
+    reference_image: bytes | None = None,
 ) -> bytes:
     """Call Gemini and return the raw generated image bytes.
 
@@ -108,6 +128,18 @@ async def generate_image_bytes(
     SDK is synchronous, so the network call is offloaded to a worker thread.
     ``model`` defaults to :data:`DEFAULT_MODEL` for callers that haven't
     loaded a preset yet.
+
+    ``reference_image`` attaches a JPEG for the model to work from — a book's
+    real cover, so the result resembles the edition on the shelf rather than
+    whatever the model imagines the title looks like. The prompt still drives
+    the treatment; the reference supplies the subject matter.
     """
     prompt_text = prompt.render(subject)
-    return await asyncio.to_thread(_call_gemini_sync, api_key, model, prompt_text, prompt.aspect_ratio)
+    return await asyncio.to_thread(
+        _call_gemini_sync,
+        api_key,
+        model,
+        prompt_text,
+        prompt.aspect_ratio,
+        reference_image,
+    )

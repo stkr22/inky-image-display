@@ -49,7 +49,7 @@ class DisplayJob(SQLModel, table=True):
     # source URL; "knowledge" asks the model for a timeless/historical story.
     source_mode: str = Field(default="grounded")
     image_preset_id: UUID | None = Field(default=None, foreign_key="prompt_presets.id", ondelete="SET NULL")
-    text_model_name: str = Field(default="gemini-2.5-flash")
+    text_model_name: str = Field(default="gemini-3.6-flash")
 
     # Generation cadence and worker hand-off, identical to the sync jobs:
     # the external worker claims due jobs (``next_run_at`` advanced as a
