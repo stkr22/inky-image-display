@@ -1,0 +1,56 @@
+{{- if .Values.httpRoute.enabled }}
+{{- $hosts := default .Values.ingress.hosts .Values.httpRoute.hostnames }}
+{{- if not $hosts }}
+{{- fail "httpRoute.hostnames (or ingress.hosts) must list at least one hostname when httpRoute.enabled" }}
+{{- end }}
+{{- if not .Values.httpRoute.parentRefs }}
+{{- fail "httpRoute.parentRefs must name the Gateway to attach to when httpRoute.enabled" }}
+{{- end }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "inky-image-display.fullname" . }}
+  labels:
+    {{- include "inky-image-display.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ include "inky-image-display.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  {{- with .Values.httpRoute.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+    {{- range .Values.httpRoute.parentRefs }}
+    - group: {{ .group | default "gateway.networking.k8s.io" | quote }}
+      kind: {{ .kind | default "Gateway" | quote }}
+      name: {{ required "each httpRoute.parentRefs entry needs a name" .name | quote }}
+      {{- with .namespace }}
+      namespace: {{ . | quote }}
+      {{- end }}
+      {{- with .sectionName }}
+      sectionName: {{ . | quote }}
+      {{- end }}
+      {{- with .port }}
+      port: {{ . }}
+      {{- end }}
+    {{- end }}
+  hostnames:
+    {{- range $hosts }}
+    - {{ . | quote }}
+    {{- end }}
+  # The API serves the entire web surface: the React SPA (with an index.html
+  # fallback for deep links), the REST API under /api/* and the image proxy
+  # under /media/*. One prefix rule sends every host's traffic to it, matching
+  # what the Ingress template does.
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: {{ include "inky-image-display.fullname" . }}-api
+          port: {{ .Values.service.port }}
+          weight: 1
+{{- end }}
