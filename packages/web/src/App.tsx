@@ -4,6 +4,7 @@ import { Spinner } from './components/ui'
 import { useAuth } from './lib/auth'
 import { DisplayJobForm } from './pages/DisplayJobForm'
 import { Displays } from './pages/Displays'
+import { CalibreJobForm } from './pages/CalibreJobForm'
 import { GeminiJobForm } from './pages/GeminiJobForm'
 import { GenAI } from './pages/GenAI'
 import { GridDetail } from './pages/GridDetail'
@@ -59,6 +60,9 @@ export function App() {
         <Route path="/gemini-jobs" element={<Navigate to="/jobs?tab=gemini" replace />} />
         <Route path="/gemini-jobs/new" element={<GeminiJobForm />} />
         <Route path="/gemini-jobs/:jobId" element={<GeminiJobForm />} />
+        <Route path="/calibre-jobs" element={<Navigate to="/jobs?tab=books" replace />} />
+        <Route path="/calibre-jobs/new" element={<CalibreJobForm />} />
+        <Route path="/calibre-jobs/:jobId" element={<CalibreJobForm />} />
         <Route path="/display-jobs" element={<Navigate to="/jobs?tab=display" replace />} />
         <Route path="/display-jobs/:jobId" element={<DisplayJobForm />} />
         <Route path="/genai" element={<GenAI />} />

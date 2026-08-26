@@ -17,6 +17,7 @@ from inky_image_display_api.auth import AuthRuntime, SessionAuthMiddleware
 from inky_image_display_api.routes import (
     app_settings,
     auth,
+    calibre_sync_jobs,
     debug,
     device_profiles,
     devices,
@@ -35,6 +36,7 @@ from inky_image_display_api.routes import (
 from inky_image_display_api.routes.health import router as health_router
 from inky_image_display_shared.models import (
     AppSetting,
+    CalibreSyncJob,
     Device,
     DeviceProfile,
     DisplayJob,
@@ -78,6 +80,7 @@ async def async_engine() -> AsyncIterator[AsyncEngine]:
             ImmichSyncJob.__table__,  # ty: ignore[unresolved-attribute]
             AppSetting.__table__,  # ty: ignore[unresolved-attribute]
             GeminiSyncJob.__table__,  # ty: ignore[unresolved-attribute]
+            CalibreSyncJob.__table__,  # ty: ignore[unresolved-attribute]
             DisplayJob.__table__,  # ty: ignore[unresolved-attribute]
             DisplayJobSlot.__table__,  # ty: ignore[unresolved-attribute]
             ImageGroup.__table__,  # ty: ignore[unresolved-attribute]
@@ -212,6 +215,7 @@ def test_app(
     app.include_router(app_settings.router)
     app.include_router(prompt_blocks.router)
     app.include_router(gemini_sync_jobs.router)
+    app.include_router(calibre_sync_jobs.router)
     app.include_router(display_jobs.router)
     app.include_router(image_groups.router)
 

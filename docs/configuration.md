@@ -133,7 +133,7 @@ now" button (active or not) — whenever the API rings its MQTT wake topic,
 on startup, and on a slow safety poll. The claim advances each job's
 schedule, so a duplicate wake never double-runs a job.
 
-The one-shot subcommands (`immich`, `gemini`, `display`) remain for
+The one-shot subcommands (`immich`, `gemini`, `display`, `calibre`) remain for
 manual/debug runs and support:
 
 - **`--all`**: ignore the per-job schedule and run every active job.
@@ -160,6 +160,7 @@ the job's `last_run_at`.
 | `WORKER_ENABLE_IMMICH` | No | `true` | Run Immich sync jobs in each cycle |
 | `WORKER_ENABLE_GEMINI` | No | `false` | Run Gemini batch jobs (needs `GEMINI_API_KEY`) |
 | `WORKER_ENABLE_DISPLAY` | No | `false` | Run display jobs (needs `GEMINI_API_KEY`) |
+| `WORKER_ENABLE_CALIBRE` | No | `false` | Run bookshelf jobs (needs `GEMINI_API_KEY` and `CALIBRE_BASE_URL`) |
 
 ### Display API connection
 
@@ -205,8 +206,24 @@ Required only when running the `gemini` subcommand.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `GEMINI_API_KEY` | Yes | — | Google Generative AI key. The model id is read from each preset's `model_name` column (default `gemini-2.5-flash-image`) — change it via the UI or `PUT /api/genai/presets/{id}`. |
+| `GEMINI_API_KEY` | Yes | — | Google Generative AI key. The image model id is read from each preset's `model_name` column (default `gemini-2.5-flash-image`) — change it via the UI or `PUT /api/genai/presets/{id}`. Text generation uses each display job's `text_model_name` (default `gemini-3.6-flash`); note that `gemini-2.5-flash` is refused for API keys issued after its retirement, so migration 0029 repoints jobs still on it. |
 | `GEMINI_SYNC_STORAGE_PREFIX` | No | `gemini` | S3 path prefix for generated images |
+
+### Calibre bookshelf source
+
+Required only when running the `calibre` subcommand.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `CALIBRE_BASE_URL` | Yes | — | Calibre-Web base URL serving the OPDS catalogue |
+| `CALIBRE_TIMEOUT_SECONDS` | No | `30` | HTTP request timeout |
+| `CALIBRE_VERIFY_SSL` | No | `true` | Verify SSL certificates |
+| `CALIBRE_CACHE_TTL_SECONDS` | No | `21600` | How long the paged catalogue stays cached (6h). Bounds how soon a newly added book can appear. |
+
+The whole library is paged in over `/opds/books/letter/00` and cached, then
+filtered and sampled locally. Calibre-Web's own random feed takes no
+parameters, so doing it server-side would mean giving up filtering entirely.
+Generated images also need `GEMINI_API_KEY` and the S3 writer credentials.
 
 ## Sync job configuration
 
@@ -343,6 +360,45 @@ A batch generation job — analogous to `ImmichSyncJob` but for AI output.
 | `retention_days` | int? | Optional expiry; the API cleans up matching images after this many days |
 
 REST: `GET/POST /api/genai/jobs`, `GET/PUT/DELETE /api/genai/jobs/{id}`.
+
+### Calibre bookshelf jobs (`calibre_sync_jobs`)
+
+Generates bookshelf images from a Calibre-Web library. One job runs exactly one
+`mode`, so a shelf job and a hero job are separate rows with independent
+schedules and filters.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | str | Unique job name |
+| `is_active` | bool | Enable/disable |
+| `mode` | str | `shelf` (a row of spines, landscape) or `hero` (one book's cover, portrait). Orientation follows from this. |
+| `target_device_profile_id` | UUID | Target device profile — provides panel dimensions |
+| `prompt_preset_id` | UUID | Preset used to render the prompt and pick the model. Migration 0028 seeds `bookshelf_shelf` and `bookshelf_hero`. |
+| `tags`, `languages`, `series`, `authors` | list[str] | Book filters. Each matches any of its values; the filters then combine. Empty = no constraint on that axis. Matching is case-insensitive. |
+| `min_rating` | int? (1-5) | Minimum Calibre star rating; unrated books never satisfy it |
+| `books_per_shelf` | int (2-12) | Books on one shelf; ignored in hero mode |
+| `images_per_run` | int (1-10) | Images generated per run |
+| `retention_days` | int? | Optional expiry; the API cleans up matching images after this many days |
+| `verify_spines` | bool | Read the finished shelf back and regenerate when a title or author came out wrong (shelf mode only) |
+| `max_attempts` | int (1-8) | Generation attempts before the closest one is accepted anyway |
+
+REST: `GET/POST /api/calibre/jobs`, `GET/PUT/DELETE /api/calibre/jobs/{id}`,
+`POST /api/calibre/jobs/{id}/run-now`, `POST /api/calibre/jobs/claim-due`.
+
+Titles longer than 40 characters are cut at their first colon before being
+painted on a spine, so "Fundament: Warum komplexe Systeme scheitern" becomes
+"Fundament". Titles with no colon are left intact.
+
+**Why verification exists.** Image models render spine lettering convincingly
+but not reliably — roughly one shelf in three came back clean in testing, with
+failures ranging from a dropped letter to an invented seventh book with the
+author names shuffled. Because the exact strings are known before generating,
+the finished image is handed back to a vision model to be transcribed and
+compared. Budget about three image generations per accepted shelf. Two
+failure modes are handled separately in the service: any call can fail
+sporadically (retry clears it), while a cover that is a photograph of a real
+identifiable person is refused every time (the reference image is dropped and
+the prompt stands alone).
 
 ### On-demand generation
 

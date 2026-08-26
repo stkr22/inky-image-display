@@ -1,6 +1,6 @@
-// Unified jobs listing — Immich + Gemini + display jobs in one tabbed page,
-// with an overview of upcoming and recent runs at the top. The tab lives in
-// the URL (?tab=gemini|display) so deep links and back/forward work.
+// Unified jobs listing — Immich + Gemini + display + bookshelf jobs in one
+// tabbed page, with an overview of upcoming and recent runs at the top. The tab
+// lives in the URL (?tab=gemini|display|books) so deep links and back/forward work.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -12,7 +12,7 @@ import { useNotify } from '../components/Toast'
 import { Badge, EmptyNote, PageHeader, Spinner } from '../components/ui'
 import { api, errMessage } from '../lib/api'
 import { formatDatetime, formatRelative } from '../lib/format'
-import type { DisplayJob, GeminiJob, SyncJob, SyncJobRun } from '../lib/types'
+import type { CalibreJob, DisplayJob, GeminiJob, SyncJob, SyncJobRun } from '../lib/types'
 
 function scheduleSummary(
   job: Pick<SyncJob, 'schedule_cron' | 'schedule_timezone' | 'next_run_at'> & { is_active?: boolean },
@@ -39,13 +39,18 @@ export function Jobs() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const requested = searchParams.get('tab')
-  const tab = requested === 'gemini' || requested === 'display' ? requested : 'immich'
+  const tab = requested === 'gemini' || requested === 'display' || requested === 'books' ? requested : 'immich'
   const [createDisplayOpen, setCreateDisplayOpen] = useState(false)
 
   const { data: profiles } = useQuery({ queryKey: ['device-profiles'], queryFn: api.listDeviceProfiles })
   const profileMap = new Map((profiles ?? []).map((p) => [p.id, p.name]))
 
-  const newLabels = { immich: 'New Immich job', gemini: 'New Gemini job', display: 'New display job' } as const
+  const newLabels = {
+    immich: 'New Immich job',
+    gemini: 'New Gemini job',
+    display: 'New display job',
+    books: 'New bookshelf job',
+  } as const
 
   return (
     <>
@@ -58,6 +63,7 @@ export function Jobs() {
             icon="add"
             onClick={() => {
               if (tab === 'display') setCreateDisplayOpen(true)
+              else if (tab === 'books') navigate('/calibre-jobs/new')
               else navigate(tab === 'gemini' ? '/gemini-jobs/new' : '/sync-jobs/new')
             }}
           >
@@ -91,11 +97,20 @@ export function Jobs() {
         >
           Display
         </Button>
+        <Button
+          primary={tab === 'books'}
+          flat={tab !== 'books'}
+          icon="menu_book"
+          onClick={() => setSearchParams({ tab: 'books' })}
+        >
+          Bookshelf
+        </Button>
       </div>
 
       {tab === 'immich' && <ImmichList profileMap={profileMap} />}
       {tab === 'gemini' && <GeminiList profileMap={profileMap} />}
       {tab === 'display' && <DisplayList />}
+      {tab === 'books' && <CalibreList profileMap={profileMap} />}
       {createDisplayOpen && <CreateDisplayJobDialog onClose={() => setCreateDisplayOpen(false)} />}
     </>
   )
@@ -103,7 +118,7 @@ export function Jobs() {
 
 // --- Overview: upcoming runs and recent executions across all job types ----------
 
-const JOB_TYPE_LABELS = { immich: 'Immich', gemini: 'Gemini', display: 'Display' } as const
+const JOB_TYPE_LABELS = { immich: 'Immich', gemini: 'Gemini', display: 'Display', calibre: 'Bookshelf' } as const
 
 function JobsOverview() {
   const { data: workerStatus } = useQuery({
@@ -127,11 +142,20 @@ function JobsOverview() {
     queryFn: api.listDisplayJobs,
     refetchInterval: 15_000,
   })
+  const { data: calibreJobs } = useQuery({
+    queryKey: ['calibre-jobs'],
+    queryFn: api.listCalibreJobs,
+    refetchInterval: 15_000,
+  })
 
-  const allJobs: Array<{ type: 'immich' | 'gemini' | 'display'; job: SyncJob | GeminiJob | DisplayJob }> = [
+  const allJobs: Array<{
+    type: 'immich' | 'gemini' | 'display' | 'calibre'
+    job: SyncJob | GeminiJob | DisplayJob | CalibreJob
+  }> = [
     ...(syncJobs ?? []).map((job) => ({ type: 'immich' as const, job })),
     ...(geminiJobs ?? []).map((job) => ({ type: 'gemini' as const, job })),
     ...(displayJobs ?? []).map((job) => ({ type: 'display' as const, job })),
+    ...(calibreJobs ?? []).map((job) => ({ type: 'calibre' as const, job })),
   ]
 
   const running = (runs ?? []).filter((run) => run.status === 'running')
@@ -216,7 +240,7 @@ function JobsOverview() {
 
 // Runs per job (newest first), from one bulk fetch — the list is pruned
 // server-side to ~20 runs per job, so 200 rows covers every job's history.
-function useRunsByJob(jobType: 'immich' | 'gemini' | 'display'): Map<string, SyncJobRun[]> {
+function useRunsByJob(jobType: 'immich' | 'gemini' | 'display' | 'calibre'): Map<string, SyncJobRun[]> {
   const { data: runs } = useQuery({
     queryKey: ['sync-runs', jobType],
     queryFn: () => api.listSyncRuns({ job_type: jobType, limit: 200 }),
@@ -326,6 +350,67 @@ function GeminiRow({
       onEdit={() => navigate(`/gemini-jobs/${job.id}`)}
       onDelete={() => api.deleteGeminiJob(job.id)}
       deleteMessage={`Delete Gemini job '${job.name}'?`}
+    />
+  )
+}
+
+// --- Bookshelf jobs (generated from a Calibre library) --------------------------
+
+function CalibreList({ profileMap }: { profileMap: Map<string, string> }) {
+  const { data: jobs, isPending } = useQuery({
+    queryKey: ['calibre-jobs'],
+    queryFn: api.listCalibreJobs,
+    refetchInterval: 15_000,
+  })
+  const runsByJob = useRunsByJob('calibre')
+  if (isPending) return <Spinner />
+  if (!jobs || jobs.length === 0) return <EmptyNote>No bookshelf jobs yet.</EmptyNote>
+  return (
+    <div className="col w-full gap-2">
+      {jobs.map((job) => (
+        <CalibreRow key={job.id} job={job} profileMap={profileMap} runs={runsByJob.get(job.id) ?? []} />
+      ))}
+    </div>
+  )
+}
+
+// Summarises the filter so the list answers "which books does this pick?"
+// without opening the form.
+function filterSummary(job: CalibreJob): string {
+  const parts = [...(job.tags ?? []), ...(job.series ?? []), ...(job.authors ?? []), ...(job.languages ?? [])]
+  if (job.min_rating != null) parts.push(`${job.min_rating}★+`)
+  return parts.length ? parts.join(', ') : 'whole library'
+}
+
+function CalibreRow({
+  job,
+  profileMap,
+  runs,
+}: {
+  job: CalibreJob
+  profileMap: Map<string, string>
+  runs: SyncJobRun[]
+}) {
+  const navigate = useNavigate()
+  const targetName = profileMap.get(job.target_device_profile_id) ?? job.target_device_profile_id
+  const shape =
+    job.mode === 'hero' ? 'hero cover' : `shelf of ${job.books_per_shelf}`
+  return (
+    <JobRow
+      name={job.name}
+      summary={`${shape} · ${job.images_per_run} per run · ${filterSummary(job)} · → ${targetName}`}
+      schedule={scheduleSummary(job)}
+      updatedAt={job.updated_at}
+      isActive={job.is_active}
+      runs={runs}
+      runRequestedAt={job.run_requested_at}
+      nextRunAt={job.next_run_at}
+      queryKey={['calibre-jobs']}
+      onToggle={(value) => api.updateCalibreJob(job.id, { is_active: value })}
+      onRunNow={() => api.runCalibreJobNow(job.id)}
+      onEdit={() => navigate(`/calibre-jobs/${job.id}`)}
+      onDelete={() => api.deleteCalibreJob(job.id)}
+      deleteMessage={`Delete bookshelf job '${job.name}'?`}
     />
   )
 }

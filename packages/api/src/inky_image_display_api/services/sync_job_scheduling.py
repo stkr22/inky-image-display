@@ -11,7 +11,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from cronsim import CronSim, CronSimError
-from inky_image_display_shared.models import GeminiSyncJob, ImmichSyncJob, SyncJobRun
+from inky_image_display_shared.models import CalibreSyncJob, GeminiSyncJob, ImmichSyncJob, SyncJobRun
 from inky_image_display_shared.time import as_utc_aware
 from sqlalchemy import ColumnElement
 from sqlmodel import col, or_, select
@@ -50,7 +50,9 @@ def next_cron_run(expr: str, timezone: str, now: datetime) -> datetime:
     return next(CronSim(expr, local_now)).astimezone(UTC).replace(tzinfo=None)
 
 
-def due_clause[JobT: (ImmichSyncJob, GeminiSyncJob)](model: type[JobT], now: datetime) -> ColumnElement[bool]:
+def due_clause[JobT: (ImmichSyncJob, GeminiSyncJob, CalibreSyncJob)](
+    model: type[JobT], now: datetime
+) -> ColumnElement[bool]:
     """Jobs the worker should run: Run-now flagged, or on-schedule and due.
 
     Run-now works on paused jobs on purpose — running a paused job on
@@ -62,7 +64,7 @@ def due_clause[JobT: (ImmichSyncJob, GeminiSyncJob)](model: type[JobT], now: dat
     )
 
 
-async def claim_due_jobs[JobT: (ImmichSyncJob, GeminiSyncJob)](
+async def claim_due_jobs[JobT: (ImmichSyncJob, GeminiSyncJob, CalibreSyncJob)](
     session: AsyncSession, model: type[JobT], now: datetime
 ) -> list[JobT]:
     """Hand out due jobs and advance their schedules.

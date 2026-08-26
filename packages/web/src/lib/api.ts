@@ -8,6 +8,7 @@ import type {
   Device,
   DeviceProfile,
   DisplayJob,
+  CalibreJob,
   GeminiJob,
   GenerationTask,
   Grid,
@@ -181,7 +182,7 @@ export const api = {
   runSyncJobNow: (id: string) => request<SyncJob>(`/api/sync-jobs/${id}/run-now`, { method: 'POST' }),
 
   // --- Sync run history (both job types) ---
-  listSyncRuns: (params: { job_type?: 'immich' | 'gemini' | 'display'; job_id?: string; limit?: number } = {}) =>
+  listSyncRuns: (params: { job_type?: 'immich' | 'gemini' | 'display' | 'calibre'; job_id?: string; limit?: number } = {}) =>
     request<SyncJobRun[]>('/api/sync-runs', { params }),
 
   // --- Prompt blocks / presets ---
@@ -207,6 +208,15 @@ export const api = {
     request<GeminiJob>(`/api/genai/jobs/${id}`, { method: 'PUT', body }),
   deleteGeminiJob: (id: string) => request<void>(`/api/genai/jobs/${id}`, { method: 'DELETE' }),
   runGeminiJobNow: (id: string) => request<GeminiJob>(`/api/genai/jobs/${id}/run-now`, { method: 'POST' }),
+
+  listCalibreJobs: () => request<CalibreJob[]>('/api/calibre/jobs'),
+  getCalibreJob: (id: string) => request<CalibreJob>(`/api/calibre/jobs/${id}`),
+  createCalibreJob: (body: Record<string, unknown>) =>
+    request<CalibreJob>('/api/calibre/jobs', { method: 'POST', body }),
+  updateCalibreJob: (id: string, body: Record<string, unknown>) =>
+    request<CalibreJob>(`/api/calibre/jobs/${id}`, { method: 'PUT', body }),
+  deleteCalibreJob: (id: string) => request<void>(`/api/calibre/jobs/${id}`, { method: 'DELETE' }),
+  runCalibreJobNow: (id: string) => request<CalibreJob>(`/api/calibre/jobs/${id}/run-now`, { method: 'POST' }),
 
   // --- Grids ---
   listGrids: (includeDevices = false) =>

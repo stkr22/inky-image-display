@@ -1,6 +1,7 @@
 """SQLModel database models for Inky Image Display."""
 
 from .app_setting import AppSetting
+from .calibre_sync_job import MODE_HERO, MODE_SHELF, CalibreSyncJob
 from .device import Device, DeviceDisplayState
 from .device_profile import DeviceProfile
 from .display_job import DisplayJob, DisplayJobSlot
@@ -15,7 +16,10 @@ from .prompt_preset import PromptPreset
 from .sync_job_run import SyncJobRun
 
 __all__ = [
+    "MODE_HERO",
+    "MODE_SHELF",
     "AppSetting",
+    "CalibreSyncJob",
     "Device",
     "DeviceDisplayState",
     "DeviceProfile",

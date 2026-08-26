@@ -48,6 +48,12 @@ config:
   immich:
     baseUrl: ""  # e.g. https://immich.example.com
 
+  # Calibre-Web serving the OPDS catalogue the bookshelf source reads. The
+  # worker is the only caller, so an in-cluster service address is fine and
+  # avoids whatever auth sits in front of the public hostname.
+  calibre:
+    baseUrl: ""  # e.g. http://calibre-web.calibre-web.svc.cluster.local
+
   # OIDC authentication (docs/auth.md). Leave issuer/clientId empty for the
   # historical open trusted-LAN behaviour. When set, humans sign in via the
   # IdP (authorization code + PKCE), machine callers need the tokens from
@@ -116,6 +122,21 @@ service:
   type: ClusterIP
   port: 80
 
+# Gateway API alternative to the Ingress above. Both can be enabled at once
+# during a migration; leave one disabled once the move is done.
+httpRoute:
+  enabled: false
+  annotations: {}
+  # Which Gateway (and listener) this route attaches to. group/kind default to
+  # the Gateway API defaults, so usually only name/namespace/sectionName matter.
+  parentRefs: []
+  #  - name: home
+  #    namespace: cilium-gateway
+  #    sectionName: https
+  # Defaults to ingress.hosts, so switching from Ingress to Gateway API does
+  # not mean retyping the hostnames.
+  hostnames: []
+
 ingress:
   enabled: true
   className: ""  # empty = cluster default IngressClass
@@ -179,6 +200,17 @@ sync:
   # Needs existingSecrets.gemini.
   display:
     enabled: false
+
+  # Opt-in: bookshelf images generated from a Calibre-Web library. Needs
+  # config.calibre.baseUrl and existingSecrets.gemini. Each bookshelf job's
+  # own schedule decides how often images are generated (and billed);
+  # verification adds roughly two extra generations per accepted shelf.
+  calibre:
+    enabled: false
+    # The whole catalogue is paged in and cached for this long. A home
+    # library changes far more slowly than jobs run, so this mostly decides
+    # how soon a newly added book can appear.
+    cacheTtlSeconds: 21600
 
   resources:
     requests:

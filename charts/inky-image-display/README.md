@@ -49,6 +49,10 @@ config:
     transport: websockets
   immich:
     baseUrl: https://immich.example.com
+  # Calibre-Web serving the OPDS catalogue for the bookshelf source. Only the
+  # sync worker calls it, so the in-cluster service address is usually right.
+  calibre:
+    baseUrl: http://calibre-web.calibre-web.svc.cluster.local
 
 existingSecrets:
   s3Writer: my-s3-writer
@@ -60,9 +64,20 @@ ingress:
   hosts:
     - inky-display.example.com
 
+# Gateway API instead of (or alongside) the Ingress. hostnames defaults to
+# ingress.hosts, so a migration does not mean retyping them.
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: home
+      namespace: cilium-gateway
+      sectionName: https
+
 sync:
   gemini:
     enabled: true   # billed per generated image — opt-in
+  calibre:
+    enabled: true   # bookshelf images; needs config.calibre.baseUrl + the Gemini secret
 ```
 
 ## Notes
@@ -77,3 +92,9 @@ sync:
   network policies restrict pod-to-pod traffic).
 - Pods run as the image's non-root user (uid/gid 1001); `fsGroup` keeps
   volume data writable if it was created under a different uid.
+- `ingress` and `httpRoute` are independent: enable both during a migration
+  to Gateway API, then turn the Ingress off. Both route every hostname's `/`
+  to the API service, which serves the SPA, `/api/*` and `/media/*`.
+- The bookshelf source pages the whole Calibre library in and caches it for
+  `sync.calibre.cacheTtlSeconds` (6h), so a newly added book can take that
+  long to become eligible.
