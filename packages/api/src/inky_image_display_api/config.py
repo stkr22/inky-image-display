@@ -26,6 +26,8 @@ class Settings(BaseSettings):
         """
         return f"sqlite+aiosqlite:///{self.database_path}"
 
+    # S3 — the API's own connection to object storage (server-side).
+    # Typically an internal/cluster address with no TLS.
     s3_endpoint: str
     s3_bucket: str = "inky-images"
     s3_secure: bool = False
@@ -34,6 +36,14 @@ class Settings(BaseSettings):
     s3_region: str | None = None
     s3_reader_access_key: str
     s3_reader_secret_key: str
+
+    # S3 — what controllers receive in the registration response. Only the
+    # network path differs: same bucket, same region, same object keys, so
+    # only the address and its TLS flag are overridable. Unset falls back to
+    # the API's own values, which is the historical single-endpoint setup.
+    device_s3_endpoint: str | None = None
+    device_s3_secure: bool | None = None
+
     default_display_duration: int = 3600
 
     # After a device acks a failed refresh, automatic dispatch (rotation,
@@ -162,6 +172,18 @@ class Settings(BaseSettings):
     # Raise the memory limit for the run instead of profiling into an OOM.
     profile_heap: bool = False
     profile_heap_frames: int = Field(default=15, gt=0)
+
+    @property
+    def controller_s3_endpoint(self) -> str:
+        """S3 address advertised to controllers."""
+        return self.device_s3_endpoint or self.s3_endpoint
+
+    @property
+    def controller_s3_secure(self) -> bool:
+        """Whether controllers should reach S3 over HTTPS."""
+        if self.device_s3_secure is not None:
+            return self.device_s3_secure
+        return self.s3_secure
 
     @property
     def auth_enabled(self) -> bool:

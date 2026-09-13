@@ -88,11 +88,11 @@ async def register_device(request: Request, registration: DeviceRegistration) ->
     logger.info("Device %s registered (status=%s)", registration.device_id, status)
     return RegistrationResponse(
         status=status,
-        s3_endpoint=settings.s3_endpoint,
+        s3_endpoint=settings.controller_s3_endpoint,
         s3_bucket=settings.s3_bucket,
         s3_access_key=settings.s3_reader_access_key,
         s3_secret_key=settings.s3_reader_secret_key,
-        s3_secure=settings.s3_secure,
+        s3_secure=settings.controller_s3_secure,
         s3_region=settings.s3_region,
         mqtt_host=settings.device_mqtt_host,
         mqtt_port=settings.device_mqtt_port,

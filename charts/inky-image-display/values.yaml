@@ -20,11 +20,20 @@ config:
   # S3-compatible object storage (Garage, MinIO, AWS S3). The API uses the
   # writer credentials for uploads and hands the reader credentials to
   # controllers at registration; the sync worker uses the writer credentials.
+  # This endpoint is the API's own — usually the in-cluster service.
   s3:
-    endpoint: ""  # required, e.g. s3.example.com
+    endpoint: ""  # required, e.g. garage.storage.svc:3900
     bucket: inky-images
     secure: true
     region: ""  # optional
+
+  # S3 address advertised to controllers — usually the public/ingress
+  # hostname, since devices sit outside the cluster. Same bucket and region,
+  # only a different network path. Leave the endpoint empty to hand out
+  # config.s3 unchanged (single-endpoint deployments).
+  deviceS3:
+    endpoint: ""  # e.g. s3.example.com
+    secure: true
 
   # Broker connection of the API process itself — usually the in-cluster
   # service, plain TCP. Username/password or TLS options for this connection

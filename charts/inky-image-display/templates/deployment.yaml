@@ -65,6 +65,14 @@ spec:
             - name: API_S3_REGION
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.config.deviceS3.endpoint }}
+            # Advertised to controllers in the registration response —
+            # usually the public S3 address, not the in-cluster one.
+            - name: API_DEVICE_S3_ENDPOINT
+              value: {{ . | quote }}
+            - name: API_DEVICE_S3_SECURE
+              value: {{ $.Values.config.deviceS3.secure | quote }}
+            {{- end }}
             - name: API_DEFAULT_DISPLAY_DURATION
               value: {{ .Values.config.defaultDisplayDuration | quote }}
             - name: API_MQTT_HOST

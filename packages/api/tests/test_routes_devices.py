@@ -70,7 +70,9 @@ class TestRegisterDevice:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "registered"
-        assert body["s3_endpoint"] == "s3.test.local:9000"
+        # Controllers get the device-facing endpoint, not the API's own.
+        assert body["s3_endpoint"] == "s3.public.test"
+        assert body["s3_secure"] is True
         assert body["s3_access_key"] == "reader-key"
 
     def test_register_rejects_unknown_profile(self, client: TestClient):

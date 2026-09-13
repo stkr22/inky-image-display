@@ -29,6 +29,7 @@ API_S3_WRITER_ACCESS_KEY=<write-key>
 API_S3_WRITER_SECRET_KEY=<write-secret>
 API_S3_READER_ACCESS_KEY=<read-key>
 API_S3_READER_SECRET_KEY=<read-secret>
+API_DEVICE_S3_ENDPOINT=s3.example.com
 API_MQTT_HOST=mqtt.svc
 API_DEVICE_MQTT_HOST=mqtt.example.com
 ```
@@ -37,6 +38,10 @@ API_DEVICE_MQTT_HOST=mqtt.example.com
 (usually an internal cluster service). `API_DEVICE_MQTT_HOST` is the
 address advertised to controllers in the registration response (usually
 the public/ingress hostname). Both are required.
+
+`API_S3_ENDPOINT` / `API_DEVICE_S3_ENDPOINT` split the same way, except
+the device one is optional: unset, controllers get `API_S3_ENDPOINT`,
+which then has to be reachable from outside the cluster.
 
 ### Controller
 

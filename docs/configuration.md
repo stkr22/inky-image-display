@@ -9,14 +9,16 @@ All variables are prefixed with `API_`.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `API_DATABASE_PATH` | Yes | — | Path to the SQLite database file, e.g. `/data/inky.db` |
-| `API_S3_ENDPOINT` | Yes | — | S3 endpoint, e.g. `s3.example.com`. This value is handed to controllers at registration and they pull images from it directly, so it must be reachable from **outside** the cluster (public/ingress address), not a cluster-internal service name. |
+| `API_S3_ENDPOINT` | Yes | — | S3 endpoint **used by the API itself**, e.g. `garage.storage.svc:3900` (typically an internal/cluster address). Unless `API_DEVICE_S3_ENDPOINT` is set, this value is also handed to controllers, in which case it must be reachable from outside the cluster. |
 | `API_S3_WRITER_ACCESS_KEY` | Yes | — | Write-access S3 key (for image upload) |
 | `API_S3_WRITER_SECRET_KEY` | Yes | — | Write-access S3 secret |
 | `API_S3_READER_ACCESS_KEY` | Yes | — | Read-only S3 key (sent to controllers on registration) |
 | `API_S3_READER_SECRET_KEY` | Yes | — | Read-only S3 secret |
 | `API_S3_BUCKET` | No | `inky-images` | S3 bucket name |
-| `API_S3_SECURE` | No | `false` | Use HTTPS for S3 |
+| `API_S3_SECURE` | No | `false` | Use HTTPS for the API's own S3 connection |
 | `API_S3_REGION` | No | — | S3 region (omit for MinIO/Garage) |
+| `API_DEVICE_S3_ENDPOINT` | No | `API_S3_ENDPOINT` | S3 endpoint **handed to controllers** in the registration response (typically the public/ingress address). Only the network path differs — bucket, region and object keys are shared with the API's own connection. |
+| `API_DEVICE_S3_SECURE` | No | `API_S3_SECURE` | Whether controllers should reach S3 over HTTPS. |
 | `API_DEFAULT_DISPLAY_DURATION` | No | `3600` | Default image display duration (seconds) |
 | `API_REFRESH_ERROR_BACKOFF_SECONDS` | No | `900` | How long a device's failed-refresh ack blocks automatic dispatch (rotation, grids, display jobs, GenAI). Once the recorded error is older than this, dispatch resumes on its own — bounds the halt when the controller restarted (its in-memory retry is gone) or its success ack was lost. See [refresh-issues.md](refresh-issues.md). |
 | `API_MQTT_HOST` | Yes | — | MQTT broker hostname **used by the API itself** (typically an internal/cluster address) |
