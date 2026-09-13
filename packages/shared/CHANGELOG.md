@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.4.0](https://github.com/stkr22/inky-image-display/compare/shared-v6.3.0...shared-v6.4.0) (2026-09-13)
+
+
+### Features
+
+* let controllers reach S3 at a different endpoint than the API ([843660b](https://github.com/stkr22/inky-image-display/commit/843660b2bc8d903a07493071841a2d04cf2582bc))
+
 ## [6.3.0](https://github.com/stkr22/inky-image-display/compare/shared-v6.2.2...shared-v6.3.0) (2026-08-26)
 
 
