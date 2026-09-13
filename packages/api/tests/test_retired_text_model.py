@@ -58,7 +58,7 @@ async def _insert_job(engine: AsyncEngine, name: str, model: str) -> None:
                 "INSERT INTO display_jobs (id, name, job_type, content_prompt, source_mode, "
                 "text_model_name, is_active, schedule_timezone, created_at, updated_at) "
                 "VALUES (:id, :n, 'motd', 'prompt', 'grounded', :m, 1, 'UTC', :now, :now)"
-            ),
+            ).bindparams(sa.bindparam("now", type_=sa.DateTime())),
             {"id": str(uuid.uuid4()), "n": name, "m": model, "now": now},
         )
 
@@ -119,7 +119,9 @@ async def test_image_preset_on_the_retiring_default_is_repointed(seeded_engine: 
     now = datetime.now(UTC).replace(tzinfo=None)
     async with seeded_engine.begin() as conn:
         await conn.execute(
-            sa.text("UPDATE prompt_presets SET model_name = 'gemini-2.5-flash-image', updated_at = :now"),
+            sa.text("UPDATE prompt_presets SET model_name = 'gemini-2.5-flash-image', updated_at = :now").bindparams(
+                sa.bindparam("now", type_=sa.DateTime())
+            ),
             {"now": now},
         )
         # One preset an operator pinned deliberately.

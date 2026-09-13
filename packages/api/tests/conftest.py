@@ -102,6 +102,9 @@ def mock_settings() -> MagicMock:
     settings.s3_region = None
     settings.s3_reader_access_key = "reader-key"
     settings.s3_reader_secret_key = "reader-secret"
+    # Split endpoint: controllers reach the same bucket over the public path.
+    settings.controller_s3_endpoint = "s3.public.test"
+    settings.controller_s3_secure = True
     settings.default_display_duration = 3600
     settings.refresh_error_backoff_seconds = 900
     # Explicit None: a bare MagicMock attribute would read as "configured"
