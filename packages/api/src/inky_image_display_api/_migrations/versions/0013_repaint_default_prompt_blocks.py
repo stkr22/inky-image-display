@@ -147,9 +147,11 @@ _BLOCKS: list[tuple[str, str, str, str]] = [
     ("background", "bold_solid", _OLD_BACKGROUND, _NEW_BACKGROUND),
 ]
 
+# ``:now`` needs an explicit type: an untyped text() bind hands the datetime
+# straight to sqlite3, whose default adapter is deprecated since Python 3.12.
 _UPDATE = sa.text(
     "UPDATE prompt_blocks SET text = :new, updated_at = :now WHERE kind = :kind AND name = :name AND text = :old"
-)
+).bindparams(sa.bindparam("now", type_=sa.DateTime()))
 
 
 def _repaint(pairs: list[tuple[str, str, str, str]]) -> None:

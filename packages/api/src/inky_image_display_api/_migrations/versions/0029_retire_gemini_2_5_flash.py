@@ -32,7 +32,11 @@ depends_on = None
 _RETIRED = "gemini-2.5-flash"
 _REPLACEMENT = "gemini-3.6-flash"
 
-_UPDATE = sa.text("UPDATE display_jobs SET text_model_name = :new, updated_at = :now WHERE text_model_name = :old")
+# ``:now`` needs an explicit type: an untyped text() bind hands the datetime
+# straight to sqlite3, whose default adapter is deprecated since Python 3.12.
+_UPDATE = sa.text(
+    "UPDATE display_jobs SET text_model_name = :new, updated_at = :now WHERE text_model_name = :old"
+).bindparams(sa.bindparam("now", type_=sa.DateTime()))
 
 
 def upgrade() -> None:
