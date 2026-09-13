@@ -1,5 +1,18 @@
 # Changelog
 
+## [7.4.0](https://github.com/stkr22/inky-image-display/compare/v7.3.0...v7.4.0) (2026-09-13)
+
+
+### Features
+
+* **api,chart:** let controllers reach S3 at a different endpoint than the API ([38df5b8](https://github.com/stkr22/inky-image-display/commit/38df5b8077621cd8bb1f7519072d396a83909066))
+* let controllers reach S3 at a different endpoint than the API ([843660b](https://github.com/stkr22/inky-image-display/commit/843660b2bc8d903a07493071841a2d04cf2582bc))
+
+
+### Bug Fixes
+
+* **api:** type the :now bind so sqlite's deprecated adapter is not used ([23c32ec](https://github.com/stkr22/inky-image-display/commit/23c32ec69f71cf9175bc8a95fd18126ceb72ae73))
+
 ## [7.3.0](https://github.com/stkr22/inky-image-display/compare/v7.2.3...v7.3.0) (2026-08-26)
 
 
