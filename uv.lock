@@ -291,15 +291,6 @@ wheels = [
 ]
 
 [[package]]
-name = "coloraide"
-version = "8.14.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0b/26/83261fd943ced1fba3b9749fb93f06b357bfe261881c7512e237133bcdc3/coloraide-8.14.1.tar.gz", hash = "sha256:253e24f8aa824d5527dca99d1c175adfcc05ddd7457c902fbb4ab17bae600e37", size = 22335755, upload-time = "2026-11-08T14:17:42.222Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/47/d1/60b45b4a3ad1fbd5d5ab68f0db6ec38775170478963faffee9363168589d/coloraide-8.14.1-py3-none-any.whl", hash = "sha256:41f4bfade0d896d1482f17f6f02438bfefc1e41fff02ea606d3edfc8d8a75ddd", size = 349283, upload-time = "2026-11-08T14:17:40.395Z" },
-]
-
-[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -755,7 +746,7 @@ requires-dist = [
 
 [[package]]
 name = "inky-image-display-controller"
-version = "4.6.2"
+version = "4.7.0"
 source = { editable = "packages/controller" }
 dependencies = [
     { name = "aiomqtt" },
@@ -767,6 +758,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyyaml" },
     { name = "typer" },
+    { name = "urllib3" },
 ]
 
 [package.optional-dependencies]
@@ -786,15 +778,15 @@ requires-dist = [
     { name = "pydantic-settings", specifier = "~=2.16.2" },
     { name = "pyyaml", specifier = "~=6.0.3" },
     { name = "typer", specifier = "~=0.29.1" },
+    { name = "urllib3", specifier = "~=2.8.0" },
 ]
 provides-extras = ["rpi"]
 
 [[package]]
 name = "inky-image-display-shared"
-version = "6.4.0"
+version = "6.5.0"
 source = { editable = "packages/shared" }
 dependencies = [
-    { name = "coloraide" },
     { name = "google-genai" },
     { name = "pillow" },
     { name = "pillow-heif" },
@@ -805,7 +797,6 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "coloraide", specifier = "~=8.14.1" },
     { name = "google-genai", specifier = "~=3.2.0" },
     { name = "pillow", specifier = "~=13.0.0" },
     { name = "pillow-heif", specifier = "~=1.8.1" },
@@ -823,9 +814,11 @@ dependencies = [
     { name = "httpx2" },
     { name = "inky-image-display-shared" },
     { name = "minio" },
+    { name = "pillow" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "typer" },
+    { name = "urllib3" },
 ]
 
 [package.metadata]
@@ -834,14 +827,16 @@ requires-dist = [
     { name = "httpx2", specifier = "~=2.16.0" },
     { name = "inky-image-display-shared", editable = "packages/shared" },
     { name = "minio", specifier = "~=7.2.20" },
+    { name = "pillow", specifier = "~=13.0.0" },
     { name = "pydantic", specifier = "~=2.14.3" },
     { name = "pydantic-settings", specifier = "~=2.16.2" },
     { name = "typer", specifier = "~=0.29.1" },
+    { name = "urllib3", specifier = "~=2.8.0" },
 ]
 
 [[package]]
 name = "inky-image-display-workspace"
-version = "7.4.0"
+version = "7.5.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
