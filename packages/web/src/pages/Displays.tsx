@@ -8,10 +8,11 @@ import { ConfirmDialog, Dialog } from '../components/Dialog'
 import { Button, Icon, IntervalInputs, Switch, TextField, totalSeconds } from '../components/fields'
 import { GridLayoutEditor, type LayoutRows } from '../components/GridLayoutEditor'
 import { useNotify } from '../components/Toast'
-import { Badge, EmptyNote, PageHeader, Spinner } from '../components/ui'
+import { Badge, EmptyNote, LoadError, PageHeader, Spinner } from '../components/ui'
 import { api, DeviceNotConnectedError, errMessage } from '../lib/api'
 import { formatDatetime, formatIntervalSeconds, formatRelative, splitHoursMinutes } from '../lib/format'
 import { imageTitle, mediaUrl, type Device, type DeviceProfile, type Grid, type ScheduleEntry } from '../lib/types'
+import { deviceProfilesQuery, devicesQuery, gridsQuery } from '../lib/queries'
 
 export function Displays() {
   return (
@@ -28,7 +29,7 @@ export function Displays() {
 // --- Schedule -------------------------------------------------------------
 
 function ScheduleSection() {
-  const { data: entries, refetch, isPending } = useQuery({
+  const { data: entries, refetch, isPending, isError, error } = useQuery({
     queryKey: ['schedule'],
     queryFn: () => api.getScheduleUpcoming(20),
     refetchInterval: 15_000,
@@ -39,6 +40,7 @@ function ScheduleSection() {
       <PageHeader
         eyebrow="Upcoming"
         title="Schedule"
+        documentTitle="Displays"
         actions={
           <Button flat round icon="refresh" title="Refresh" onClick={() => refetch()} />
         }
@@ -47,6 +49,7 @@ function ScheduleSection() {
         Ordered by next refresh time. Devices currently driven by a grid are hidden — the grid entry represents them.
       </span>
       {isPending && <Spinner />}
+      {isError && <LoadError what="the schedule" error={error} onRetry={() => refetch()} />}
       {entries?.length === 0 && <EmptyNote>Nothing scheduled yet.</EmptyNote>}
       <div className="col w-full gap-2">
         {entries?.map((entry, index) => <ScheduleRow key={`${entry.kind}-${entry.id}`} position={index + 1} entry={entry} />)}
@@ -97,8 +100,8 @@ function ScheduleRow({ position, entry }: { position: number; entry: ScheduleEnt
 // --- Devices ----------------------------------------------------------------
 
 function DevicesSection() {
-  const { data: devices, refetch, isPending } = useQuery({ queryKey: ['devices'], queryFn: api.listDevices })
-  const { data: profiles } = useQuery({ queryKey: ['device-profiles'], queryFn: api.listDeviceProfiles })
+  const { data: devices, refetch, isPending, isError, error } = useQuery(devicesQuery)
+  const { data: profiles } = useQuery(deviceProfilesQuery)
   const profileById = new Map((profiles ?? []).map((p) => [p.id, p]))
 
   return (
@@ -106,9 +109,11 @@ function DevicesSection() {
       <PageHeader
         eyebrow="Wall"
         title="Devices"
+        documentTitle={false}
         actions={<Button flat round icon="refresh" title="Refresh" onClick={() => refetch()} />}
       />
       {isPending && <Spinner />}
+      {isError && <LoadError what="devices" error={error} onRetry={() => refetch()} />}
       {devices?.length === 0 && <EmptyNote>No devices registered yet.</EmptyNote>}
       {devices?.map((device) => (
         <DeviceCard key={device.id} device={device} profile={profileById.get(device.device_profile_id)} />
@@ -344,7 +349,7 @@ function ScheduleDialog({ device, onClose, onSaved }: { device: Device; onClose:
 
 function GridsSection() {
   const queryClient = useQueryClient()
-  const { data: grids, refetch, isPending } = useQuery({ queryKey: ['grids', 'with-devices'], queryFn: () => api.listGrids(true) })
+  const { data: grids, refetch, isPending, isError, error } = useQuery(gridsQuery)
   const [createOpen, setCreateOpen] = useState(false)
 
   return (
@@ -352,6 +357,7 @@ function GridsSection() {
       <PageHeader
         eyebrow="Wall"
         title="Grids"
+        documentTitle={false}
         actions={
           <>
             <Button primary icon="add" title="Create grid" onClick={() => setCreateOpen(true)} />
@@ -360,6 +366,7 @@ function GridsSection() {
         }
       />
       {isPending && <Spinner />}
+      {isError && <LoadError what="grids" error={error} onRetry={() => refetch()} />}
       {grids?.length === 0 && <EmptyNote>No grids yet — create one to start.</EmptyNote>}
       {grids?.map((grid) => <GridRow key={grid.id} grid={grid} />)}
       {createOpen && (
@@ -398,8 +405,8 @@ function GridRow({ grid }: { grid: Grid }) {
 
 function CreateGridDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const notify = useNotify()
-  const { data: devices } = useQuery({ queryKey: ['devices'], queryFn: api.listDevices })
-  const { data: profiles } = useQuery({ queryKey: ['device-profiles'], queryFn: api.listDeviceProfiles })
+  const { data: devices } = useQuery(devicesQuery)
+  const { data: profiles } = useQuery(deviceProfilesQuery)
   const [name, setName] = useState('')
   const [rows, setRows] = useState<LayoutRows>([[]])
 

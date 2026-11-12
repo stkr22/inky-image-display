@@ -1,7 +1,7 @@
 // Upload form with drag-and-drop, client-side preview, automatic portrait
 // detection from the decoded image, and a live quality hint vs the target grid.
 
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CropDialog } from '../components/CropDialog'
@@ -10,6 +10,7 @@ import { useNotify } from '../components/Toast'
 import { BackLink, PageHeader } from '../components/ui'
 import { api, errMessage } from '../lib/api'
 import type { CroppedResult } from '../lib/crop'
+import { deviceProfilesQuery, devicesQuery, gridsQuery } from '../lib/queries'
 import { cropText, imageFit, maxDevicePxcm, recommendedDims, resolutionBand } from '../lib/quality'
 import type { Grid } from '../lib/types'
 import { useUnsavedGuard } from '../lib/useUnsavedGuard'
@@ -26,9 +27,10 @@ export function ImageUpload() {
   const notify = useNotify()
   const fileInput = useRef<HTMLInputElement>(null)
 
-  const { data: grids } = useQuery({ queryKey: ['grids', 'with-devices'], queryFn: () => api.listGrids(true) })
-  const { data: profiles } = useQuery({ queryKey: ['device-profiles'], queryFn: api.listDeviceProfiles })
-  const { data: devices } = useQuery({ queryKey: ['devices'], queryFn: api.listDevices })
+  const queryClient = useQueryClient()
+  const { data: grids } = useQuery(gridsQuery)
+  const { data: profiles } = useQuery(deviceProfilesQuery)
+  const { data: devices } = useQuery(devicesQuery)
 
   const [selected, setSelected] = useState<SelectedFile | null>(null)
   // The as-picked file, kept so re-crops always start from full quality.
@@ -42,8 +44,6 @@ export function ImageUpload() {
   const [portrait, setPortrait] = useState(false)
   const [targetGrid, setTargetGrid] = useState('')
   const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [uploaded, setUploaded] = useState(false)
   // Server-rendered Spectra 6 simulation of the currently selected (possibly
   // cropped) bytes, so surprises show up before the upload — not on the wall.
   const [einkPreview, setEinkPreview] = useState(false)
@@ -83,11 +83,21 @@ export function ImageUpload() {
     if (file) pickFile(file)
   }
 
+  // Every preview is an object URL holding a Blob in memory until revoked.
+  // The original's URL is owned by `original`; a cropped selection owns its
+  // own URL (an uncropped one shares the original's).
+  useRevokeOnChange(original?.previewUrl ?? null)
+  useRevokeOnChange(selected && selected.previewUrl !== original?.previewUrl ? selected.previewUrl : null)
+  useRevokeOnChange(einkUrl)
+
   // Re-render the e-ink simulation whenever the toggle is on and the file
-  // (or its crop) changes; revoke stale object URLs to avoid leaks.
+  // (or its crop) changes.
   useEffect(() => {
     if (!einkPreview || !selected) {
+      // Also clears a render cut short by toggling off — its own finally is
+      // skipped once cancelled, so it can't reset the flag itself.
       setEinkUrl(null)
+      setEinkBusy(false)
       return
     }
     let cancelled = false
@@ -109,12 +119,22 @@ export function ImageUpload() {
     return () => {
       cancelled = true
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [einkPreview, selected])
+  }, [einkPreview, selected, notify])
 
-  useEffect(() => () => void (einkUrl && URL.revokeObjectURL(einkUrl)), [einkUrl])
+  const upload = useMutation({
+    mutationFn: ({ file, metadata }: { file: File; metadata: Record<string, unknown> }) =>
+      api.uploadImage(file, metadata),
+    onSuccess: () => {
+      // The gallery, landing stats/recents and the grid pools all list images.
+      queryClient.invalidateQueries({ queryKey: ['images'] })
+      allowLeave()
+      notify('Uploaded', 'positive')
+      navigate('/images')
+    },
+    onError: (err) => setError(`Upload failed: ${errMessage(err)}`),
+  })
 
-  const submit = async () => {
+  const submit = () => {
     if (!selected) {
       setError('Choose a file first.')
       return
@@ -128,23 +148,13 @@ export function ImageUpload() {
       is_portrait: portrait,
     }
     if (targetGrid) metadata.target_grid_id = targetGrid
-    setBusy(true)
-    try {
-      await api.uploadImage(selected.file, metadata)
-    } catch (err) {
-      setError(`Upload failed: ${errMessage(err)}`)
-      setBusy(false)
-      return
-    }
-    setUploaded(true)
-    allowLeave()
-    notify('Uploaded', 'positive')
-    navigate('/images')
+    setError('')
+    upload.mutate({ file: selected.file, metadata })
   }
 
   // A picked (and possibly cropped) file is real work worth guarding; the
   // post-upload navigation must not prompt (allowLeave below).
-  const allowLeave = useUnsavedGuard(selected !== null && !uploaded)
+  const allowLeave = useUnsavedGuard(selected !== null && !upload.isSuccess)
 
   const grid = grids?.find((g) => g.id === targetGrid)
 
@@ -258,12 +268,35 @@ export function ImageUpload() {
         <Button flat onClick={() => navigate('/images')}>
           Cancel
         </Button>
-        <Button primary icon="upload" onClick={submit} disabled={busy}>
-          {busy ? 'Uploading…' : 'Upload'}
+        <Button primary icon="upload" onClick={submit} disabled={upload.isPending}>
+          {upload.isPending ? 'Uploading…' : 'Upload'}
         </Button>
       </div>
     </>
   )
+}
+
+// Revokes an object URL once it is replaced or the page unmounts. Not a
+// plain effect cleanup: StrictMode's dev-only unmount/remount would revoke a
+// URL that is still on screen.
+function useRevokeOnChange(url: string | null) {
+  const current = useRef(url)
+  const mounted = useRef(false)
+  useEffect(() => {
+    const previous = current.current
+    current.current = url
+    if (previous && previous !== url) URL.revokeObjectURL(previous)
+  }, [url])
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      // A StrictMode remount flips `mounted` back before this runs.
+      queueMicrotask(() => {
+        if (!mounted.current && current.current) URL.revokeObjectURL(current.current)
+      })
+    }
+  }, [])
 }
 
 function QualityHint({

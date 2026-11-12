@@ -3,7 +3,7 @@
 // content takes over the panels), and per-grid image actions with quality
 // hints.
 
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, Dialog } from '../components/Dialog'
@@ -11,11 +11,15 @@ import { Button, NumberField, Switch, TextField } from '../components/fields'
 import { describeCron, ScheduleEditor, type ScheduleValue } from '../components/ScheduleEditor'
 import { GridLayoutEditor, layoutRowsFromGrid, type LayoutRows } from '../components/GridLayoutEditor'
 import { useNotify } from '../components/Toast'
-import { Badge, EmptyNote, ErrorNote, Spinner } from '../components/ui'
+import { Badge, DocumentTitle, EmptyNote, LoadError, Spinner } from '../components/ui'
 import { api, errMessage } from '../lib/api'
 import { formatRelative } from '../lib/format'
+import { deviceProfilesQuery, devicesQuery } from '../lib/queries'
 import { CROP_NEGLIGIBLE, cropText, imageFit, maxDevicePxcm, recommendedDims, resolutionBand } from '../lib/quality'
-import { imageTitle, mediaUrl, type Device, type Grid, type Image } from '../lib/types'
+import { imageTitle, mediaUrl, type Device, type Grid, type GridQueueEntry, type Image } from '../lib/types'
+
+// The API caps list pages; this is the most one request returns.
+const GRID_POOL_LIMIT = 500
 
 export function GridDetail() {
   const { gridId } = useParams<{ gridId: string }>()
@@ -26,9 +30,15 @@ export function GridDetail() {
     queryFn: () => api.getGrid(gridId!),
     enabled: Boolean(gridId),
   })
-  const { data: devices } = useQuery({ queryKey: ['devices'], queryFn: api.listDevices })
-  const { data: profiles } = useQuery({ queryKey: ['device-profiles'], queryFn: api.listDeviceProfiles })
-  const { data: imageList } = useQuery({ queryKey: ['images', 'grid-pool'], queryFn: () => api.listImages({ limit: 200 }) })
+  const { data: devices } = useQuery(devicesQuery)
+  const { data: profiles } = useQuery(deviceProfilesQuery)
+  // Server-side filter: fetching the first N images of the whole library and
+  // filtering client-side silently dropped pool images beyond that page.
+  const { data: imageList, isError: imagesFailed, error: imagesError, refetch: refetchImages } = useQuery({
+    queryKey: ['images', 'grid-pool', gridId],
+    queryFn: () => api.listImages({ target_grid_id: gridId, limit: GRID_POOL_LIMIT }),
+    enabled: Boolean(gridId),
+  })
   const images = imageList?.items
 
   const [previewImageId, setPreviewImageId] = useState<string | null>(null)
@@ -40,13 +50,21 @@ export function GridDetail() {
   }
 
   const imageById = useMemo(() => new Map((images ?? []).map((img) => [img.id, img])), [images])
+  // The image on the panels may not be in the pool (sent manually, or
+  // reassigned since) — fetch it on its own for the preview.
+  const currentId = grid?.current_image_id ?? null
+  const { data: currentImage } = useQuery({
+    queryKey: ['image', currentId],
+    queryFn: () => api.getImage(currentId!),
+    enabled: currentId != null && !imageById.has(currentId),
+  })
 
   if (isPending) return <Spinner />
-  if (error || !grid) return <ErrorNote>Could not load grid.</ErrorNote>
+  if (error || !grid) return <LoadError what="grid" error={error} />
 
   const previewImage =
     (previewImageId && imageById.get(previewImageId)) ||
-    (grid.current_image_id && imageById.get(grid.current_image_id)) ||
+    (currentId && (imageById.get(currentId) ?? (currentImage?.id === currentId ? currentImage : undefined))) ||
     null
   const maxPxcm = maxDevicePxcm(grid, devices ?? [], profiles ?? [])
 
@@ -56,6 +74,7 @@ export function GridDetail() {
       <CanvasPreview grid={grid} devices={devices ?? []} previewImage={previewImage} maxPxcm={maxPxcm} />
       <QueueCard grid={grid} onChanged={refresh} />
       <DisplayScheduleCard grid={grid} onChanged={refresh} />
+      {imagesFailed && <LoadError what="this grid's images" error={imagesError} onRetry={() => refetchImages()} />}
       <ImageActions
         grid={grid}
         images={images ?? []}
@@ -89,6 +108,7 @@ function GridHeader({ grid, devices, onChanged }: { grid: Grid; devices: Device[
 
   return (
     <div className="row w-full items-end justify-between wrap gap-3">
+      <DocumentTitle title={grid.name} />
       <div className="col gap-0">
         <span className="ink-eyebrow">Grid</span>
         <h2 className="ink-h2">{grid.name}</h2>
@@ -137,7 +157,7 @@ function EditGridDialog({
   onSaved: () => void
 }) {
   const notify = useNotify()
-  const { data: profiles } = useQuery({ queryKey: ['device-profiles'], queryFn: api.listDeviceProfiles })
+  const { data: profiles } = useQuery(deviceProfilesQuery)
 
   const initialRows = useMemo(() => layoutRowsFromGrid(grid.devices ?? []), [grid.devices])
   const [name, setName] = useState(grid.name)
@@ -316,21 +336,37 @@ function QueueCard({ grid, onChanged }: { grid: Grid; onChanged: () => void }) {
     }
   }
 
-  const move = async (index: number, delta: number) => {
-    const target = index + delta
-    if (target < 0 || target >= entries.length) return
-    const next = [...entries]
-    const [moved] = next.splice(index, 1)
-    next.splice(target, 0, moved)
-    try {
-      await api.reorderGridQueue(
+  // Reorders apply optimistically against the cache (not a render-time
+  // snapshot), so quick successive clicks compose instead of the second one
+  // reordering a stale list; the buttons stay disabled while one is in flight.
+  const queueKey = ['grid-queue', grid.id]
+  const reorder = useMutation({
+    mutationFn: (next: GridQueueEntry[]) =>
+      api.reorderGridQueue(
         grid.id,
         next.map((entry) => ({ kind: entry.kind, id: entry.id })),
-      )
-      refresh()
-    } catch (err) {
+      ),
+    onMutate: async (next) => {
+      await queryClient.cancelQueries({ queryKey: queueKey })
+      const previous = queryClient.getQueryData<GridQueueEntry[]>(queueKey)
+      queryClient.setQueryData(queueKey, next)
+      return { previous }
+    },
+    onError: (err, _next, context) => {
+      if (context?.previous) queryClient.setQueryData(queueKey, context.previous)
       notify(`Reorder failed: ${errMessage(err)}`, 'negative')
-    }
+    },
+    onSettled: () => refresh(),
+  })
+
+  const move = (index: number, delta: number) => {
+    const current = queryClient.getQueryData<GridQueueEntry[]>(queueKey) ?? entries
+    const target = index + delta
+    if (target < 0 || target >= current.length) return
+    const next = [...current]
+    const [moved] = next.splice(index, 1)
+    next.splice(target, 0, moved)
+    reorder.mutate(next)
   }
 
   const held = status?.hold_until != null
@@ -394,13 +430,20 @@ function QueueCard({ grid, onChanged }: { grid: Grid; onChanged: () => void }) {
               {entry.last_displayed_at ? `shown ${formatRelative(entry.last_displayed_at)}` : 'not shown yet'}
             </span>
           </div>
-          <Button flat round icon="arrow_upward" title="Earlier" disabled={index === 0} onClick={() => move(index, -1)} />
+          <Button
+            flat
+            round
+            icon="arrow_upward"
+            title="Earlier"
+            disabled={index === 0 || reorder.isPending}
+            onClick={() => move(index, -1)}
+          />
           <Button
             flat
             round
             icon="arrow_downward"
             title="Later"
-            disabled={index === entries.length - 1}
+            disabled={index === entries.length - 1 || reorder.isPending}
             onClick={() => move(index, 1)}
           />
           <Button
@@ -651,7 +694,7 @@ function ImageActions({
   onChanged: () => void
 }) {
   const notify = useNotify()
-  const gridImages = images.filter((img) => img.target_grid_id === grid.id)
+  const gridImages = images
 
   const release = async () => {
     try {
@@ -685,7 +728,8 @@ function ImageActions({
       </div>
       {poolTotal > images.length && (
         <span className="ink-small">
-          Showing first {images.length} of {poolTotal} images — images beyond this pool are not listed here.
+          Showing the first {images.length} of {poolTotal} images in this grid's pool — filter the library by this
+          grid to see the rest.
         </span>
       )}
       {gridImages.length === 0 && (

@@ -1,91 +1,74 @@
 // Immich sync-job create/edit form.
 
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { Button, NumberField, RefMultiSelect, SelectField, Slider, Switch, TextField } from '../components/fields'
+import { useState } from 'react'
+import { useParams } from 'react-router-dom'
+import { NumberField, RefMultiSelect, SelectField, Slider, Switch, TextField } from '../components/fields'
+import { JobFormLoader, JobFormShell, useJobSave } from '../components/JobFormShell'
 import { ScheduleEditor, type ScheduleValue } from '../components/ScheduleEditor'
-import { useNotify } from '../components/Toast'
-import { BackLink, PageHeader, Spinner } from '../components/ui'
-import { api, ApiError, errMessage } from '../lib/api'
+import { api, ApiError } from '../lib/api'
+import { useDefaultChoice } from '../lib/useDefaultChoice'
+import { deviceProfilesQuery } from '../lib/queries'
+import type { SyncJob } from '../lib/types'
 
 const MIN_COUNT = 1
 const MAX_COUNT = 1000
 
 export function SyncJobForm() {
   const { jobId } = useParams<{ jobId: string }>()
-  const navigate = useNavigate()
-  const notify = useNotify()
-  const isEdit = Boolean(jobId)
+  return (
+    <JobFormLoader jobId={jobId} queryKey="sync-job" fetchJob={api.getSyncJob} backTo="/jobs" what="sync job">
+      {(job) => <SyncJobFields job={job} />}
+    </JobFormLoader>
+  )
+}
 
-  const { data: profiles } = useQuery({ queryKey: ['device-profiles'], queryFn: api.listDeviceProfiles })
+function SyncJobFields({ job }: { job: SyncJob | undefined }) {
+  const isEdit = job !== undefined
+  const { data: profiles } = useQuery(deviceProfilesQuery)
   // Name lookups via the API's Immich proxy. `retry: false` because a 503
   // means "not configured" — the pickers then fall back to free-text IDs.
-  const immichQueryOpts = { retry: false, staleTime: 5 * 60_000 } as const
+  // Failures are shown per picker, so they skip the global error toast.
+  const immichQueryOpts = { retry: false, staleTime: 5 * 60_000, meta: { silentError: true } } as const
   const { data: albums, error: albumsError } = useQuery({ queryKey: ['immich', 'albums'], queryFn: api.listImmichAlbums, ...immichQueryOpts })
   const { data: people, error: peopleError } = useQuery({ queryKey: ['immich', 'people'], queryFn: api.listImmichPeople, ...immichQueryOpts })
   const { data: tags, error: tagsError } = useQuery({ queryKey: ['immich', 'tags'], queryFn: api.listImmichTags, ...immichQueryOpts })
-  const { data: job, isPending: jobPending } = useQuery({
-    queryKey: ['sync-job', jobId],
-    queryFn: () => api.getSyncJob(jobId!),
-    enabled: isEdit,
+
+  const [name, setName] = useState(job?.name ?? '')
+  const [strategy, setStrategy] = useState(job?.strategy || 'RANDOM')
+  const [query, setQuery] = useState(job?.query ?? '')
+  const [targetProfile, setTargetProfile] = useState(job?.target_device_profile_id ?? '')
+  const [orientation, setOrientation] = useState(job?.orientation ?? '')
+  const [count, setCount] = useState<number | ''>(job?.count ?? 10)
+  const [maxImages, setMaxImages] = useState<number | ''>(job?.max_images ?? 10)
+  const [overfetch, setOverfetch] = useState(job?.overfetch_multiplier || 3)
+  const [randomPick, setRandomPick] = useState(job?.random_pick ?? false)
+  const [active, setActive] = useState(job?.is_active ?? true)
+  const [schedule, setSchedule] = useState<ScheduleValue>(
+    job ? { cron: job.schedule_cron, timezone: job.schedule_timezone || 'UTC' } : { cron: '0 * * * *', timezone: 'UTC' },
+  )
+  const [albumIds, setAlbumIds] = useState<string[]>(job?.album_ids ?? [])
+  const [personIds, setPersonIds] = useState<string[]>(job?.person_ids ?? [])
+  const [tagIds, setTagIds] = useState<string[]>(job?.tag_ids ?? [])
+  const [albumMatchMode, setAlbumMatchMode] = useState<'all' | 'any'>(job?.album_match_mode ?? 'all')
+  const [personMatchMode, setPersonMatchMode] = useState<'all' | 'any'>(job?.person_match_mode ?? 'all')
+  const [favorite, setFavorite] = useState(job?.is_favorite == null ? '' : String(job.is_favorite))
+  const [rating, setRating] = useState(typeof job?.rating === 'number' ? String(job.rating) : '')
+  const [city, setCity] = useState(job?.city ?? '')
+  const [state, setState] = useState(job?.state ?? '')
+  const [country, setCountry] = useState(job?.country ?? '')
+  const [takenAfter, setTakenAfter] = useState(job?.taken_after?.slice(0, 10) ?? '')
+  const [takenBefore, setTakenBefore] = useState(job?.taken_before?.slice(0, 10) ?? '')
+
+  useDefaultChoice(!isEdit, targetProfile, setTargetProfile, profiles)
+  const { error, saving, fail, submit } = useJobSave({
+    jobId: job?.id,
+    create: api.createSyncJob,
+    update: api.updateSyncJob,
+    listKey: ['sync-jobs'],
+    detailKey: 'sync-job',
+    backTo: '/jobs',
   })
-
-  const [name, setName] = useState('')
-  const [strategy, setStrategy] = useState('RANDOM')
-  const [query, setQuery] = useState('')
-  const [targetProfile, setTargetProfile] = useState('')
-  const [orientation, setOrientation] = useState('')
-  const [count, setCount] = useState<number | ''>(10)
-  const [maxImages, setMaxImages] = useState<number | ''>(10)
-  const [overfetch, setOverfetch] = useState(3)
-  const [randomPick, setRandomPick] = useState(false)
-  const [active, setActive] = useState(true)
-  const [schedule, setSchedule] = useState<ScheduleValue>({ cron: '0 * * * *', timezone: 'UTC' })
-  const [albumIds, setAlbumIds] = useState<string[]>([])
-  const [personIds, setPersonIds] = useState<string[]>([])
-  const [tagIds, setTagIds] = useState<string[]>([])
-  const [albumMatchMode, setAlbumMatchMode] = useState<'all' | 'any'>('all')
-  const [personMatchMode, setPersonMatchMode] = useState<'all' | 'any'>('all')
-  const [favorite, setFavorite] = useState('')
-  const [rating, setRating] = useState('')
-  const [city, setCity] = useState('')
-  const [state, setState] = useState('')
-  const [country, setCountry] = useState('')
-  const [takenAfter, setTakenAfter] = useState('')
-  const [takenBefore, setTakenBefore] = useState('')
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    if (!job) return
-    setName(job.name)
-    setStrategy(job.strategy || 'RANDOM')
-    setQuery(job.query ?? '')
-    setTargetProfile(job.target_device_profile_id)
-    setOrientation(job.orientation ?? '')
-    setCount(job.count)
-    setMaxImages(job.max_images)
-    setOverfetch(job.overfetch_multiplier || 3)
-    setRandomPick(job.random_pick)
-    setActive(job.is_active)
-    setSchedule({ cron: job.schedule_cron, timezone: job.schedule_timezone || 'UTC' })
-    setAlbumIds(job.album_ids ?? [])
-    setPersonIds(job.person_ids ?? [])
-    setTagIds(job.tag_ids ?? [])
-    setAlbumMatchMode(job.album_match_mode ?? 'all')
-    setPersonMatchMode(job.person_match_mode ?? 'all')
-    setFavorite(job.is_favorite == null ? '' : String(job.is_favorite))
-    setRating(typeof job.rating === 'number' ? String(job.rating) : '')
-    setCity(job.city ?? '')
-    setState(job.state ?? '')
-    setCountry(job.country ?? '')
-    setTakenAfter(job.taken_after?.slice(0, 10) ?? '')
-    setTakenBefore(job.taken_before?.slice(0, 10) ?? '')
-  }, [job])
-
-  useEffect(() => {
-    if (!isEdit && !targetProfile && profiles?.length) setTargetProfile(profiles[0].id)
-  }, [profiles, isEdit, targetProfile])
 
   // 503 means the proxy isn't configured at all — that case gets one shared
   // note below the pickers. Anything else (e.g. a 502 because the Immich API
@@ -99,20 +82,18 @@ export function SyncJobForm() {
     return `Name lookup failed (${detail})${permissionHint}. Enter raw Immich IDs instead.`
   }
 
-  if (isEdit && jobPending) return <Spinner />
-
-  const save = async () => {
-    if (!name) return setError('Name is required')
-    if (!targetProfile) return setError('Target device profile is required')
+  const save = () => {
+    if (!name) return fail('Name is required')
+    if (!targetProfile) return fail('Target device profile is required')
     const countValue = Number(count)
     if (!Number.isInteger(countValue) || countValue < MIN_COUNT || countValue > MAX_COUNT) {
-      return setError(`Count must be between ${MIN_COUNT} and ${MAX_COUNT}`)
+      return fail(`Count must be between ${MIN_COUNT} and ${MAX_COUNT}`)
     }
     const maxImagesValue = Number(maxImages)
     if (!Number.isInteger(maxImagesValue) || maxImagesValue < 0) {
-      return setError('Max images must be 0 (unlimited) or greater')
+      return fail('Max images must be 0 (unlimited) or greater')
     }
-    if (strategy === 'SMART' && !query.trim()) return setError('Query is required when strategy is SMART')
+    if (strategy === 'SMART' && !query.trim()) return fail('Query is required when strategy is SMART')
 
     const body = {
       name,
@@ -140,27 +121,18 @@ export function SyncJobForm() {
       schedule_cron: schedule.cron,
       schedule_timezone: schedule.timezone || 'UTC',
     }
-    try {
-      if (isEdit) await api.updateSyncJob(jobId!, body)
-      else await api.createSyncJob(body)
-    } catch (err) {
-      setError(`Save failed: ${errMessage(err)}`)
-      return
-    }
-    notify('Saved', 'positive')
-    navigate('/jobs')
+    submit(body)
   }
 
   return (
-    <>
-      <div className="row w-full items-center gap-2">
-        <BackLink to="/jobs" title="Back to jobs" />
-        <PageHeader
-          eyebrow={isEdit ? 'Automations / edit' : 'Automations / new'}
-          title={isEdit ? 'Edit sync job' : 'New sync job'}
-        />
-      </div>
-
+    <JobFormShell
+      backTo="/jobs"
+      eyebrow={isEdit ? 'Automations / edit' : 'Automations / new'}
+      title={isEdit ? 'Edit sync job' : 'New sync job'}
+      error={error}
+      saving={saving}
+      onSave={save}
+    >
       <div className="bento-tile w-full" style={{ padding: 24 }}>
         <div className="ink-form-section w-full">
           <span className="ink-eyebrow">Basics</span>
@@ -348,17 +320,6 @@ export function SyncJobForm() {
           </div>
         </div>
       </div>
-
-      <span className="ink-form-error">{error}</span>
-
-      <div className="ink-action-bar">
-        <Button flat onClick={() => navigate('/jobs')}>
-          Cancel
-        </Button>
-        <Button primary icon="save" onClick={save}>
-          Save
-        </Button>
-      </div>
-    </>
+    </JobFormShell>
   )
 }

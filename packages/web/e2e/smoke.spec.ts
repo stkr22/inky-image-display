@@ -10,8 +10,10 @@ const SECTIONS: Array<{ path: string; heading: string | RegExp }> = [
   { path: '/images', heading: 'Images' },
   { path: '/images/new', heading: 'Upload image' },
   { path: '/jobs', heading: 'Jobs' },
+  { path: '/jobs?tab=books', heading: 'Jobs' },
   { path: '/sync-jobs/new', heading: 'New sync job' },
   { path: '/gemini-jobs/new', heading: 'New Gemini job' },
+  { path: '/calibre-jobs/new', heading: 'New bookshelf job' },
   { path: '/genai', heading: 'Generate an image' },
   { path: '/genai?tab=prompts', heading: 'Prompt library' },
   { path: '/settings', heading: 'Settings' },
@@ -51,11 +53,38 @@ test('legacy routes redirect to their new homes', async ({ page }) => {
   await expect(page).toHaveURL(/\/jobs\?tab=display$/)
   await page.goto('/display-jobs')
   await expect(page).toHaveURL(/\/jobs\?tab=display$/)
+  await page.goto('/calibre-jobs')
+  await expect(page).toHaveURL(/\/jobs\?tab=books$/)
 })
 
-test('display jobs tab lists jobs and links to the editor', async ({ page }) => {
+test('display jobs tab creates a job and opens its editor', async ({ page }) => {
+  const problems = collectProblems(page)
+  const name = `e2e display job ${Date.now()}`
   await page.goto('/jobs?tab=display', { waitUntil: 'networkidle' })
-  await expect(page.getByRole('button', { name: 'New display job' })).toBeVisible()
+  await page.getByRole('button', { name: 'New display job' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('Name').fill(name)
+  await dialog.getByRole('button', { name: 'Create' }).click()
+
+  await expect(page).toHaveURL(/\/display-jobs\/[0-9a-f-]+$/)
+  const jobId = page.url().split('/').pop()!
+  try {
+    await expect(page.getByRole('heading', { name })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Save configuration' })).toBeVisible()
+
+    // Back on the list (client-side, so no in-flight request is aborted),
+    // the row's edit button leads to the same editor.
+    await page.getByRole('link', { name: '← All jobs' }).click()
+    await page.waitForLoadState('networkidle')
+    const row = page.locator('.bento-tile', { has: page.getByRole('heading', { name }) })
+    await row.getByTitle('Edit', { exact: true }).click()
+    await expect(page).toHaveURL(new RegExp(`/display-jobs/${jobId}$`))
+    await expect(page.getByRole('heading', { name })).toBeVisible()
+    expect(problems.consoleErrors).toEqual([])
+    expect(problems.badResponses).toEqual([])
+  } finally {
+    await page.request.delete(`/api/display-jobs/${jobId}`)
+  }
 })
 
 test('jobs tab state lives in the URL', async ({ page }) => {

@@ -13,7 +13,12 @@ import type { AppSettings, GuestInvite } from '../lib/types'
 export function Settings() {
   const notify = useNotify()
   const queryClient = useQueryClient()
-  const { data: settings, isPending, error } = useQuery({ queryKey: ['app-settings'], queryFn: api.getAppSettings })
+  const { data: settings, isPending, error } = useQuery({
+    queryKey: ['app-settings'],
+    queryFn: api.getAppSettings,
+    // Seeds the form below; a focus refetch would overwrite unsaved input.
+    refetchOnWindowFocus: false,
+  })
 
   const [hours, setHours] = useState<number | ''>(0)
   const [minutes, setMinutes] = useState<number | ''>(0)

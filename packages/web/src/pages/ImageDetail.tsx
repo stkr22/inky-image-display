@@ -1,66 +1,70 @@
 // Image detail: preview + edit form + "send to device/grid" dialog.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, Dialog } from '../components/Dialog'
 import { Button, Expansion, NumberField, Switch, TextArea, TextField } from '../components/fields'
 import { useNotify } from '../components/Toast'
-import { BackLink, Badge, ErrorNote, PageHeader, Spinner } from '../components/ui'
+import { BackLink, Badge, LoadError, PageHeader, Spinner } from '../components/ui'
 import { api, ApiError, DeviceNotConnectedError, errMessage } from '../lib/api'
-import { formatDatetime } from '../lib/format'
+import { useAuth } from '../lib/auth'
+import { formatDatetime, isHttpUrl } from '../lib/format'
+import { deviceProfilesQuery, devicesQuery, gridsQuery } from '../lib/queries'
 import { maxDevicePxcm, recommendedDims } from '../lib/quality'
 import { einkPreviewUrl, imageTitle, mediaUrl, type Device, type DeviceProfile, type Grid, type Image } from '../lib/types'
 import { useUnsavedGuard } from '../lib/useUnsavedGuard'
 
 export function ImageDetail() {
   const { imageId } = useParams<{ imageId: string }>()
-  const navigate = useNavigate()
-  const notify = useNotify()
-  const queryClient = useQueryClient()
-
   const { data: image, isPending, error } = useQuery({
     queryKey: ['image', imageId],
     queryFn: () => api.getImage(imageId!),
     enabled: Boolean(imageId),
+    // The edit form is seeded once per image; a focus refetch couldn't
+    // update it anyway.
+    refetchOnWindowFocus: false,
   })
+
+  if (isPending) return <Spinner />
+  if (error || !image) return <LoadError what="image" error={error} />
+  // Keyed on the id so the form seeds from each image exactly once: a
+  // background refetch must not overwrite edits in progress.
+  return <ImageDetailBody key={image.id} image={image} />
+}
+
+function ImageDetailBody({ image }: { image: Image }) {
+  const imageId = image.id
+  const navigate = useNavigate()
+  const notify = useNotify()
+  const queryClient = useQueryClient()
+  // Guests may look and send to a device, not edit or delete.
+  const isAdmin = useAuth().role !== 'guest'
 
   const { data: books } = useQuery({
     queryKey: ['image-books', imageId],
-    queryFn: () => api.getImageBooks(imageId!),
-    enabled: Boolean(imageId),
+    queryFn: () => api.getImageBooks(imageId),
   })
 
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
-  const [author, setAuthor] = useState('')
-  const [tags, setTags] = useState('')
+  const [title, setTitle] = useState(image.title ?? '')
+  const [description, setDescription] = useState(image.description ?? '')
+  const [author, setAuthor] = useState(image.author ?? '')
+  const [tags, setTags] = useState(image.tags ?? '')
   // Per-image hold: null on the wire means "rotate on the device interval".
-  const [holdEnabled, setHoldEnabled] = useState(false)
-  const [duration, setDuration] = useState<number | ''>(3600)
-  const [excluded, setExcluded] = useState(false)
+  const [holdEnabled, setHoldEnabled] = useState(image.display_duration_seconds != null)
+  const [duration, setDuration] = useState<number | ''>(image.display_duration_seconds ?? 3600)
+  const [excluded, setExcluded] = useState(image.excluded_from_rotation)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [sendOpen, setSendOpen] = useState(false)
   // Toggle between the plain photo and the server-side Spectra 6 simulation.
   const [einkPreview, setEinkPreview] = useState(false)
-
-  useEffect(() => {
-    if (!image) return
-    setTitle(image.title ?? '')
-    setDescription(image.description ?? '')
-    setAuthor(image.author ?? '')
-    setTags(image.tags ?? '')
-    setHoldEnabled(image.display_duration_seconds != null)
-    setDuration(image.display_duration_seconds ?? 3600)
-    setExcluded(image.excluded_from_rotation)
-  }, [image])
 
   const saveMutation = useMutation({
     mutationFn: () => {
       if (holdEnabled && (Number(duration) || 0) < 1) {
         return Promise.reject(new ApiError(0, 'Hold time must be at least 1 second.'))
       }
-      return api.updateImage(imageId!, {
+      return api.updateImage(imageId, {
         title: title || null,
         description: description || null,
         author: author || null,
@@ -78,7 +82,7 @@ export function ImageDetail() {
   })
 
   const deleteMutation = useMutation({
-    mutationFn: () => api.deleteImage(imageId!),
+    mutationFn: () => api.deleteImage(imageId),
     onSuccess: () => {
       // Deleting intentionally discards edits — don't prompt on the redirect.
       allowLeave()
@@ -89,20 +93,27 @@ export function ImageDetail() {
     onError: (err) => notify(`Delete failed: ${errMessage(err)}`, 'negative'),
   })
 
-  // Dirty vs the loaded record.
+  // Dirty vs the loaded record (refreshed after each save).
   const dirty =
-    Boolean(image) &&
-    (title !== (image?.title ?? '') ||
-      description !== (image?.description ?? '') ||
-      author !== (image?.author ?? '') ||
-      tags !== (image?.tags ?? '') ||
-      excluded !== (image?.excluded_from_rotation ?? false) ||
-      holdEnabled !== (image?.display_duration_seconds != null) ||
-      (holdEnabled && Number(duration) !== image?.display_duration_seconds))
+    title !== (image.title ?? '') ||
+    description !== (image.description ?? '') ||
+    author !== (image.author ?? '') ||
+    tags !== (image.tags ?? '') ||
+    excluded !== image.excluded_from_rotation ||
+    holdEnabled !== (image.display_duration_seconds != null) ||
+    (holdEnabled && Number(duration) !== image.display_duration_seconds)
   const allowLeave = useUnsavedGuard(dirty)
 
-  if (isPending) return <Spinner />
-  if (error || !image) return <ErrorNote>Could not load image.</ErrorNote>
+  const booksList = books && books.length > 0 && (
+    <div className="ink-form-section w-full">
+      <span className="ink-eyebrow">Books on this image</span>
+      <ol className="ink-small" style={{ margin: 0, paddingLeft: 20 }}>
+        {books.map((b) => (
+          <li key={b.position}>{b.title}</li>
+        ))}
+      </ol>
+    </div>
+  )
 
   return (
     <>
@@ -131,42 +142,45 @@ export function ImageDetail() {
         </div>
 
         <div className="bento-tile" style={{ padding: 20, width: '100%', maxWidth: 420 }}>
-          <div className="ink-form-section w-full">
-            <span className="ink-eyebrow">Edit</span>
-            <TextField label="Title" value={title} onChange={setTitle} />
-            <TextArea label="Description" value={description} onChange={setDescription} rows={3} />
-            <TextField label="Author" value={author} onChange={setAuthor} />
-            <TextField label="Tags (comma-separated)" value={tags} onChange={setTags} />
-            {books && books.length > 0 && (
-              <div className="ink-form-section w-full">
-                <span className="ink-eyebrow">Books on this image</span>
-                <ol className="ink-small" style={{ margin: 0, paddingLeft: 20 }}>
-                  {books.map((b) => (
-                    <li key={b.position}>{b.title}</li>
-                  ))}
-                </ol>
-              </div>
-            )}
-            <Switch label="Hold on screen for a custom time" checked={holdEnabled} onChange={setHoldEnabled} />
-            {holdEnabled && (
-              <>
-                <NumberField label="Hold time (s)" value={duration} onChange={setDuration} min={1} step={1} />
+          {isAdmin ? (
+            <div className="ink-form-section w-full">
+              <span className="ink-eyebrow">Edit</span>
+              <TextField label="Title" value={title} onChange={setTitle} />
+              <TextArea label="Description" value={description} onChange={setDescription} rows={3} />
+              <TextField label="Author" value={author} onChange={setAuthor} />
+              <TextField label="Tags (comma-separated)" value={tags} onChange={setTags} />
+              {booksList}
+              <Switch label="Hold on screen for a custom time" checked={holdEnabled} onChange={setHoldEnabled} />
+              {holdEnabled && (
+                <>
+                  <NumberField label="Hold time (s)" value={duration} onChange={setDuration} min={1} step={1} />
+                  <span className="ink-small" style={{ opacity: 0.7 }}>
+                    Once shown, this image stays up this long before the device rotates — overriding the device
+                    interval for this image only.
+                  </span>
+                </>
+              )}
+              <Switch label="Exclude from rotation" checked={excluded} onChange={setExcluded} />
+              {excluded && (
                 <span className="ink-small" style={{ opacity: 0.7 }}>
-                  Once shown, this image stays up this long before the device rotates — overriding the device
-                  interval for this image only.
+                  Never picked automatically (solo or grid). Manual sends still work.
                 </span>
-              </>
-            )}
-            <Switch label="Exclude from rotation" checked={excluded} onChange={setExcluded} />
-            {excluded && (
-              <span className="ink-small" style={{ opacity: 0.7 }}>
-                Never picked automatically (solo or grid). Manual sends still work.
-              </span>
-            )}
-            <Expansion title="Metadata">
-              <Metadata image={image} />
-            </Expansion>
-          </div>
+              )}
+              <Expansion title="Metadata">
+                <Metadata image={image} />
+              </Expansion>
+            </div>
+          ) : (
+            <div className="ink-form-section w-full">
+              <span className="ink-eyebrow">Details</span>
+              {image.description && <span className="ink-body">{image.description}</span>}
+              {image.author && <span className="ink-small">By {image.author}</span>}
+              {booksList}
+              <Expansion title="Metadata">
+                <Metadata image={image} />
+              </Expansion>
+            </div>
+          )}
         </div>
       </div>
 
@@ -174,15 +188,25 @@ export function ImageDetail() {
         <Button flat onClick={() => navigate('/images')}>
           Back
         </Button>
-        <Button flat danger icon="delete" onClick={() => setConfirmDelete(true)}>
-          Delete
-        </Button>
-        <Button ghost icon="send" onClick={() => setSendOpen(true)}>
+        {isAdmin && (
+          <Button
+            flat
+            danger
+            icon="delete"
+            onClick={() => setConfirmDelete(true)}
+            disabled={deleteMutation.isPending}
+          >
+            Delete
+          </Button>
+        )}
+        <Button ghost={isAdmin} primary={!isAdmin} icon="send" onClick={() => setSendOpen(true)}>
           Send to…
         </Button>
-        <Button primary icon="save" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
-          Save
-        </Button>
+        {isAdmin && (
+          <Button primary icon="save" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
+            Save
+          </Button>
+        )}
       </div>
 
       <ConfirmDialog
@@ -197,7 +221,7 @@ export function ImageDetail() {
         onCancel={() => setConfirmDelete(false)}
       />
 
-      {sendOpen && <SendDialog image={image} onClose={() => setSendOpen(false)} />}
+      {sendOpen && <SendDialog image={image} includeGrids={isAdmin} onClose={() => setSendOpen(false)} />}
     </>
   )
 }
@@ -214,7 +238,6 @@ function Metadata({ image }: { image: Image }) {
     ['Created', formatDatetime(image.created_at)],
     ['Last displayed', formatDatetime(image.last_displayed_at)],
   )
-  const isHttp = image.source_url?.startsWith('http://') || image.source_url?.startsWith('https://')
   return (
     <div className="col w-full gap-2" style={{ padding: '8px 0' }}>
       {rows.map(([label, value]) => (
@@ -230,7 +253,7 @@ function Metadata({ image }: { image: Image }) {
           <span className="ink-small" style={{ width: 110, flexShrink: 0 }}>
             Source URL
           </span>
-          {isHttp ? (
+          {isHttpUrl(image.source_url) ? (
             <a
               href={image.source_url}
               target="_blank"
@@ -255,11 +278,12 @@ function Metadata({ image }: { image: Image }) {
 // devices were silently hidden, which read as "no compatible devices" with
 // no explanation. Grids cover-crop anything that meets the densest member
 // device's recommendation.
-function SendDialog({ image, onClose }: { image: Image; onClose: () => void }) {
+// Grids are an admin endpoint, so guests (includeGrids=false) only get devices.
+function SendDialog({ image, includeGrids, onClose }: { image: Image; includeGrids: boolean; onClose: () => void }) {
   const notify = useNotify()
-  const { data: devices } = useQuery({ queryKey: ['devices'], queryFn: api.listDevices })
-  const { data: profiles } = useQuery({ queryKey: ['device-profiles'], queryFn: api.listDeviceProfiles })
-  const { data: grids } = useQuery({ queryKey: ['grids', 'with-devices'], queryFn: () => api.listGrids(true) })
+  const { data: devices } = useQuery(devicesQuery)
+  const { data: profiles } = useQuery(deviceProfilesQuery)
+  const { data: grids } = useQuery({ ...gridsQuery, enabled: includeGrids })
 
   const imgW = image.original_width
   const imgH = image.original_height

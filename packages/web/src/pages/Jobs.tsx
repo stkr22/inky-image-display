@@ -1,22 +1,173 @@
 // Unified jobs listing — Immich + Gemini + display + bookshelf jobs in one
 // tabbed page, with an overview of upcoming and recent runs at the top. The tab
 // lives in the URL (?tab=gemini|display|books) so deep links and back/forward work.
+//
+// The four job types share one list/row implementation driven by JOB_TABS;
+// a tab entry only says how to fetch, mutate, link and summarise its jobs.
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ConfirmDialog, Dialog } from '../components/Dialog'
 import { Button, Switch, TextField } from '../components/fields'
 import { describeCron, ScheduleEditor, type ScheduleValue } from '../components/ScheduleEditor'
 import { useNotify } from '../components/Toast'
-import { Badge, EmptyNote, PageHeader, Spinner } from '../components/ui'
+import { Badge, EmptyNote, LoadError, PageHeader, Spinner } from '../components/ui'
 import { api, errMessage } from '../lib/api'
 import { formatDatetime, formatRelative } from '../lib/format'
+import { deviceProfilesQuery, gridsQuery } from '../lib/queries'
 import type { CalibreJob, DisplayJob, GeminiJob, SyncJob, SyncJobRun } from '../lib/types'
 
-function scheduleSummary(
-  job: Pick<SyncJob, 'schedule_cron' | 'schedule_timezone' | 'next_run_at'> & { is_active?: boolean },
-): string {
+// Fields every job type shares — all the generic list/row code touches.
+interface BaseJob {
+  id: string
+  name: string
+  is_active: boolean
+  schedule_cron: string | null
+  schedule_timezone: string
+  next_run_at: string | null
+  run_requested_at: string | null
+  updated_at: string
+}
+
+interface SummaryContext {
+  profileName: (id: string) => string
+  gridName: (id: string) => string
+}
+
+type TabKey = 'immich' | 'gemini' | 'display' | 'books'
+
+interface JobTab<J extends BaseJob> {
+  key: TabKey
+  label: string
+  icon: string
+  newLabel: string
+  // Run history is recorded under this job_type.
+  runType: SyncJobRun['job_type']
+  listKey: string[]
+  list: () => Promise<J[]>
+  update: (id: string, body: Record<string, unknown>) => Promise<unknown>
+  runNow: (id: string) => Promise<unknown>
+  remove: (id: string) => Promise<unknown>
+  editPath: (id: string) => string
+  // Absent for display jobs, which are created through a name dialog.
+  newPath?: string
+  summary: (job: J, ctx: SummaryContext) => string
+  deleteMessage: (job: J) => string
+  emptyText: string
+  nameBadge?: (job: J) => ReactNode
+  runNowDisabled?: (job: J) => boolean
+  // Display jobs get a quick schedule dialog on the row.
+  quickSchedule?: boolean
+}
+
+// Erases the job type so the tabs fit one array; safe because each tab's
+// callbacks only ever receive jobs from that same tab's list().
+function defineTab<J extends BaseJob>(tab: JobTab<J>): JobTab<BaseJob> {
+  return tab as unknown as JobTab<BaseJob>
+}
+
+// Summarises the filter so the list answers "which books does this pick?"
+// without opening the form.
+function filterSummary(job: CalibreJob): string {
+  const parts = [...(job.tags ?? []), ...(job.authors ?? []), ...(job.languages ?? [])]
+  return parts.length ? parts.join(', ') : 'whole library'
+}
+
+const JOB_TABS: ReadonlyArray<JobTab<BaseJob>> = [
+  defineTab<SyncJob>({
+    key: 'immich',
+    label: 'Immich',
+    icon: 'sync',
+    newLabel: 'New Immich job',
+    runType: 'immich',
+    listKey: ['sync-jobs'],
+    list: api.listSyncJobs,
+    update: api.updateSyncJob,
+    runNow: api.runSyncJobNow,
+    remove: api.deleteSyncJob,
+    editPath: (id) => `/sync-jobs/${id}`,
+    newPath: '/sync-jobs/new',
+    summary: (job, ctx) =>
+      `${job.strategy} · count ${job.count} · → ${ctx.profileName(job.target_device_profile_id)} · ${job.orientation || 'any orientation'}`,
+    deleteMessage: (job) => `Delete sync job '${job.name}'?`,
+    emptyText: 'No Immich sync jobs yet.',
+  }),
+  defineTab<GeminiJob>({
+    key: 'gemini',
+    label: 'Gemini',
+    icon: 'bolt',
+    newLabel: 'New Gemini job',
+    runType: 'gemini',
+    listKey: ['gemini-jobs'],
+    list: api.listGeminiJobs,
+    update: api.updateGeminiJob,
+    runNow: api.runGeminiJobNow,
+    remove: api.deleteGeminiJob,
+    editPath: (id) => `/gemini-jobs/${id}`,
+    newPath: '/gemini-jobs/new',
+    summary: (job, ctx) => {
+      const total = (job.subjects?.length ?? 0) * (job.images_per_subject || 1)
+      return `${job.orientation || 'portrait'} · ${total} images per run · → ${ctx.profileName(job.target_device_profile_id)}`
+    },
+    deleteMessage: (job) => `Delete Gemini job '${job.name}'?`,
+    emptyText: 'No Gemini jobs yet.',
+  }),
+  defineTab<DisplayJob>({
+    key: 'display',
+    label: 'Display',
+    icon: 'wb_sunny',
+    newLabel: 'New display job',
+    runType: 'display',
+    listKey: ['display-jobs'],
+    list: api.listDisplayJobs,
+    update: api.updateDisplayJob,
+    runNow: api.runDisplayJobNow,
+    remove: api.deleteDisplayJob,
+    editPath: (id) => `/display-jobs/${id}`,
+    summary: (job, ctx) => {
+      const target = job.target_grid_id ? `→ ${ctx.gridName(job.target_grid_id)}` : 'no target grid yet'
+      return `${job.job_type} · ${target} · ${job.slots.length} slot(s) mapped`
+    },
+    deleteMessage: (job) => `Delete display job '${job.name}'? Generated groups stay in the library.`,
+    emptyText: 'No display jobs yet — create one and point it at a grid.',
+    nameBadge: (job) => (!job.target_grid_id ? <Badge tone="warn">No grid</Badge> : null),
+    runNowDisabled: (job) => !job.target_grid_id,
+    quickSchedule: true,
+  }),
+  defineTab<CalibreJob>({
+    key: 'books',
+    label: 'Bookshelf',
+    icon: 'menu_book',
+    newLabel: 'New bookshelf job',
+    runType: 'calibre',
+    listKey: ['calibre-jobs'],
+    list: api.listCalibreJobs,
+    update: api.updateCalibreJob,
+    runNow: api.runCalibreJobNow,
+    remove: api.deleteCalibreJob,
+    editPath: (id) => `/calibre-jobs/${id}`,
+    newPath: '/calibre-jobs/new',
+    summary: (job, ctx) => {
+      const shape =
+        job.mode === 'hero'
+          ? 'hero cover'
+          : job.mode === 'bookcase'
+            ? `bookcase of ${job.shelf_rows}×${job.books_per_shelf}`
+            : `shelf of ${job.books_per_shelf}`
+      return `${shape} · ${job.images_per_run} per run · ${filterSummary(job)} · → ${ctx.profileName(job.target_device_profile_id)}`
+    },
+    deleteMessage: (job) => `Delete bookshelf job '${job.name}'?`,
+    emptyText: 'No bookshelf jobs yet.',
+  }),
+]
+
+// The overview and the lists poll the same cache entries.
+function listQuery(tab: JobTab<BaseJob>) {
+  return { queryKey: tab.listKey, queryFn: tab.list, refetchInterval: 15_000 }
+}
+
+function scheduleSummary(job: BaseJob): string {
   if (job.schedule_cron == null) return 'Manual runs only'
   const cadence = describeCron(job.schedule_cron, job.schedule_timezone)
   if (job.is_active === false) return `${cadence} (paused)`
@@ -39,18 +190,8 @@ export function Jobs() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const requested = searchParams.get('tab')
-  const tab = requested === 'gemini' || requested === 'display' || requested === 'books' ? requested : 'immich'
+  const tab = JOB_TABS.find((entry) => entry.key === requested) ?? JOB_TABS[0]
   const [createDisplayOpen, setCreateDisplayOpen] = useState(false)
-
-  const { data: profiles } = useQuery({ queryKey: ['device-profiles'], queryFn: api.listDeviceProfiles })
-  const profileMap = new Map((profiles ?? []).map((p) => [p.id, p.name]))
-
-  const newLabels = {
-    immich: 'New Immich job',
-    gemini: 'New Gemini job',
-    display: 'New display job',
-    books: 'New bookshelf job',
-  } as const
 
   return (
     <>
@@ -61,13 +202,9 @@ export function Jobs() {
           <Button
             primary
             icon="add"
-            onClick={() => {
-              if (tab === 'display') setCreateDisplayOpen(true)
-              else if (tab === 'books') navigate('/calibre-jobs/new')
-              else navigate(tab === 'gemini' ? '/gemini-jobs/new' : '/sync-jobs/new')
-            }}
+            onClick={() => (tab.newPath ? navigate(tab.newPath) : setCreateDisplayOpen(true))}
           >
-            {newLabels[tab]}
+            {tab.newLabel}
           </Button>
         }
       />
@@ -78,39 +215,20 @@ export function Jobs() {
         className="row w-full gap-2 items-center"
         style={{ borderBottom: '1px solid var(--ink-border)', paddingBottom: 8 }}
       >
-        <Button primary={tab === 'immich'} flat={tab !== 'immich'} icon="sync" onClick={() => setSearchParams({})}>
-          Immich
-        </Button>
-        <Button
-          primary={tab === 'gemini'}
-          flat={tab !== 'gemini'}
-          icon="bolt"
-          onClick={() => setSearchParams({ tab: 'gemini' })}
-        >
-          Gemini
-        </Button>
-        <Button
-          primary={tab === 'display'}
-          flat={tab !== 'display'}
-          icon="wb_sunny"
-          onClick={() => setSearchParams({ tab: 'display' })}
-        >
-          Display
-        </Button>
-        <Button
-          primary={tab === 'books'}
-          flat={tab !== 'books'}
-          icon="menu_book"
-          onClick={() => setSearchParams({ tab: 'books' })}
-        >
-          Bookshelf
-        </Button>
+        {JOB_TABS.map((entry, index) => (
+          <Button
+            key={entry.key}
+            primary={tab.key === entry.key}
+            flat={tab.key !== entry.key}
+            icon={entry.icon}
+            onClick={() => setSearchParams(index === 0 ? {} : { tab: entry.key })}
+          >
+            {entry.label}
+          </Button>
+        ))}
       </div>
 
-      {tab === 'immich' && <ImmichList profileMap={profileMap} />}
-      {tab === 'gemini' && <GeminiList profileMap={profileMap} />}
-      {tab === 'display' && <DisplayList />}
-      {tab === 'books' && <CalibreList profileMap={profileMap} />}
+      <JobList key={tab.key} tab={tab} />
       {createDisplayOpen && <CreateDisplayJobDialog onClose={() => setCreateDisplayOpen(false)} />}
     </>
   )
@@ -131,32 +249,10 @@ function JobsOverview() {
     queryFn: () => api.listSyncRuns({ limit: 60 }),
     refetchInterval: 10_000,
   })
-  const { data: syncJobs } = useQuery({ queryKey: ['sync-jobs'], queryFn: api.listSyncJobs, refetchInterval: 15_000 })
-  const { data: geminiJobs } = useQuery({
-    queryKey: ['gemini-jobs'],
-    queryFn: api.listGeminiJobs,
-    refetchInterval: 15_000,
-  })
-  const { data: displayJobs } = useQuery({
-    queryKey: ['display-jobs'],
-    queryFn: api.listDisplayJobs,
-    refetchInterval: 15_000,
-  })
-  const { data: calibreJobs } = useQuery({
-    queryKey: ['calibre-jobs'],
-    queryFn: api.listCalibreJobs,
-    refetchInterval: 15_000,
-  })
-
-  const allJobs: Array<{
-    type: 'immich' | 'gemini' | 'display' | 'calibre'
-    job: SyncJob | GeminiJob | DisplayJob | CalibreJob
-  }> = [
-    ...(syncJobs ?? []).map((job) => ({ type: 'immich' as const, job })),
-    ...(geminiJobs ?? []).map((job) => ({ type: 'gemini' as const, job })),
-    ...(displayJobs ?? []).map((job) => ({ type: 'display' as const, job })),
-    ...(calibreJobs ?? []).map((job) => ({ type: 'calibre' as const, job })),
-  ]
+  const lists = useQueries({ queries: JOB_TABS.map(listQuery) })
+  const allJobs = JOB_TABS.flatMap((tab, index) =>
+    (lists[index].data ?? []).map((job) => ({ type: tab.runType, job })),
+  )
 
   const running = (runs ?? []).filter((run) => run.status === 'running')
   const runningJobIds = new Set(running.map((run) => run.job_id))
@@ -240,7 +336,7 @@ function JobsOverview() {
 
 // Runs per job (newest first), from one bulk fetch — the list is pruned
 // server-side to ~20 runs per job, so 200 rows covers every job's history.
-function useRunsByJob(jobType: 'immich' | 'gemini' | 'display' | 'calibre'): Map<string, SyncJobRun[]> {
+function useRunsByJob(jobType: SyncJobRun['job_type']): Map<string, SyncJobRun[]> {
   const { data: runs } = useQuery({
     queryKey: ['sync-runs', jobType],
     queryFn: () => api.listSyncRuns({ job_type: jobType, limit: 200 }),
@@ -255,235 +351,36 @@ function useRunsByJob(jobType: 'immich' | 'gemini' | 'display' | 'calibre'): Map
   return byJob
 }
 
-function ImmichList({ profileMap }: { profileMap: Map<string, string> }) {
-  const { data: jobs, isPending } = useQuery({
-    queryKey: ['sync-jobs'],
-    queryFn: api.listSyncJobs,
-    refetchInterval: 15_000,
-  })
-  const runsByJob = useRunsByJob('immich')
-  if (isPending) return <Spinner />
-  if (!jobs || jobs.length === 0) return <EmptyNote>No Immich sync jobs yet.</EmptyNote>
-  return (
-    <div className="col w-full gap-2">
-      {jobs.map((job) => (
-        <ImmichRow key={job.id} job={job} profileMap={profileMap} runs={runsByJob.get(job.id) ?? []} />
-      ))}
-    </div>
-  )
-}
+function JobList({ tab }: { tab: JobTab<BaseJob> }) {
+  const { data: jobs, isPending, isError, error, refetch } = useQuery(listQuery(tab))
+  const { data: profiles } = useQuery(deviceProfilesQuery)
+  // Only display jobs name a grid; skip the request on the other tabs.
+  const { data: grids } = useQuery({ ...gridsQuery, enabled: tab.key === 'display' })
+  const runsByJob = useRunsByJob(tab.runType)
 
-function ImmichRow({
-  job,
-  profileMap,
-  runs,
-}: {
-  job: SyncJob
-  profileMap: Map<string, string>
-  runs: SyncJobRun[]
-}) {
-  const navigate = useNavigate()
-  const targetName = profileMap.get(job.target_device_profile_id) ?? job.target_device_profile_id
-  return (
-    <JobRow
-      name={job.name}
-      summary={`${job.strategy} · count ${job.count} · → ${targetName} · ${job.orientation || 'any orientation'}`}
-      schedule={scheduleSummary(job)}
-      updatedAt={job.updated_at}
-      isActive={job.is_active}
-      runs={runs}
-      runRequestedAt={job.run_requested_at}
-      nextRunAt={job.next_run_at}
-      queryKey={['sync-jobs']}
-      onToggle={(value) => api.updateSyncJob(job.id, { is_active: value })}
-      onRunNow={() => api.runSyncJobNow(job.id)}
-      onEdit={() => navigate(`/sync-jobs/${job.id}`)}
-      onDelete={() => api.deleteSyncJob(job.id)}
-      deleteMessage={`Delete sync job '${job.name}'?`}
-    />
-  )
-}
-
-function GeminiList({ profileMap }: { profileMap: Map<string, string> }) {
-  const { data: jobs, isPending } = useQuery({
-    queryKey: ['gemini-jobs'],
-    queryFn: api.listGeminiJobs,
-    refetchInterval: 15_000,
-  })
-  const runsByJob = useRunsByJob('gemini')
-  if (isPending) return <Spinner />
-  if (!jobs || jobs.length === 0) return <EmptyNote>No Gemini jobs yet.</EmptyNote>
-  return (
-    <div className="col w-full gap-2">
-      {jobs.map((job) => (
-        <GeminiRow key={job.id} job={job} profileMap={profileMap} runs={runsByJob.get(job.id) ?? []} />
-      ))}
-    </div>
-  )
-}
-
-function GeminiRow({
-  job,
-  profileMap,
-  runs,
-}: {
-  job: GeminiJob
-  profileMap: Map<string, string>
-  runs: SyncJobRun[]
-}) {
-  const navigate = useNavigate()
-  const targetName = profileMap.get(job.target_device_profile_id) ?? job.target_device_profile_id
-  const total = (job.subjects?.length ?? 0) * (job.images_per_subject || 1)
-  return (
-    <JobRow
-      name={job.name}
-      summary={`${job.orientation || 'portrait'} · ${total} images per run · → ${targetName}`}
-      schedule={scheduleSummary(job)}
-      updatedAt={job.updated_at}
-      isActive={job.is_active}
-      runs={runs}
-      runRequestedAt={job.run_requested_at}
-      nextRunAt={job.next_run_at}
-      queryKey={['gemini-jobs']}
-      onToggle={(value) => api.updateGeminiJob(job.id, { is_active: value })}
-      onRunNow={() => api.runGeminiJobNow(job.id)}
-      onEdit={() => navigate(`/gemini-jobs/${job.id}`)}
-      onDelete={() => api.deleteGeminiJob(job.id)}
-      deleteMessage={`Delete Gemini job '${job.name}'?`}
-    />
-  )
-}
-
-// --- Bookshelf jobs (generated from a Calibre library) --------------------------
-
-function CalibreList({ profileMap }: { profileMap: Map<string, string> }) {
-  const { data: jobs, isPending } = useQuery({
-    queryKey: ['calibre-jobs'],
-    queryFn: api.listCalibreJobs,
-    refetchInterval: 15_000,
-  })
-  const runsByJob = useRunsByJob('calibre')
-  if (isPending) return <Spinner />
-  if (!jobs || jobs.length === 0) return <EmptyNote>No bookshelf jobs yet.</EmptyNote>
-  return (
-    <div className="col w-full gap-2">
-      {jobs.map((job) => (
-        <CalibreRow key={job.id} job={job} profileMap={profileMap} runs={runsByJob.get(job.id) ?? []} />
-      ))}
-    </div>
-  )
-}
-
-// Summarises the filter so the list answers "which books does this pick?"
-// without opening the form.
-function filterSummary(job: CalibreJob): string {
-  const parts = [...(job.tags ?? []), ...(job.authors ?? []), ...(job.languages ?? [])]
-  return parts.length ? parts.join(', ') : 'whole library'
-}
-
-function CalibreRow({
-  job,
-  profileMap,
-  runs,
-}: {
-  job: CalibreJob
-  profileMap: Map<string, string>
-  runs: SyncJobRun[]
-}) {
-  const navigate = useNavigate()
-  const targetName = profileMap.get(job.target_device_profile_id) ?? job.target_device_profile_id
-  const shape =
-    job.mode === 'hero'
-      ? 'hero cover'
-      : job.mode === 'bookcase'
-        ? `bookcase of ${job.shelf_rows}×${job.books_per_shelf}`
-        : `shelf of ${job.books_per_shelf}`
-  return (
-    <JobRow
-      name={job.name}
-      summary={`${shape} · ${job.images_per_run} per run · ${filterSummary(job)} · → ${targetName}`}
-      schedule={scheduleSummary(job)}
-      updatedAt={job.updated_at}
-      isActive={job.is_active}
-      runs={runs}
-      runRequestedAt={job.run_requested_at}
-      nextRunAt={job.next_run_at}
-      queryKey={['calibre-jobs']}
-      onToggle={(value) => api.updateCalibreJob(job.id, { is_active: value })}
-      onRunNow={() => api.runCalibreJobNow(job.id)}
-      onEdit={() => navigate(`/calibre-jobs/${job.id}`)}
-      onDelete={() => api.deleteCalibreJob(job.id)}
-      deleteMessage={`Delete bookshelf job '${job.name}'?`}
-    />
-  )
-}
-
-// --- Display jobs (generated grid content) --------------------------------------
-
-function DisplayList() {
-  const { data: jobs, isPending } = useQuery({
-    queryKey: ['display-jobs'],
-    queryFn: api.listDisplayJobs,
-    refetchInterval: 15_000,
-  })
-  const { data: grids } = useQuery({ queryKey: ['grids'], queryFn: () => api.listGrids() })
-  const runsByJob = useRunsByJob('display')
-  const gridName = new Map((grids ?? []).map((g) => [g.id, g.name]))
-  if (isPending) return <Spinner />
-  if (!jobs || jobs.length === 0) {
-    return <EmptyNote>No display jobs yet — create one and point it at a grid.</EmptyNote>
+  const profileNames = new Map((profiles ?? []).map((p) => [p.id, p.name]))
+  const gridNames = new Map((grids ?? []).map((g) => [g.id, g.name]))
+  const ctx: SummaryContext = {
+    profileName: (id) => profileNames.get(id) ?? id,
+    gridName: (id) => gridNames.get(id) ?? 'grid',
   }
+
+  if (isPending) return <Spinner />
+  // Without this a failed fetch read as "No … jobs yet".
+  if (isError) return <LoadError what={`${tab.label} jobs`} error={error} onRetry={() => refetch()} />
+  if (jobs.length === 0) return <EmptyNote>{tab.emptyText}</EmptyNote>
   return (
     <div className="col w-full gap-2">
       {jobs.map((job) => (
-        <DisplayJobRow key={job.id} job={job} gridName={gridName} runs={runsByJob.get(job.id) ?? []} />
+        <JobRow key={job.id} tab={tab} job={job} summary={tab.summary(job, ctx)} runs={runsByJob.get(job.id) ?? []} />
       ))}
     </div>
-  )
-}
-
-function DisplayJobRow({
-  job,
-  gridName,
-  runs,
-}: {
-  job: DisplayJob
-  gridName: Map<string, string>
-  runs: SyncJobRun[]
-}) {
-  const navigate = useNavigate()
-  const [scheduleOpen, setScheduleOpen] = useState(false)
-  const target = job.target_grid_id ? `→ ${gridName.get(job.target_grid_id) ?? 'grid'}` : 'no target grid yet'
-
-  return (
-    <>
-      <JobRow
-        name={job.name}
-        nameBadge={!job.target_grid_id ? <Badge tone="warn">No grid</Badge> : null}
-        summary={`${job.job_type} · ${target} · ${job.slots.length} slot(s) mapped`}
-        schedule={scheduleSummary(job)}
-        updatedAt={job.updated_at}
-        isActive={job.is_active}
-        runs={runs}
-        runRequestedAt={job.run_requested_at}
-        nextRunAt={job.next_run_at}
-        queryKey={['display-jobs']}
-        onToggle={(value) => api.updateDisplayJob(job.id, { is_active: value })}
-        onRunNow={() => api.runDisplayJobNow(job.id)}
-        runNowDisabled={!job.target_grid_id}
-        onSchedule={() => setScheduleOpen(true)}
-        onEdit={() => navigate(`/display-jobs/${job.id}`)}
-        onDelete={() => api.deleteDisplayJob(job.id)}
-        deleteMessage={`Delete display job '${job.name}'? Generated groups stay in the library.`}
-      />
-      {scheduleOpen && <DisplayJobScheduleDialog job={job} onClose={() => setScheduleOpen(false)} />}
-    </>
   )
 }
 
 // Quick cadence editor straight from the job row — the full form still
 // offers it, but "how often does this run?" shouldn't require a page hop.
-function DisplayJobScheduleDialog({ job, onClose }: { job: DisplayJob; onClose: () => void }) {
+function DisplayJobScheduleDialog({ job, listKey, onClose }: { job: BaseJob; listKey: string[]; onClose: () => void }) {
   const notify = useNotify()
   const queryClient = useQueryClient()
   const [schedule, setSchedule] = useState<ScheduleValue>({
@@ -491,20 +388,20 @@ function DisplayJobScheduleDialog({ job, onClose }: { job: DisplayJob; onClose: 
     timezone: job.schedule_timezone || 'UTC',
   })
 
-  const save = async () => {
-    try {
-      await api.updateDisplayJob(job.id, {
+  const mutation = useMutation({
+    mutationFn: () =>
+      api.updateDisplayJob(job.id, {
         schedule_cron: schedule.cron,
         schedule_timezone: schedule.timezone || 'UTC',
         clear_schedule: schedule.cron == null,
-      })
+      }),
+    onSuccess: () => {
       notify('Schedule saved.', 'positive')
-      queryClient.invalidateQueries({ queryKey: ['display-jobs'] })
+      queryClient.invalidateQueries({ queryKey: listKey })
       onClose()
-    } catch (err) {
-      notify(`Save failed: ${errMessage(err)}`, 'negative')
-    }
-  }
+    },
+    onError: (err) => notify(`Save failed: ${errMessage(err)}`, 'negative'),
+  })
 
   return (
     <Dialog open onClose={onClose}>
@@ -517,7 +414,7 @@ function DisplayJobScheduleDialog({ job, onClose }: { job: DisplayJob; onClose: 
         <Button flat onClick={onClose}>
           Cancel
         </Button>
-        <Button primary onClick={save}>
+        <Button primary onClick={() => mutation.mutate()} disabled={mutation.isPending}>
           Save
         </Button>
       </div>
@@ -531,17 +428,16 @@ function CreateDisplayJobDialog({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient()
   const [name, setName] = useState('Message of the day')
 
-  const create = async () => {
-    try {
-      const job = await api.createDisplayJob({ name })
+  const mutation = useMutation({
+    mutationFn: () => api.createDisplayJob({ name }),
+    onSuccess: (job) => {
       queryClient.invalidateQueries({ queryKey: ['display-jobs'] })
       notify('Display job created — pick its target grid next.', 'positive')
       navigate(`/display-jobs/${job.id}`)
       onClose()
-    } catch (err) {
-      notify(`Create failed: ${errMessage(err)}`, 'negative')
-    }
-  }
+    },
+    onError: (err) => notify(`Create failed: ${errMessage(err)}`, 'negative'),
+  })
 
   return (
     <Dialog open onClose={onClose}>
@@ -551,7 +447,7 @@ function CreateDisplayJobDialog({ onClose }: { onClose: () => void }) {
         <Button flat onClick={onClose}>
           Cancel
         </Button>
-        <Button primary onClick={create} disabled={!name}>
+        <Button primary onClick={() => mutation.mutate()} disabled={!name || mutation.isPending}>
           Create
         </Button>
       </div>
@@ -569,83 +465,62 @@ function lastRunSummary(run: SyncJobRun): string {
 }
 
 function JobRow({
-  name,
-  nameBadge,
+  tab,
+  job,
   summary,
-  schedule,
-  updatedAt,
-  isActive,
   runs,
-  runRequestedAt,
-  nextRunAt,
-  queryKey,
-  onToggle,
-  onRunNow,
-  runNowDisabled,
-  onSchedule,
-  onEdit,
-  onDelete,
-  deleteMessage,
 }: {
-  name: string
-  nameBadge?: React.ReactNode
+  tab: JobTab<BaseJob>
+  job: BaseJob
   summary: string
-  schedule: string
-  updatedAt: string
-  isActive: boolean
   runs: SyncJobRun[]
-  runRequestedAt: string | null
-  nextRunAt: string | null
-  queryKey: string[]
-  onToggle: (value: boolean) => Promise<unknown>
-  onRunNow: () => Promise<unknown>
-  runNowDisabled?: boolean
-  onSchedule?: () => void
-  onEdit: () => void
-  onDelete: () => Promise<unknown>
-  deleteMessage: string
 }) {
+  const navigate = useNavigate()
   const notify = useNotify()
   const queryClient = useQueryClient()
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
-  // Optimistic toggle: flip immediately, roll back on error.
-  const [optimisticActive, setOptimisticActive] = useState<boolean | null>(null)
-  const shownActive = optimisticActive ?? isActive
+  const [scheduleOpen, setScheduleOpen] = useState(false)
   const lastRun = runs[0] ?? null
   const inProgress = lastRun?.status === 'running'
-  const waitingForWorker = !inProgress && isDue({ run_requested_at: runRequestedAt, is_active: isActive, next_run_at: nextRunAt })
+  const waitingForWorker = !inProgress && isDue(job)
+  // Returning the invalidation keeps each mutation pending until the list
+  // has refetched, so derived UI (the toggle below) never flashes back to
+  // the stale server value in between.
+  const refreshList = () => queryClient.invalidateQueries({ queryKey: tab.listKey })
 
   const toggleMutation = useMutation({
-    mutationFn: onToggle,
+    mutationFn: (value: boolean) => tab.update(job.id, { is_active: value }),
     onSuccess: () => {
       notify('Updated', 'positive')
-      queryClient.invalidateQueries({ queryKey })
+      return refreshList()
     },
-    onError: (err) => {
-      setOptimisticActive(null)
-      notify(`Toggle failed: ${errMessage(err)}`, 'negative')
-    },
+    onError: (err) => notify(`Toggle failed: ${errMessage(err)}`, 'negative'),
   })
+  // Optimistic toggle derived from the mutation itself: shows the requested
+  // value while in flight and falls back to the server value afterwards, so
+  // there is no local copy to go stale.
+  const shownActive = toggleMutation.isPending ? toggleMutation.variables : job.is_active
 
   const deleteMutation = useMutation({
-    mutationFn: onDelete,
+    mutationFn: () => tab.remove(job.id),
     onSuccess: () => {
       notify('Deleted', 'positive')
-      queryClient.invalidateQueries({ queryKey })
+      return refreshList()
     },
     onError: (err) => notify(`Delete failed: ${errMessage(err)}`, 'negative'),
   })
 
   const runNowMutation = useMutation({
-    mutationFn: onRunNow,
+    mutationFn: () => tab.runNow(job.id),
     onSuccess: () => {
       notify('Run queued — the worker is being woken up now', 'positive')
-      queryClient.invalidateQueries({ queryKey })
+      return refreshList()
     },
     onError: (err) => notify(`Run request failed: ${errMessage(err)}`, 'negative'),
   })
-  const runQueued = runRequestedAt != null
+  const runQueued = job.run_requested_at != null
+  const name = job.name
 
   return (
     <div className="bento-tile w-full" style={{ padding: '16px 20px', gap: 12 }}>
@@ -653,7 +528,7 @@ function JobRow({
         <div className="col flex-1 gap-1">
           <div className="row items-center gap-2 wrap">
             <h3 className="ink-h3 truncate">{name}</h3>
-            {nameBadge}
+            {tab.nameBadge?.(job)}
             {inProgress && (
               <span className="row items-center gap-2">
                 <InlineSpinner />
@@ -664,7 +539,7 @@ function JobRow({
             {lastRun?.status === 'error' && <Badge tone="danger">Last run failed</Badge>}
           </div>
           <span className="ink-small">{summary}</span>
-          <span className="ink-small">{schedule}</span>
+          <span className="ink-small">{scheduleSummary(job)}</span>
           {lastRun && lastRun.status !== 'running' ? (
             <span
               className="ink-small"
@@ -677,7 +552,7 @@ function JobRow({
               No runs recorded yet
             </span>
           ) : null}
-          <span className="ink-small">Updated {formatDatetime(updatedAt)}</span>
+          <span className="ink-small">Updated {formatDatetime(job.updated_at)}</span>
         </div>
         <Button
           flat
@@ -687,24 +562,32 @@ function JobRow({
           disabled={runs.length === 0}
           onClick={() => setHistoryOpen((open) => !open)}
         />
-        {onSchedule && <Button flat round icon="schedule" title="Edit schedule" onClick={onSchedule} />}
+        {tab.quickSchedule && (
+          <Button flat round icon="schedule" title="Edit schedule" onClick={() => setScheduleOpen(true)} />
+        )}
         <Button
           flat
           round
           icon="play_arrow"
           title={runQueued ? 'Run already queued' : 'Run now'}
-          disabled={runQueued || runNowDisabled || runNowMutation.isPending}
+          disabled={runQueued || tab.runNowDisabled?.(job) || runNowMutation.isPending}
           onClick={() => runNowMutation.mutate()}
         />
         <Switch
           checked={shownActive}
-          onChange={(value) => {
-            setOptimisticActive(value)
-            toggleMutation.mutate(value)
-          }}
+          disabled={toggleMutation.isPending}
+          onChange={(value) => toggleMutation.mutate(value)}
         />
-        <Button flat round icon="edit" title="Edit" onClick={onEdit} />
-        <Button flat danger round icon="delete" title="Delete" onClick={() => setConfirmDelete(true)} />
+        <Button flat round icon="edit" title="Edit" onClick={() => navigate(tab.editPath(job.id))} />
+        <Button
+          flat
+          danger
+          round
+          icon="delete"
+          title="Delete"
+          disabled={deleteMutation.isPending}
+          onClick={() => setConfirmDelete(true)}
+        />
       </div>
       {historyOpen && (
         <div className="col w-full gap-1" style={{ borderTop: '1px solid var(--ink-border)', paddingTop: 10 }}>
@@ -731,7 +614,7 @@ function JobRow({
       )}
       <ConfirmDialog
         open={confirmDelete}
-        message={deleteMessage}
+        message={tab.deleteMessage(job)}
         destructive
         confirmLabel="Delete"
         onConfirm={() => {
@@ -740,6 +623,9 @@ function JobRow({
         }}
         onCancel={() => setConfirmDelete(false)}
       />
+      {scheduleOpen && (
+        <DisplayJobScheduleDialog job={job} listKey={tab.listKey} onClose={() => setScheduleOpen(false)} />
+      )}
     </div>
   )
 }

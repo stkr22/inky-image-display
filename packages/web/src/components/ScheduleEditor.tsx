@@ -4,6 +4,7 @@
 // for power users, and a live "next runs" preview from the API so
 // operators see exactly when the schedule will fire before saving.
 
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { api, errMessage } from '../lib/api'
 import { formatDatetime } from '../lib/format'
@@ -96,25 +97,33 @@ export function ScheduleEditor({
   // happens to match a preset shape.
   const [forceCustom, setForceCustom] = useState(false)
   const mode: Mode = forceCustom && value.cron != null ? 'custom' : parseMode(value.cron)
-  const [preview, setPreview] = useState<{ runs: string[]; error: string } | null>(null)
-
+  // Debounced so typing in the custom field doesn't spam the API; keying the
+  // query on the debounced pair means a slow response for an older
+  // expression can never overwrite the preview of the current one.
+  const [debounced, setDebounced] = useState({ cron: value.cron, timezone: value.timezone })
   useEffect(() => {
-    if (value.cron == null) {
-      setPreview(null)
-      return
-    }
-    // Debounced preview so typing in the custom field doesn't spam the API.
-    const cron = value.cron
-    const handle = setTimeout(async () => {
-      try {
-        const result = await api.cronPreview(cron, value.timezone)
-        setPreview({ runs: result.next_runs, error: '' })
-      } catch (err) {
-        setPreview({ runs: [], error: errMessage(err) })
-      }
-    }, 400)
+    const handle = setTimeout(() => setDebounced({ cron: value.cron, timezone: value.timezone }), 400)
     return () => clearTimeout(handle)
   }, [value.cron, value.timezone])
+  const previewQuery = useQuery({
+    queryKey: ['cron-preview', debounced.cron, debounced.timezone],
+    queryFn: () => api.cronPreview(debounced.cron!, debounced.timezone),
+    enabled: debounced.cron != null && value.cron != null,
+    staleTime: 60_000,
+    retry: false,
+    // Keep the last preview on screen while the next one loads (no flicker).
+    placeholderData: keepPreviousData,
+    // An invalid expression is shown inline below, not as a global toast.
+    meta: { silentError: true },
+  })
+  const preview =
+    value.cron == null || debounced.cron == null
+      ? null
+      : previewQuery.isError
+        ? { runs: [], error: errMessage(previewQuery.error) }
+        : previewQuery.data
+          ? { runs: previewQuery.data.next_runs, error: '' }
+          : null
 
   const selectValue = mode === 'fixed' ? value.cron! : mode
   const selectSchedule = (selected: string) => {

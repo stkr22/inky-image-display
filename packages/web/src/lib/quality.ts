@@ -5,8 +5,8 @@ import type { Device, DeviceProfile, Grid } from './types'
 
 // Thresholds for the source-resolution traffic light. `ratio` is the image's
 // effective px/cm divided by the densest member device's px/cm.
-export const RES_RATIO_SHARP = 1.0
-export const RES_RATIO_SOFT = 0.7
+const RES_RATIO_SHARP = 1.0
+const RES_RATIO_SOFT = 0.7
 // Aspect drift below this fraction is reported as "no crop".
 export const CROP_NEGLIGIBLE = 0.005
 

@@ -1,69 +1,63 @@
 // Gemini batch-job create/edit form.
 
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { Button, ChipsInput, NumberField, SelectField, Switch, TextField } from '../components/fields'
+import { useState } from 'react'
+import { useParams } from 'react-router-dom'
+import { ChipsInput, NumberField, SelectField, Switch, TextField } from '../components/fields'
+import { JobFormLoader, JobFormShell, useJobSave } from '../components/JobFormShell'
 import { ScheduleEditor, type ScheduleValue } from '../components/ScheduleEditor'
-import { useNotify } from '../components/Toast'
-import { BackLink, PageHeader, Spinner } from '../components/ui'
-import { api, errMessage } from '../lib/api'
+import { api } from '../lib/api'
+import { useDefaultChoice } from '../lib/useDefaultChoice'
+import { deviceProfilesQuery, promptPresetsQuery } from '../lib/queries'
+import type { GeminiJob } from '../lib/types'
+
+const BACK_TO = '/jobs?tab=gemini'
 
 export function GeminiJobForm() {
   const { jobId } = useParams<{ jobId: string }>()
-  const navigate = useNavigate()
-  const notify = useNotify()
-  const isEdit = Boolean(jobId)
+  return (
+    <JobFormLoader jobId={jobId} queryKey="gemini-job" fetchJob={api.getGeminiJob} backTo={BACK_TO} what="Gemini job">
+      {(job) => <GeminiJobFields job={job} />}
+    </JobFormLoader>
+  )
+}
 
-  const { data: profiles } = useQuery({ queryKey: ['device-profiles'], queryFn: api.listDeviceProfiles })
-  const { data: presets } = useQuery({ queryKey: ['prompt-presets'], queryFn: api.listPromptPresets })
-  const { data: job, isPending: jobPending } = useQuery({
-    queryKey: ['gemini-job', jobId],
-    queryFn: () => api.getGeminiJob(jobId!),
-    enabled: isEdit,
+function GeminiJobFields({ job }: { job: GeminiJob | undefined }) {
+  const isEdit = job !== undefined
+  const { data: profiles } = useQuery(deviceProfilesQuery)
+  const { data: presets } = useQuery(promptPresetsQuery)
+
+  const [name, setName] = useState(job?.name ?? '')
+  const [targetProfile, setTargetProfile] = useState(job?.target_device_profile_id ?? '')
+  const [presetId, setPresetId] = useState(job?.prompt_preset_id ?? '')
+  const [orientation, setOrientation] = useState(job?.orientation || 'portrait')
+  const [imagesPerSubject, setImagesPerSubject] = useState<number | ''>(job?.images_per_subject || 1)
+  const [retentionDays, setRetentionDays] = useState<number | ''>(
+    typeof job?.retention_days === 'number' ? job.retention_days : '',
+  )
+  const [subjects, setSubjects] = useState<string[]>(job?.subjects ?? [])
+  const [active, setActive] = useState(job?.is_active ?? true)
+  const [schedule, setSchedule] = useState<ScheduleValue>(
+    job ? { cron: job.schedule_cron, timezone: job.schedule_timezone || 'UTC' } : { cron: '0 0 * * *', timezone: 'UTC' },
+  )
+
+  useDefaultChoice(!isEdit, targetProfile, setTargetProfile, profiles)
+  useDefaultChoice(!isEdit, presetId, setPresetId, presets)
+  const { error, saving, fail, submit } = useJobSave({
+    jobId: job?.id,
+    create: api.createGeminiJob,
+    update: api.updateGeminiJob,
+    listKey: ['gemini-jobs'],
+    detailKey: 'gemini-job',
+    backTo: BACK_TO,
   })
 
-  const [name, setName] = useState('')
-  const [targetProfile, setTargetProfile] = useState('')
-  const [presetId, setPresetId] = useState('')
-  const [orientation, setOrientation] = useState('portrait')
-  const [imagesPerSubject, setImagesPerSubject] = useState<number | ''>(1)
-  const [retentionDays, setRetentionDays] = useState<number | ''>('')
-  const [subjects, setSubjects] = useState<string[]>([])
-  const [active, setActive] = useState(true)
-  const [schedule, setSchedule] = useState<ScheduleValue>({ cron: '0 0 * * *', timezone: 'UTC' })
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    if (!job) return
-    setName(job.name)
-    setTargetProfile(job.target_device_profile_id)
-    setPresetId(job.prompt_preset_id)
-    setOrientation(job.orientation || 'portrait')
-    setImagesPerSubject(job.images_per_subject || 1)
-    setRetentionDays(typeof job.retention_days === 'number' ? job.retention_days : '')
-    setSubjects(job.subjects ?? [])
-    setActive(job.is_active)
-    setSchedule({ cron: job.schedule_cron, timezone: job.schedule_timezone || 'UTC' })
-  }, [job])
-
-  useEffect(() => {
-    if (!isEdit && !targetProfile && profiles?.length) setTargetProfile(profiles[0].id)
-  }, [profiles, isEdit, targetProfile])
-  useEffect(() => {
-    if (!isEdit && !presetId && presets?.length) {
-      setPresetId(presets.find((p) => p.is_default)?.id ?? presets[0].id)
-    }
-  }, [presets, isEdit, presetId])
-
-  if (isEdit && jobPending) return <Spinner />
-
-  const save = async () => {
-    if (!name) return setError('Name is required')
-    if (!targetProfile) return setError('Target device profile is required')
-    if (!presetId) return setError('Preset is required')
+  const save = () => {
+    if (!name) return fail('Name is required')
+    if (!targetProfile) return fail('Target device profile is required')
+    if (!presetId) return fail('Preset is required')
     const cleanSubjects = subjects.map((s) => s.trim()).filter(Boolean)
-    if (cleanSubjects.length === 0) return setError('At least one subject is required')
+    if (cleanSubjects.length === 0) return fail('At least one subject is required')
     const body = {
       name,
       is_active: active,
@@ -76,27 +70,18 @@ export function GeminiJobForm() {
       images_per_subject: Number(imagesPerSubject) || 1,
       retention_days: retentionDays === '' ? null : Number(retentionDays),
     }
-    try {
-      if (isEdit) await api.updateGeminiJob(jobId!, body)
-      else await api.createGeminiJob(body)
-    } catch (err) {
-      setError(`Save failed: ${errMessage(err)}`)
-      return
-    }
-    notify('Saved', 'positive')
-    navigate('/jobs?tab=gemini')
+    submit(body)
   }
 
   return (
-    <>
-      <div className="row w-full items-center gap-2">
-        <BackLink to="/jobs?tab=gemini" title="Back to jobs" />
-        <PageHeader
-          eyebrow={isEdit ? 'AI generation / edit' : 'AI generation / new'}
-          title={isEdit ? 'Edit Gemini job' : 'New Gemini job'}
-        />
-      </div>
-
+    <JobFormShell
+      backTo={BACK_TO}
+      eyebrow={isEdit ? 'AI generation / edit' : 'AI generation / new'}
+      title={isEdit ? 'Edit Gemini job' : 'New Gemini job'}
+      error={error}
+      saving={saving}
+      onSave={save}
+    >
       <div className="bento-tile w-full" style={{ padding: 24 }}>
         <div className="ink-form-section w-full">
           <TextField label="Name" value={name} onChange={setName} />
@@ -155,17 +140,6 @@ export function GeminiJobForm() {
           />
         </div>
       </div>
-
-      <span className="ink-form-error">{error}</span>
-
-      <div className="ink-action-bar">
-        <Button flat onClick={() => navigate('/jobs?tab=gemini')}>
-          Cancel
-        </Button>
-        <Button primary icon="save" onClick={save}>
-          Save
-        </Button>
-      </div>
-    </>
+    </JobFormShell>
   )
 }
