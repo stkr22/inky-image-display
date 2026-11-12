@@ -217,13 +217,28 @@ Required only when running the `calibre` subcommand.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `CALIBRE_BASE_URL` | Yes | — | Calibre-Web base URL serving the OPDS catalogue |
+| `CALIBRE_BASE_URL` | Yes | — | Base URL of the Calibre server serving the OPDS catalogue |
 | `CALIBRE_TIMEOUT_SECONDS` | No | `30` | HTTP request timeout |
 | `CALIBRE_VERIFY_SSL` | No | `true` | Verify SSL certificates |
 | `CALIBRE_CACHE_TTL_SECONDS` | No | `21600` | How long the paged catalogue stays cached (6h). Bounds how soon a newly added book can appear. |
+| `CALIBRE_USERNAME` | No | — | HTTP basic-auth user for servers with Anonymous Browsing off (e.g. Calibre-Web Automated). Must be set together with `CALIBRE_PASSWORD`. |
+| `CALIBRE_PASSWORD` | No | — | Password for the above; never logged |
+
+Credentials are sent on every OPDS request (catalogue pages and covers) to
+`CALIBRE_BASE_URL` only, and redirects are never followed, so they cannot leak
+to another host. A 401/403 fails the job with "Calibre OPDS rejected the
+credentials" rather than reading as an empty library. Use a local account with
+download permission only; OIDC users have no password to give. Without these
+variables requests stay anonymous. Basic auth is cleartext, so prefer an
+in-cluster `http://` URL or `https://`.
+
+Only standard Atom/OPDS entry fields are read (title, authors, publisher, language,
+categories, summary, cover link), so any Calibre OPDS server works. Series and
+rating are deliberately not filters: Calibre-Web Automated does not put them in
+its entries, and a filter that can never match selects nothing.
 
 The whole library is paged in over `/opds/books/letter/00` and cached, then
-filtered and sampled locally. Calibre-Web's own random feed takes no
+filtered and sampled locally. The server's own random feed takes no
 parameters, so doing it server-side would mean giving up filtering entirely.
 Generated images also need `GEMINI_API_KEY` and the S3 writer credentials.
 
@@ -365,23 +380,24 @@ REST: `GET/POST /api/genai/jobs`, `GET/PUT/DELETE /api/genai/jobs/{id}`.
 
 ### Calibre bookshelf jobs (`calibre_sync_jobs`)
 
-Generates bookshelf images from a Calibre-Web library. One job runs exactly one
-`mode`, so a shelf job and a hero job are separate rows with independent
+Generates bookshelf images from a Calibre library over OPDS. One job runs exactly one
+`mode`, so a shelf job, a bookcase job and a hero job are separate rows with independent
 schedules and filters.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | str | Unique job name |
 | `is_active` | bool | Enable/disable |
-| `mode` | str | `shelf` (a row of spines, landscape) or `hero` (one book's cover, portrait). Orientation follows from this. |
+| `mode` | str | `shelf` (a row of spines, landscape), `bookcase` (several stacked shelves, portrait) or `hero` (one book's cover, portrait). Orientation follows from this. |
 | `target_device_profile_id` | UUID | Target device profile — provides panel dimensions |
-| `prompt_preset_id` | UUID | Preset used to render the prompt and pick the model. Migration 0028 seeds `bookshelf_shelf` and `bookshelf_hero`. |
-| `tags`, `languages`, `series`, `authors` | list[str] | Book filters. Each matches any of its values; the filters then combine. Empty = no constraint on that axis. Matching is case-insensitive. |
-| `min_rating` | int? (1-5) | Minimum Calibre star rating; unrated books never satisfy it |
+| `prompt_preset_id` | UUID | Preset used to render the prompt and pick the model. Migrations 0028 and 0032 seed `bookshelf_shelf`, `bookshelf_hero` and `bookshelf_bookcase`. |
+| `tags`, `languages`, `authors` | list[str] | Book filters. Each matches any of its values; the filters then combine. Empty = no constraint on that axis. Matching is case-insensitive. |
 | `books_per_shelf` | int (2-12) | Books on one shelf; ignored in hero mode |
+| `shelf_rows` | int (2-5) | Shelves stacked in one image; bookcase mode only (a bookcase shows `shelf_rows × books_per_shelf` books) |
+| `avoid_repeats` | bool | Skip books already on an image that still exists (default on). See *Book tracking* below |
 | `images_per_run` | int (1-10) | Images generated per run |
 | `retention_days` | int? | Optional expiry; the API cleans up matching images after this many days |
-| `verify_spines` | bool | Read the finished shelf back and regenerate when a title or author came out wrong (shelf mode only) |
+| `verify_spines` | bool | Read the finished shelf back and regenerate when a title or author came out wrong (shelf and bookcase modes) |
 | `max_attempts` | int (1-8) | Generation attempts before the closest one is accepted anyway |
 
 REST: `GET/POST /api/calibre/jobs`, `GET/PUT/DELETE /api/calibre/jobs/{id}`,
@@ -390,6 +406,18 @@ REST: `GET/POST /api/calibre/jobs`, `GET/PUT/DELETE /api/calibre/jobs/{id}`,
 Titles longer than 40 characters are cut at their first colon before being
 painted on a spine, so "Fundament: Warum komplexe Systeme scheitern" becomes
 "Fundament". Titles with no colon are left intact.
+
+**Book tracking.** Every registered book image records its books in
+`image_books` (image, reading-order position, Calibre book id, title at the
+time). `GET /api/images/{id}/books` lists them and the image page shows them;
+`GET /api/calibre/jobs/used-books` returns the ids currently in use. With
+`avoid_repeats` a run excludes those ids, across all bookshelf jobs, so a book
+is not on two shelves or as a shelf and a hero at once. A book counts as in use
+while its image exists and has not expired, so it comes back when the image is
+deleted or lapses; set `retention_days` to rotate books through. If every
+matching book is in use the run fails with a message saying so rather than
+generating nothing silently. A bookcase that cannot be filled completely is
+not generated. Images made before tracking existed are not recorded.
 
 **Why verification exists.** Image models render spine lettering convincingly
 but not reliably — roughly one shelf in three came back clean in testing, with

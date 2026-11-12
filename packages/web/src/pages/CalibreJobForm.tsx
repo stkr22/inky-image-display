@@ -29,10 +29,10 @@ export function CalibreJobForm() {
   const [presetId, setPresetId] = useState('')
   const [tags, setTags] = useState<string[]>([])
   const [languages, setLanguages] = useState<string[]>([])
-  const [series, setSeries] = useState<string[]>([])
   const [authors, setAuthors] = useState<string[]>([])
-  const [minRating, setMinRating] = useState<number | ''>('')
   const [booksPerShelf, setBooksPerShelf] = useState<number | ''>(6)
+  const [shelfRows, setShelfRows] = useState<number | ''>(3)
+  const [avoidRepeats, setAvoidRepeats] = useState(true)
   const [imagesPerRun, setImagesPerRun] = useState<number | ''>(1)
   const [retentionDays, setRetentionDays] = useState<number | ''>('')
   const [verifySpines, setVerifySpines] = useState(true)
@@ -41,7 +41,8 @@ export function CalibreJobForm() {
   const [schedule, setSchedule] = useState<ScheduleValue>({ cron: '0 6 * * 0', timezone: 'UTC' })
   const [error, setError] = useState('')
 
-  const isShelf = mode === 'shelf'
+  const isHero = mode === 'hero'
+  const isCase = mode === 'bookcase'
 
   useEffect(() => {
     if (!job) return
@@ -51,10 +52,10 @@ export function CalibreJobForm() {
     setPresetId(job.prompt_preset_id)
     setTags(job.tags ?? [])
     setLanguages(job.languages ?? [])
-    setSeries(job.series ?? [])
     setAuthors(job.authors ?? [])
-    setMinRating(typeof job.min_rating === 'number' ? job.min_rating : '')
     setBooksPerShelf(job.books_per_shelf || 6)
+    setShelfRows(job.shelf_rows || 3)
+    setAvoidRepeats(job.avoid_repeats ?? true)
     setImagesPerRun(job.images_per_run || 1)
     setRetentionDays(typeof job.retention_days === 'number' ? job.retention_days : '')
     setVerifySpines(job.verify_spines)
@@ -70,9 +71,9 @@ export function CalibreJobForm() {
   // along rather than leaving a shelf job pointed at the hero prompt.
   useEffect(() => {
     if (isEdit || !presets?.length) return
-    const wanted = isShelf ? 'bookshelf_shelf' : 'bookshelf_hero'
+    const wanted = isHero ? 'bookshelf_hero' : isCase ? 'bookshelf_bookcase' : 'bookshelf_shelf'
     setPresetId(presets.find((p) => p.name === wanted)?.id ?? presets[0].id)
-  }, [presets, isEdit, isShelf])
+  }, [presets, isEdit, isHero, isCase])
 
   if (isEdit && jobPending) return <Spinner />
 
@@ -90,10 +91,10 @@ export function CalibreJobForm() {
       prompt_preset_id: presetId,
       tags: tags.map((s) => s.trim()).filter(Boolean),
       languages: languages.map((s) => s.trim()).filter(Boolean),
-      series: series.map((s) => s.trim()).filter(Boolean),
       authors: authors.map((s) => s.trim()).filter(Boolean),
-      min_rating: minRating === '' ? null : Number(minRating),
       books_per_shelf: Number(booksPerShelf) || 6,
+      shelf_rows: Number(shelfRows) || 3,
+      avoid_repeats: avoidRepeats,
       images_per_run: Number(imagesPerRun) || 1,
       retention_days: retentionDays === '' ? null : Number(retentionDays),
       verify_spines: verifySpines,
@@ -129,6 +130,7 @@ export function CalibreJobForm() {
             onChange={setMode}
             options={[
               { value: 'shelf', label: 'Shelf — a row of spines (landscape)' },
+              { value: 'bookcase', label: 'Bookcase — stacked shelves of spines (portrait)' },
               { value: 'hero', label: 'Hero — one book’s cover (portrait)' },
             ]}
           />
@@ -145,8 +147,11 @@ export function CalibreJobForm() {
             options={(presets ?? []).map((p) => ({ value: p.id, label: p.name }))}
           />
           <div className="ink-form-row items-center w-full">
-            {isShelf && (
+            {!isHero && (
               <NumberField label="Books per shelf" value={booksPerShelf} onChange={setBooksPerShelf} min={2} max={12} step={1} />
+            )}
+            {isCase && (
+              <NumberField label="Shelves per image" value={shelfRows} onChange={setShelfRows} min={2} max={5} step={1} />
             )}
             <NumberField label="Images per run" value={imagesPerRun} onChange={setImagesPerRun} min={1} max={10} step={1} />
             <NumberField
@@ -169,13 +174,17 @@ export function CalibreJobForm() {
           </span>
           <ChipsInput label="Tags" values={tags} onChange={setTags} placeholder="a Calibre tag — press Enter…" />
           <ChipsInput label="Languages" values={languages} onChange={setLanguages} placeholder="language code, e.g. deu — press Enter…" />
-          <ChipsInput label="Series" values={series} onChange={setSeries} placeholder="a series name — press Enter…" />
           <ChipsInput label="Authors" values={authors} onChange={setAuthors} placeholder="an author name — press Enter…" />
-          <NumberField label="Minimum rating (1–5, blank = any)" value={minRating} onChange={setMinRating} min={1} max={5} step={1} />
+          <Switch
+            label="Avoid duplicate books"
+            checked={avoidRepeats}
+            onChange={setAvoidRepeats}
+            help="Skips books already shown on an image that still exists, from any bookshelf job, so a book is never on two walls at once. A book becomes available again when its image is deleted or expires; set a retention period to rotate books back in. If every matching book is in use the run reports that and generates nothing."
+          />
         </div>
       </div>
 
-      {isShelf && (
+      {!isHero && (
         <div className="bento-tile w-full" style={{ padding: 24 }}>
           <div className="ink-form-section w-full">
             <span className="ink-eyebrow">Spine check</span>

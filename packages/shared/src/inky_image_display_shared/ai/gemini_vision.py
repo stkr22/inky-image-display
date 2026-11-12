@@ -30,7 +30,9 @@ from inky_image_display_shared.ai.gemini import GeminiGenerationError
 DEFAULT_VISION_MODEL = "gemini-3.6-flash"
 
 _TRANSCRIBE_PROMPT = """\
-Read every book spine in this image, from left to right. For each spine, \
+Read every book spine in this image in reading order: if the books stand on \
+several shelves, start with the top shelf and read each shelf from left to \
+right before moving to the one below. For each spine, \
 transcribe the title and the author EXACTLY as printed, character for \
 character, including any misspellings, duplicated words or missing letters. \
 Do NOT correct anything, do NOT tidy the wording, and do NOT use outside \
@@ -51,7 +53,7 @@ class SpineReading(BaseModel):
 
 
 class ShelfReading(BaseModel):
-    """Every spine the model could read, left to right."""
+    """Every spine the model could read, in reading order."""
 
     spines: list[SpineReading]
 
@@ -106,5 +108,5 @@ async def transcribe_spines(
     *,
     model: str = DEFAULT_VISION_MODEL,
 ) -> list[SpineReading]:
-    """Transcribe every book spine visible in ``image``, left to right."""
+    """Transcribe every book spine visible in ``image``, top shelf first, left to right."""
     return await asyncio.to_thread(_transcribe_sync, api_key, image, model)

@@ -1,8 +1,8 @@
 """Image model for storing picture metadata."""
 
-from datetime import datetime
 from uuid import UUID, uuid4
 
+from pydantic import NaiveDatetime
 from sqlmodel import Field, SQLModel
 
 from inky_image_display_shared.time import utcnow
@@ -108,10 +108,10 @@ class Image(SQLModel, table=True):
     queue_position: int = Field(default=0)
 
     # Timestamps
-    last_displayed_at: datetime | None = Field(default=None, description="Last display time for FIFO")
-    expires_at: datetime | None = Field(default=None, description="Expiration time for cleanup")
-    created_at: datetime = Field(default_factory=utcnow, description="When record was created")
-    updated_at: datetime = Field(default_factory=utcnow, description="When record was last updated")
+    last_displayed_at: NaiveDatetime | None = Field(default=None, description="Last display time for FIFO")
+    expires_at: NaiveDatetime | None = Field(default=None, description="Expiration time for cleanup")
+    created_at: NaiveDatetime = Field(default_factory=utcnow, description="When record was created")
+    updated_at: NaiveDatetime = Field(default_factory=utcnow, description="When record was last updated")
 
     # Categorization
     tags: str | None = Field(default=None, description="Comma-separated tags for categorization")

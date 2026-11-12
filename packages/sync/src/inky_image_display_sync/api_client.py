@@ -64,6 +64,13 @@ class ImageItem(BaseModel):
     expires_at: datetime | None
 
 
+class BookRef(BaseModel):
+    """A Calibre book shown on a registered image."""
+
+    book_id: int
+    title: str
+
+
 class ImageRegisterPayload(BaseModel):
     """Payload for POST /api/images/register."""
 
@@ -90,6 +97,8 @@ class ImageRegisterPayload(BaseModel):
     group_slot_row: int | None = None
     group_slot_col: int | None = None
     queue_position: int = 0
+    # Books shown, in reading order; lets later runs avoid showing them twice.
+    books: list[BookRef] = []
 
 
 class ImageUpdatePayload(BaseModel):

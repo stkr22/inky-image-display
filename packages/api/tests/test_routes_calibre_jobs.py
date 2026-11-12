@@ -18,7 +18,6 @@ def _payload(**overrides) -> dict:
         "prompt_preset_id": str(uuid4()),
         "tags": ["Fantasy", "Science Fiction"],
         "languages": ["deu"],
-        "min_rating": 4,
         "books_per_shelf": 6,
         "retention_days": 30,
     }
@@ -36,7 +35,6 @@ class TestCalibreJobsCrud:
         # that proves they persist as lists rather than stringified blobs.
         assert job["tags"] == ["Fantasy", "Science Fiction"]
         assert job["languages"] == ["deu"]
-        assert job["min_rating"] == 4
         assert job["mode"] == "shelf"
         assert job["verify_spines"] is True
 
@@ -64,12 +62,26 @@ class TestCalibreJobsCrud:
         assert created.status_code == 201
         assert created.json()["mode"] == "hero"
 
+    def test_bookcase_mode_and_defaults(self, client: TestClient):
+        created = client.post("/api/calibre/jobs", json=_payload(name="tall", mode="bookcase", shelf_rows=4))
+        assert created.status_code == 201
+        job = created.json()
+        assert (job["mode"], job["shelf_rows"]) == ("bookcase", 4)
+        # Repeats are avoided unless the operator opts out.
+        assert job["avoid_repeats"] is True
+
+    def test_shelf_rows_out_of_range_rejected(self, client: TestClient):
+        assert client.post("/api/calibre/jobs", json=_payload(name="a", shelf_rows=1)).status_code == 422
+        assert client.post("/api/calibre/jobs", json=_payload(name="b", shelf_rows=6)).status_code == 422
+
+    def test_avoid_repeats_can_be_switched_off(self, client: TestClient):
+        job_id = client.post("/api/calibre/jobs", json=_payload()).json()["id"]
+        updated = client.put(f"/api/calibre/jobs/{job_id}", json={"avoid_repeats": False})
+        assert updated.json()["avoid_repeats"] is False
+
     def test_unknown_mode_rejected(self, client: TestClient):
         created = client.post("/api/calibre/jobs", json=_payload(name="bad", mode="carousel"))
         assert created.status_code == 422
-
-    def test_out_of_range_rating_rejected(self, client: TestClient):
-        assert client.post("/api/calibre/jobs", json=_payload(name="bad", min_rating=9)).status_code == 422
 
 
 class TestCalibreJobScheduling:

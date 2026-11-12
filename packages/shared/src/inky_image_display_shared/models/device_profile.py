@@ -5,9 +5,9 @@ identifier from it, so the controller no longer needs to send raw specs
 at registration.
 """
 
-from datetime import datetime
 from uuid import UUID, uuid4
 
+from pydantic import NaiveDatetime
 from sqlmodel import Field, SQLModel
 
 from inky_image_display_shared.time import utcnow
@@ -33,5 +33,5 @@ class DeviceProfile(SQLModel, table=True):
     physical_height_cm: float = Field(default=0.0)
     model: str = Field(description="Hardware identifier reported by inky.auto")
     is_default: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = Field(default_factory=utcnow, sa_column_kwargs={"onupdate": utcnow})
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    updated_at: NaiveDatetime = Field(default_factory=utcnow, sa_column_kwargs={"onupdate": utcnow})

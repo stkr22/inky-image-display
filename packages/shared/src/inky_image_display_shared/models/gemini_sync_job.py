@@ -5,9 +5,9 @@ generates ``images_per_subject`` images for every entry in ``subjects``,
 sized for ``target_device``, using the prompt blocks from ``prompt_preset``.
 """
 
-from datetime import datetime
 from uuid import UUID, uuid4
 
+from pydantic import NaiveDatetime
 from sqlalchemy import Column
 from sqlalchemy.types import JSON
 from sqlmodel import Field, SQLModel
@@ -56,18 +56,18 @@ class GeminiSyncJob(SQLModel, table=True):
         description="Five-field cron expression; None = manual runs only",
     )
     schedule_timezone: str = Field(default="UTC")
-    next_run_at: datetime | None = Field(
+    next_run_at: NaiveDatetime | None = Field(
         default=None,
         description="When the job is next due; advanced by the claim-due hand-out",
     )
-    last_run_at: datetime | None = Field(
+    last_run_at: NaiveDatetime | None = Field(
         default=None,
         description="Finish time of the most recent reported run",
     )
 
     # Set by the "Run now" endpoint; makes the job due immediately (active
     # or not) and the run report clears the flag.
-    run_requested_at: datetime | None = Field(default=None)
+    run_requested_at: NaiveDatetime | None = Field(default=None)
 
-    created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = Field(default_factory=utcnow)
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    updated_at: NaiveDatetime = Field(default_factory=utcnow)

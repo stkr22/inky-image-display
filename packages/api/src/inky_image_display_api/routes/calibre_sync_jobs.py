@@ -11,9 +11,9 @@ import logging
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
-from inky_image_display_shared.models import CalibreSyncJob
+from inky_image_display_shared.models import CalibreSyncJob, Image, ImageBook
 from inky_image_display_shared.time import utcnow
-from sqlmodel import col, select
+from sqlmodel import col, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.schemas import (
@@ -75,6 +75,24 @@ async def claim_due_calibre_jobs(request: Request) -> list[CalibreSyncJob]:
     if jobs:
         logger.info("Handed out %d due calibre sync job(s)", len(jobs))
     return jobs
+
+
+@router.get("/used-books")
+async def list_used_book_ids(request: Request) -> list[int]:
+    """Calibre ids of every book on an image that is still around.
+
+    An expired image no longer counts: retention exists so that a book can
+    come back once its image has lapsed. The join also ignores link rows whose
+    image is gone. Declared before ``/{job_id}`` so it is not read as a UUID.
+    """
+    async with AsyncSession(request.app.state.engine) as session:
+        result = await session.exec(
+            select(col(ImageBook.book_id))
+            .join(Image, col(Image.id) == col(ImageBook.image_id))
+            .where(or_(col(Image.expires_at).is_(None), col(Image.expires_at) > utcnow()))
+            .distinct()
+        )
+        return sorted(result.all())
 
 
 @router.get("/{job_id}", response_model=CalibreSyncJobResponse)

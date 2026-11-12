@@ -49,7 +49,9 @@ async def test_job_table_created(seeded_engine: AsyncEngine) -> None:
     async with seeded_engine.begin() as conn:
         rows = (await conn.execute(sa.text("PRAGMA table_info(calibre_sync_jobs)"))).fetchall()
     columns = {row[1] for row in rows}
-    assert {"mode", "tags", "min_rating", "books_per_shelf", "verify_spines", "max_attempts"} <= columns
+    assert {"mode", "tags", "books_per_shelf", "verify_spines", "max_attempts"} <= columns
+    assert not {"series", "min_rating"} & columns
+    assert {"shelf_rows", "avoid_repeats"} <= columns
 
 
 async def test_both_presets_seeded_with_their_own_blocks(seeded_engine: AsyncEngine) -> None:
@@ -66,11 +68,12 @@ async def test_both_presets_seeded_with_their_own_blocks(seeded_engine: AsyncEng
                 )
             )
         ).fetchall()
-    assert [r[0] for r in rows] == ["bookshelf_hero", "bookshelf_shelf"]
+    assert [r[0] for r in rows] == ["bookshelf_bookcase", "bookshelf_hero", "bookshelf_shelf"]
     # Neither may displace the library default used by on-demand generation.
     assert not any(r[1] for r in rows)
-    assert (rows[0][2], rows[0][3], rows[0][4]) == ("book_cover_as_is", "book_hero_object", "book_hero_atmosphere")
-    assert (rows[1][2], rows[1][3], rows[1][4]) == (
+    assert (rows[0][2], rows[0][3], rows[0][4]) == ("bookshelf_painterly", "bookcase_rows", "bookcase_oak_tall")
+    assert (rows[1][2], rows[1][3], rows[1][4]) == ("book_cover_as_is", "book_hero_object", "book_hero_atmosphere")
+    assert (rows[2][2], rows[2][3], rows[2][4]) == (
         "bookshelf_painterly",
         "bookshelf_spines",
         "bookshelf_oak_case",
@@ -83,10 +86,13 @@ async def test_composition_blocks_carry_the_subject_placeholder(seeded_engine: A
     async with seeded_engine.begin() as conn:
         rows = (
             await conn.execute(
-                sa.text("SELECT name, text FROM prompt_blocks WHERE name IN ('bookshelf_spines', 'book_hero_object')")
+                sa.text(
+                    "SELECT name, text FROM prompt_blocks "
+                    "WHERE name IN ('bookshelf_spines', 'book_hero_object', 'bookcase_rows')"
+                )
             )
         ).fetchall()
-    assert len(rows) == 2
+    assert len(rows) == 3
     assert all("{subject}" in row[1] for row in rows)
 
 
@@ -101,8 +107,8 @@ async def test_seed_is_idempotent(seeded_engine: AsyncEngine) -> None:
         blocks = (
             await conn.execute(sa.text("SELECT COUNT(*) FROM prompt_blocks WHERE name LIKE 'book%'"))
         ).scalar_one()
-    assert presets == 2
-    assert blocks == 8
+    assert presets == 3
+    assert blocks == 10
 
 
 async def test_operator_edited_block_is_preserved(seeded_engine: AsyncEngine) -> None:

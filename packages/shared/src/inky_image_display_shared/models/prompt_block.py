@@ -6,9 +6,9 @@ own row so users can mix-and-match wording across presets (e.g. swap a
 humanoid composition for a landscape one without rewriting the rest).
 """
 
-from datetime import datetime
 from uuid import UUID, uuid4
 
+from pydantic import NaiveDatetime
 from sqlmodel import Field, SQLModel
 
 from inky_image_display_shared.time import utcnow
@@ -30,5 +30,5 @@ class PromptBlock(SQLModel, table=True):
         default=False,
         description="At most one block per kind should have this set; used as fallback.",
     )
-    created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = Field(default_factory=utcnow)
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    updated_at: NaiveDatetime = Field(default_factory=utcnow)

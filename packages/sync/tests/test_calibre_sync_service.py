@@ -57,10 +57,10 @@ def _make_job(mode: str = "shelf", **overrides) -> CalibreSyncJobItem:
         "prompt_preset_id": uuid4(),
         "tags": [],
         "languages": [],
-        "series": [],
         "authors": [],
-        "min_rating": None,
         "books_per_shelf": 2,
+        "shelf_rows": 3,
+        "avoid_repeats": True,
         "images_per_run": 1,
         "retention_days": None,
         "verify_spines": True,
@@ -72,7 +72,7 @@ def _make_job(mode: str = "shelf", **overrides) -> CalibreSyncJobItem:
 
 def _books(count: int = 4) -> list[CalibreBook]:
     return [
-        CalibreBook(book_id=100 + i, title=f"Book {i}", author=f"Author {i}", tags=["Fantasy"], language="deu")
+        CalibreBook(book_id=100 + i, title=f"Book {i}", authors=[f"Author {i}"], tags=["Fantasy"], language="deu")
         for i in range(count)
     ]
 
@@ -118,6 +118,7 @@ def _api_client(blocks: list[PromptBlockItem], preset: PromptPresetItem, job: Ca
     )
     api_client.process_image.return_value = b"processed-jpeg"
     api_client.get_active_calibre_jobs.return_value = [job]
+    api_client.get_used_book_ids.return_value = set()
     return api_client
 
 
@@ -239,7 +240,7 @@ async def test_hero_sends_the_cover_and_registers_portrait() -> None:
         results = await service.sync_jobs(all_active=True)
 
     assert results[0].generated == 1
-    assert generate.await_args.kwargs["reference_image"] == b"cover-bytes"  # ty: ignore[unresolved-attribute]
+    assert generate.await_args.kwargs["reference_image"] == b"cover-bytes"  # ty: ignore[missing-union-attribute]
     payload = api_client.register_image.call_args.args[0]
     assert payload.is_portrait is True
     # Portrait swaps the profile's landscape-native dimensions.
@@ -270,14 +271,14 @@ async def test_missing_cover_degrades_hero_instead_of_dropping_the_book() -> Non
     preset = _make_preset(blocks)
     api_client = _api_client(blocks, preset, job)
     service = _make_service(api_client, _books(2))
-    service.calibre.fetch_cover.side_effect = RuntimeError("404")  # ty: ignore[unresolved-attribute]
+    service.calibre.fetch_cover.side_effect = RuntimeError("404")  # ty: ignore[missing-attribute]
 
     generate = AsyncMock(return_value=b"raw")
     with patch(f"{_SERVICE}.generate_image_bytes", generate):
         results = await service.sync_jobs(all_active=True)
 
     assert results[0].generated == 1
-    assert generate.await_args.kwargs["reference_image"] is None  # ty: ignore[unresolved-attribute]
+    assert generate.await_args.kwargs["reference_image"] is None  # ty: ignore[missing-union-attribute]
 
 
 async def test_filter_that_matches_nothing_reports_an_error() -> None:
@@ -307,3 +308,109 @@ async def test_run_is_reported_with_the_calibre_job_type() -> None:
     assert report.job_type == "calibre"
     assert report.status == "success"
     assert report.images_added == 1
+
+
+async def test_registered_image_records_its_books_in_order() -> None:
+    blocks, job = _make_blocks(), _make_job(verify_spines=False)
+    api_client = _api_client(blocks, _make_preset(blocks), job)
+    catalog = _books(2)
+    service = _make_service(api_client, catalog)
+
+    with patch(f"{_SERVICE}.generate_image_bytes", AsyncMock(return_value=b"raw")):
+        await service.sync_jobs(all_active=True)
+
+    payload = api_client.register_image.call_args.args[0]
+    assert [(b.book_id, b.title) for b in payload.books] == [(b.book_id, b.title) for b in catalog]
+
+
+async def test_books_already_on_display_are_not_picked_again() -> None:
+    blocks, job = _make_blocks(), _make_job(verify_spines=False)
+    api_client = _api_client(blocks, _make_preset(blocks), job)
+    api_client.get_used_book_ids.return_value = {100, 101}
+    service = _make_service(api_client, _books(4))
+
+    with patch(f"{_SERVICE}.generate_image_bytes", AsyncMock(return_value=b"raw")):
+        await service.sync_jobs(all_active=True)
+
+    shown = {b.book_id for b in api_client.register_image.call_args.args[0].books}
+    assert shown == {102, 103}
+
+
+async def test_repeats_are_allowed_when_the_job_opts_out() -> None:
+    blocks, job = _make_blocks(), _make_job(verify_spines=False, avoid_repeats=False)
+    api_client = _api_client(blocks, _make_preset(blocks), job)
+    api_client.get_used_book_ids.return_value = {100, 101}
+    service = _make_service(api_client, _books(2))
+
+    with patch(f"{_SERVICE}.generate_image_bytes", AsyncMock(return_value=b"raw")):
+        results = await service.sync_jobs(all_active=True)
+
+    api_client.get_used_book_ids.assert_not_awaited()
+    assert results[0].generated == 1
+
+
+async def test_run_says_so_when_every_matching_book_is_in_use() -> None:
+    blocks, job = _make_blocks(), _make_job()
+    api_client = _api_client(blocks, _make_preset(blocks), job)
+    api_client.get_used_book_ids.return_value = {100, 101}
+    service = _make_service(api_client, _books(2))
+
+    generate = AsyncMock()
+    with patch(f"{_SERVICE}.generate_image_bytes", generate):
+        results = await service.sync_jobs(all_active=True)
+
+    generate.assert_not_awaited()
+    assert results[0].failed == 1
+    assert "already on display" in results[0].errors[0]
+
+
+async def test_failed_lookup_of_used_books_does_not_generate_blindly() -> None:
+    blocks, job = _make_blocks(), _make_job()
+    api_client = _api_client(blocks, _make_preset(blocks), job)
+    api_client.get_used_book_ids.side_effect = RuntimeError("api down")
+    service = _make_service(api_client, _books(2))
+
+    generate = AsyncMock()
+    with patch(f"{_SERVICE}.generate_image_bytes", generate):
+        results = await service.sync_jobs(all_active=True)
+
+    generate.assert_not_awaited()
+    assert "api down" in results[0].errors[0]
+
+
+async def test_bookcase_is_portrait_and_lays_books_out_shelf_by_shelf() -> None:
+    blocks = _make_blocks()
+    job = _make_job("bookcase", books_per_shelf=2, shelf_rows=2, verify_spines=False)
+    api_client = _api_client(blocks, _make_preset(blocks), job)
+    catalog = _books(4)
+    service = _make_service(api_client, catalog)
+
+    generate = AsyncMock(return_value=b"raw")
+    with patch(f"{_SERVICE}.generate_image_bytes", generate):
+        results = await service.sync_jobs(all_active=True)
+
+    assert results[0].generated == 1
+    payload = api_client.register_image.call_args.args[0]
+    assert payload.is_portrait is True
+    assert len(payload.books) == 4
+    subject = generate.call_args.args[2]
+    assert subject.index("Shelf 1 of 2 (top)") < subject.index("Shelf 2 of 2")
+    # Each shelf holds exactly its own slice of the books.
+    first_shelf, second_shelf = subject.split("Shelf 2 of 2")
+    assert all(f'"{b.title}"' in first_shelf for b in payload.books[:2])
+    assert all(f'"{b.title}"' in second_shelf for b in payload.books[2:])
+
+
+async def test_incomplete_bookcase_is_not_generated() -> None:
+    # Three books cannot fill a 2x2 case; a half-empty case is not worth a call.
+    blocks = _make_blocks()
+    job = _make_job("bookcase", books_per_shelf=2, shelf_rows=2, verify_spines=False)
+    api_client = _api_client(blocks, _make_preset(blocks), job)
+    service = _make_service(api_client, _books(3))
+
+    generate = AsyncMock(return_value=b"raw")
+    with patch(f"{_SERVICE}.generate_image_bytes", generate):
+        results = await service.sync_jobs(all_active=True)
+
+    generate.assert_not_awaited()
+    assert results[0].generated == 0

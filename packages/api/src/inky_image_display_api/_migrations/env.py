@@ -82,7 +82,7 @@ def run_migrations_online() -> None:
         # this a no-op on databases that already have the tables.
         target_metadata.create_all(
             connection,
-            tables=[model.__table__ for model in _BOOTSTRAP_MODELS],  # ty: ignore[unresolved-attribute]
+            tables=[model.__table__ for model in _BOOTSTRAP_MODELS],  # ty: ignore[missing-attribute]
             checkfirst=True,
         )
 

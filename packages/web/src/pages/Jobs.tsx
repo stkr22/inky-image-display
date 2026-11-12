@@ -377,8 +377,7 @@ function CalibreList({ profileMap }: { profileMap: Map<string, string> }) {
 // Summarises the filter so the list answers "which books does this pick?"
 // without opening the form.
 function filterSummary(job: CalibreJob): string {
-  const parts = [...(job.tags ?? []), ...(job.series ?? []), ...(job.authors ?? []), ...(job.languages ?? [])]
-  if (job.min_rating != null) parts.push(`${job.min_rating}★+`)
+  const parts = [...(job.tags ?? []), ...(job.authors ?? []), ...(job.languages ?? [])]
   return parts.length ? parts.join(', ') : 'whole library'
 }
 
@@ -394,7 +393,11 @@ function CalibreRow({
   const navigate = useNavigate()
   const targetName = profileMap.get(job.target_device_profile_id) ?? job.target_device_profile_id
   const shape =
-    job.mode === 'hero' ? 'hero cover' : `shelf of ${job.books_per_shelf}`
+    job.mode === 'hero'
+      ? 'hero cover'
+      : job.mode === 'bookcase'
+        ? `bookcase of ${job.shelf_rows}×${job.books_per_shelf}`
+        : `shelf of ${job.books_per_shelf}`
   return (
     <JobRow
       name={job.name}

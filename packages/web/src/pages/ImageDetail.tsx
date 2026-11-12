@@ -25,6 +25,12 @@ export function ImageDetail() {
     enabled: Boolean(imageId),
   })
 
+  const { data: books } = useQuery({
+    queryKey: ['image-books', imageId],
+    queryFn: () => api.getImageBooks(imageId!),
+    enabled: Boolean(imageId),
+  })
+
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [author, setAuthor] = useState('')
@@ -131,6 +137,16 @@ export function ImageDetail() {
             <TextArea label="Description" value={description} onChange={setDescription} rows={3} />
             <TextField label="Author" value={author} onChange={setAuthor} />
             <TextField label="Tags (comma-separated)" value={tags} onChange={setTags} />
+            {books && books.length > 0 && (
+              <div className="ink-form-section w-full">
+                <span className="ink-eyebrow">Books on this image</span>
+                <ol className="ink-small" style={{ margin: 0, paddingLeft: 20 }}>
+                  {books.map((b) => (
+                    <li key={b.position}>{b.title}</li>
+                  ))}
+                </ol>
+              </div>
+            )}
             <Switch label="Hold on screen for a custom time" checked={holdEnabled} onChange={setHoldEnabled} />
             {holdEnabled && (
               <>

@@ -5,6 +5,10 @@ SQLite stores ``DateTime`` columns as naive ISO text and does not honour
 writers through :func:`utcnow` and attach ``tzinfo=UTC`` at API response
 boundaries. That keeps the schema unchanged while making "stored values
 are UTC" a single-point invariant.
+
+Table models must annotate datetime columns as ``pydantic.NaiveDatetime``:
+since sqlmodel 0.0.47 a bare ``datetime`` maps to a timezone-aware
+``UTCDateTime`` that rejects our naive values at bind time.
 """
 
 from __future__ import annotations

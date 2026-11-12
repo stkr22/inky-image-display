@@ -1,12 +1,12 @@
 // Shared page chrome: sticky top nav + page container, with a slide-in sheet
 // on mobile.
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useTheme } from '../lib/theme'
 import { Icon } from './fields'
-import { Badge } from './ui'
+import { Badge, Spinner } from './ui'
 
 const NAV_PAGES = [
   { path: '/images', label: 'Images', icon: 'image' },
@@ -119,7 +119,9 @@ export function Layout() {
       )}
 
       <main className="ink-page">
-        <Outlet />
+        <Suspense fallback={<Spinner />}>
+          <Outlet />
+        </Suspense>
       </main>
     </>
   )

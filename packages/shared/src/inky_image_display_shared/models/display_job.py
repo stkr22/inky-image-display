@@ -10,9 +10,9 @@ art-with-explanation, …) are further job types that reuse the same grid
 targeting and generation machinery.
 """
 
-from datetime import datetime
 from uuid import UUID, uuid4
 
+from pydantic import NaiveDatetime
 from sqlmodel import Field, SQLModel
 
 from inky_image_display_shared.motd import DEFAULT_MOTD_PROMPT
@@ -57,12 +57,12 @@ class DisplayJob(SQLModel, table=True):
     is_active: bool = Field(default=True)
     schedule_cron: str | None = Field(default=None)
     schedule_timezone: str = Field(default="UTC")
-    next_run_at: datetime | None = Field(default=None)
-    last_run_at: datetime | None = Field(default=None)
-    run_requested_at: datetime | None = Field(default=None)
+    next_run_at: NaiveDatetime | None = Field(default=None)
+    last_run_at: NaiveDatetime | None = Field(default=None)
+    run_requested_at: NaiveDatetime | None = Field(default=None)
 
-    created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = Field(default_factory=utcnow, sa_column_kwargs={"onupdate": utcnow})
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    updated_at: NaiveDatetime = Field(default_factory=utcnow, sa_column_kwargs={"onupdate": utcnow})
 
 
 class DisplayJobSlot(SQLModel, table=True):
@@ -82,4 +82,4 @@ class DisplayJobSlot(SQLModel, table=True):
     row: int = Field(primary_key=True)
     col: int = Field(primary_key=True)
     parts: str = Field(default="[]")
-    created_at: datetime = Field(default_factory=utcnow)
+    created_at: NaiveDatetime = Field(default_factory=utcnow)

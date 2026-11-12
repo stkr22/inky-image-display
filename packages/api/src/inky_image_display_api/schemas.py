@@ -19,6 +19,7 @@ from inky_image_display_shared.schemas.responses import (
     GeminiSyncJobResponse,
     GridDeviceResponse,
     GridResponse,
+    ImageBookResponse,
     ImageResponse,
     ImageStatsResponse,
     ImageSummary,
@@ -61,6 +62,8 @@ __all__ = [
     "GridResponse",
     "GridUpdate",
     "GuestInviteResponse",
+    "ImageBookRef",
+    "ImageBookResponse",
     "ImageCreate",
     "ImageGenerateRequest",
     "ImageGenerateResponse",
@@ -128,6 +131,13 @@ class ImageCreate(BaseModel):
     target_grid_id: UUID | None = None
 
 
+class ImageBookRef(BaseModel):
+    """A Calibre book shown on a registered image."""
+
+    book_id: int
+    title: str
+
+
 class ImageRegister(BaseModel):
     """Register an image whose bytes were pre-uploaded directly to S3."""
 
@@ -152,6 +162,9 @@ class ImageRegister(BaseModel):
     group_slot_row: int | None = Field(default=None, ge=0)
     group_slot_col: int | None = Field(default=None, ge=0)
     queue_position: int = Field(default=0, ge=0)
+    # Books shown, in reading order. Recorded so a later run can tell which
+    # books are already on a wall.
+    books: list[ImageBookRef] = []
 
 
 class ImageUpdate(BaseModel):
@@ -416,15 +429,15 @@ class CalibreSyncJobCreate(BaseModel):
     # changes daily stops being something you notice on the wall.
     schedule_cron: CronExpression | None = "0 6 * * 0"
     schedule_timezone: ScheduleTimezone = "UTC"
-    mode: Literal["shelf", "hero"] = "shelf"
+    mode: Literal["shelf", "bookcase", "hero"] = "shelf"
     target_device_profile_id: UUID
     prompt_preset_id: UUID
     tags: list[str] = []
     languages: list[str] = []
-    series: list[str] = []
     authors: list[str] = []
-    min_rating: int | None = Field(default=None, ge=1, le=5)
     books_per_shelf: int = Field(default=6, ge=2, le=12)
+    shelf_rows: int = Field(default=3, ge=2, le=5)
+    avoid_repeats: bool = True
     images_per_run: int = Field(default=1, ge=1, le=10)
     retention_days: int | None = None
     verify_spines: bool = True
@@ -441,15 +454,15 @@ class CalibreSyncJobUpdate(BaseModel):
     is_active: bool | None = None
     schedule_cron: CronExpression | None = None
     schedule_timezone: ScheduleTimezone | None = None
-    mode: Literal["shelf", "hero"] | None = None
+    mode: Literal["shelf", "bookcase", "hero"] | None = None
     target_device_profile_id: UUID | None = None
     prompt_preset_id: UUID | None = None
     tags: list[str] | None = None
     languages: list[str] | None = None
-    series: list[str] | None = None
     authors: list[str] | None = None
-    min_rating: int | None = Field(default=None, ge=1, le=5)
     books_per_shelf: int | None = Field(default=None, ge=2, le=12)
+    shelf_rows: int | None = Field(default=None, ge=2, le=5)
+    avoid_repeats: bool | None = None
     images_per_run: int | None = Field(default=None, ge=1, le=10)
     retention_days: int | None = None
     verify_spines: bool | None = None

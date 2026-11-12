@@ -27,6 +27,7 @@ namespace and point `existingSecrets.*` at their names:
 | `existingSecrets.s3Reader` | `access-key-id`, `secret-access-key` | always |
 | `existingSecrets.immich` | `apiKey` | Immich sync + browse proxy |
 | `existingSecrets.gemini` | `gemini-api-key` | GenAI generation, display jobs (MOTD), gemini sync |
+| `existingSecrets.calibre` | `username`, `password` | Bookshelf source when the OPDS server requires a login (optional) |
 
 The Gemini reference is `optional: true` on the API deployment: without the
 Secret the GenAI/display-job endpoints return 503 and everything else works.
@@ -49,7 +50,7 @@ config:
     transport: websockets
   immich:
     baseUrl: https://immich.example.com
-  # Calibre-Web serving the OPDS catalogue for the bookshelf source. Only the
+  # Calibre server serving the OPDS catalogue for the bookshelf source. Only the
   # sync worker calls it, so the in-cluster service address is usually right.
   calibre:
     baseUrl: http://calibre-web.calibre-web.svc.cluster.local
@@ -59,6 +60,7 @@ existingSecrets:
   s3Reader: my-s3-reader
   immich: my-immich-credentials
   gemini: my-gemini-credentials
+  calibre: my-calibre-credentials   # optional: only if the OPDS server needs a login
 
 ingress:
   hosts:

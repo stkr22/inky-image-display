@@ -59,21 +59,21 @@ async def create_tables(engine: AsyncEngine) -> None:
     """
     async with engine.begin() as conn:
         tables = [
-            Image.__table__,  # ty: ignore[unresolved-attribute]
-            Grid.__table__,  # ty: ignore[unresolved-attribute]
-            PromptBlock.__table__,  # ty: ignore[unresolved-attribute]
-            PromptPreset.__table__,  # ty: ignore[unresolved-attribute]
-            Device.__table__,  # ty: ignore[unresolved-attribute]
-            GridDevice.__table__,  # ty: ignore[unresolved-attribute]
-            ImmichSyncJob.__table__,  # ty: ignore[unresolved-attribute]
-            GeminiSyncJob.__table__,  # ty: ignore[unresolved-attribute]
+            Image.__table__,  # ty: ignore[missing-attribute]
+            Grid.__table__,  # ty: ignore[missing-attribute]
+            PromptBlock.__table__,  # ty: ignore[missing-attribute]
+            PromptPreset.__table__,  # ty: ignore[missing-attribute]
+            Device.__table__,  # ty: ignore[missing-attribute]
+            GridDevice.__table__,  # ty: ignore[missing-attribute]
+            ImmichSyncJob.__table__,  # ty: ignore[missing-attribute]
+            GeminiSyncJob.__table__,  # ty: ignore[missing-attribute]
             # display_jobs precedes image_groups: the group FK references
             # it, and referenced tables must exist at DDL time.
-            DisplayJob.__table__,  # ty: ignore[unresolved-attribute]
-            DisplayJobSlot.__table__,  # ty: ignore[unresolved-attribute]
-            ImageGroup.__table__,  # ty: ignore[unresolved-attribute]
-            SyncJobRun.__table__,  # ty: ignore[unresolved-attribute]
-            GenerationTask.__table__,  # ty: ignore[unresolved-attribute]
+            DisplayJob.__table__,  # ty: ignore[missing-attribute]
+            DisplayJobSlot.__table__,  # ty: ignore[missing-attribute]
+            ImageGroup.__table__,  # ty: ignore[missing-attribute]
+            SyncJobRun.__table__,  # ty: ignore[missing-attribute]
+            GenerationTask.__table__,  # ty: ignore[missing-attribute]
         ]
         for table in tables:
             await conn.run_sync(table.create, checkfirst=True)

@@ -46,6 +46,7 @@ from inky_image_display_shared.models import (
     Grid,
     GridDevice,
     Image,
+    ImageBook,
     ImageGroup,
     ImmichSyncJob,
     PromptBlock,
@@ -70,22 +71,23 @@ async def async_engine() -> AsyncIterator[AsyncEngine]:
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     async with engine.begin() as conn:
         for table in [
-            Image.__table__,  # ty: ignore[unresolved-attribute]
-            DeviceProfile.__table__,  # ty: ignore[unresolved-attribute]
-            Grid.__table__,  # ty: ignore[unresolved-attribute]
-            PromptBlock.__table__,  # ty: ignore[unresolved-attribute]
-            PromptPreset.__table__,  # ty: ignore[unresolved-attribute]
-            Device.__table__,  # ty: ignore[unresolved-attribute]
-            GridDevice.__table__,  # ty: ignore[unresolved-attribute]
-            ImmichSyncJob.__table__,  # ty: ignore[unresolved-attribute]
-            AppSetting.__table__,  # ty: ignore[unresolved-attribute]
-            GeminiSyncJob.__table__,  # ty: ignore[unresolved-attribute]
-            CalibreSyncJob.__table__,  # ty: ignore[unresolved-attribute]
-            DisplayJob.__table__,  # ty: ignore[unresolved-attribute]
-            DisplayJobSlot.__table__,  # ty: ignore[unresolved-attribute]
-            ImageGroup.__table__,  # ty: ignore[unresolved-attribute]
-            SyncJobRun.__table__,  # ty: ignore[unresolved-attribute]
-            GenerationTask.__table__,  # ty: ignore[unresolved-attribute]
+            Image.__table__,  # ty: ignore[missing-attribute]
+            DeviceProfile.__table__,  # ty: ignore[missing-attribute]
+            Grid.__table__,  # ty: ignore[missing-attribute]
+            PromptBlock.__table__,  # ty: ignore[missing-attribute]
+            PromptPreset.__table__,  # ty: ignore[missing-attribute]
+            Device.__table__,  # ty: ignore[missing-attribute]
+            GridDevice.__table__,  # ty: ignore[missing-attribute]
+            ImmichSyncJob.__table__,  # ty: ignore[missing-attribute]
+            AppSetting.__table__,  # ty: ignore[missing-attribute]
+            GeminiSyncJob.__table__,  # ty: ignore[missing-attribute]
+            CalibreSyncJob.__table__,  # ty: ignore[missing-attribute]
+            DisplayJob.__table__,  # ty: ignore[missing-attribute]
+            DisplayJobSlot.__table__,  # ty: ignore[missing-attribute]
+            ImageBook.__table__,  # ty: ignore[missing-attribute]
+            ImageGroup.__table__,  # ty: ignore[missing-attribute]
+            SyncJobRun.__table__,  # ty: ignore[missing-attribute]
+            GenerationTask.__table__,  # ty: ignore[missing-attribute]
         ]:
             await conn.run_sync(table.create, checkfirst=True)
     yield engine

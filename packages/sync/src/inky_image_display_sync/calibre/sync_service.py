@@ -35,7 +35,7 @@ from inky_image_display_shared.ai import (
 )
 from inky_image_display_shared.time import utcnow
 
-from inky_image_display_sync.api_client import ImageRegisterPayload, SyncRunReportPayload
+from inky_image_display_sync.api_client import BookRef, ImageRegisterPayload, SyncRunReportPayload
 from inky_image_display_sync.calibre.client import BookFilter, CalibreClient, select_books
 from inky_image_display_sync.calibre.config import CalibreConnectionConfig
 from inky_image_display_sync.gemini.config import GeminiConnectionConfig, GeminiSyncConfig
@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from inky_image_display_sync.gemini.api_client import PromptPresetItem
 
 MODE_HERO = "hero"
+MODE_BOOKCASE = "bookcase"
 
 
 @dataclass
@@ -164,22 +165,36 @@ class CalibreSyncService:
         book_filter = BookFilter(
             tags=job.tags,
             languages=job.languages,
-            series=job.series,
             authors=job.authors,
-            min_rating=job.min_rating,
         )
-        # A hero shows one book; a shelf shows several. Both draw from the same
-        # filtered pool, one draw per image so a run doesn't repeat a book.
-        per_image = 1 if job.mode == MODE_HERO else job.books_per_shelf
+        # A hero shows one book, a shelf one row of them, a bookcase several
+        # rows. All draw from the same filtered pool, one draw per run so no
+        # book repeats within it.
+        per_image = _books_per_image(job)
         wanted = per_image * job.images_per_run
-        picked = select_books(catalog, wanted, book_filter)
+        in_use: set[int] = set()
+        if job.avoid_repeats:
+            try:
+                in_use = await self.api_client.get_used_book_ids()
+            except Exception as exc:
+                result.failed += 1
+                result.errors.append(f"could not look up books already on display: {exc}")
+                return result
+        picked = select_books(catalog, wanted, book_filter, exclude=in_use)
         if not picked:
             result.failed += 1
-            result.errors.append(f"no books in the {len(catalog)}-book catalog match this job's filter")
+            matching = len(select_books(catalog, len(catalog), book_filter))
+            result.errors.append(
+                f"no books left to show: {matching} of the {len(catalog)}-book catalog match this job's "
+                f"filter, {len(in_use)} books are already on display"
+                if matching
+                else f"no books in the {len(catalog)}-book catalog match this job's filter"
+            )
             return result
 
-        # Heroes are portrait (a cover), shelves landscape (a row of spines).
-        is_portrait = job.mode == MODE_HERO
+        # Heroes and bookcases are portrait (a cover, a tall case); a shelf is
+        # a landscape row of spines.
+        is_portrait = job.mode in (MODE_HERO, MODE_BOOKCASE)
         target_width, target_height = (
             (profile.height, profile.width) if is_portrait else (profile.width, profile.height)
         )
@@ -228,7 +243,7 @@ class CalibreSyncService:
         result: CalibreSyncResult,
     ) -> None:
         """Generate, verify, process and register one bookshelf image."""
-        subject = _subject_for(job.mode, books)
+        subject = _subject_for(job, books)
         cover = await self._cover_for(job, books)
 
         raw, verified = await self._generate_verified(
@@ -265,6 +280,7 @@ class CalibreSyncService:
                 original_height=target_height,
                 is_portrait=is_portrait,
                 expires_at=expires_at,
+                books=[BookRef(book_id=b.book_id, title=b.title) for b in books],
             )
         )
 
@@ -342,8 +358,32 @@ class CalibreSyncService:
             return None
 
 
-def _subject_for(mode: str, books: list[CalibreBook]) -> str:
-    """Render the ``{subject}`` the preset's composition block expects."""
-    if mode == MODE_HERO:
+def _books_per_image(job: CalibreSyncJobItem) -> int:
+    """How many books one generated image shows."""
+    if job.mode == MODE_HERO:
+        return 1
+    if job.mode == MODE_BOOKCASE:
+        return job.books_per_shelf * job.shelf_rows
+    return job.books_per_shelf
+
+
+def _spine_line(book: CalibreBook) -> str:
+    return f'- Title "{book.short_title()}" — author "{book.author or "Unknown"}"'
+
+
+def _subject_for(job: CalibreSyncJobItem, books: list[CalibreBook]) -> str:
+    """Render the ``{subject}`` the preset's composition block expects.
+
+    A bookcase groups its books per shelf, top first, because the prompt asks
+    for exactly those shelves with exactly those books on each.
+    """
+    if job.mode == MODE_HERO:
         return books[0].as_subject()
-    return "\n".join(f'- Title "{b.short_title()}" — author "{b.author or "Unknown"}"' for b in books)
+    if job.mode == MODE_BOOKCASE:
+        size = job.books_per_shelf
+        return "\n".join(
+            f"Shelf {row + 1} of {job.shelf_rows}{' (top)' if row == 0 else ''}, {size} books:\n"
+            + "\n".join(_spine_line(b) for b in books[row * size : (row + 1) * size])
+            for row in range(job.shelf_rows)
+        )
+    return "\n".join(_spine_line(b) for b in books)

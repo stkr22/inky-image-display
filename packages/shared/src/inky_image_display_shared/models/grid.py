@@ -6,9 +6,9 @@ coordinates; the API pre-renders per-device crops so controllers receive an
 ordinary display command pointing at their slice.
 """
 
-from datetime import datetime
 from uuid import UUID, uuid4
 
+from pydantic import NaiveDatetime
 from sqlmodel import Field, SQLModel
 
 from inky_image_display_shared.time import utcnow
@@ -29,7 +29,7 @@ class Grid(SQLModel, table=True):
     width_cm: float
     height_cm: float
     current_image_id: UUID | None = Field(default=None, foreign_key="images.id")
-    displayed_since: datetime | None = Field(default=None)
+    displayed_since: NaiveDatetime | None = Field(default=None)
 
     # Display schedule: when this grid steps its content queue one entry
     # forward. Same cron mechanism as the jobs: ``display_cron`` is a
@@ -51,15 +51,15 @@ class Grid(SQLModel, table=True):
     # When the current display ends and the panels are released. The
     # scheduled daily display and manual "show now" set it; expiry or an
     # explicit release clears it.
-    hold_until: datetime | None = Field(default=None)
+    hold_until: NaiveDatetime | None = Field(default=None)
     # Next scheduled display as naive UTC — the same lease pattern as the
     # jobs' ``next_run_at``: stamped when the schedule is enabled/edited,
     # advanced along the cron grid when a display fires. ``None`` while
     # the schedule is disabled.
-    display_next_at: datetime | None = Field(default=None)
+    display_next_at: NaiveDatetime | None = Field(default=None)
 
-    created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = Field(default_factory=utcnow, sa_column_kwargs={"onupdate": utcnow})
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    updated_at: NaiveDatetime = Field(default_factory=utcnow, sa_column_kwargs={"onupdate": utcnow})
 
 
 class GridDevice(SQLModel, table=True):
@@ -83,4 +83,4 @@ class GridDevice(SQLModel, table=True):
     top_left_y_cm: float
     width_cm: float
     height_cm: float
-    created_at: datetime = Field(default_factory=utcnow)
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
