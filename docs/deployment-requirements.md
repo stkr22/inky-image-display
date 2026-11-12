@@ -87,7 +87,7 @@ Both the API and Sync write to the same bucket (`inky-images` by default).
 | Prefix | Written by | Description |
 |--------|-----------|-------------|
 | `<source_name>/<uuid>.jpg` | API (upload) | Manually uploaded images |
-| `immich/<uuid>.jpg` | Sync (`immich`) | Images synced from Immich |
+| `immich/<asset_id>-<width>x<height>.jpg` | Sync (`immich`) | Images synced from Immich, one object per target panel size (objects synced before this layout keep their old `immich/<asset_id>.jpg` path and keep being served; they are not re-synced for the same size) |
 | `gemini/<uuid>.jpg` | API (`POST /api/genai/generate`) and Sync (`gemini`) | AI-generated images |
 
 Two sets of credentials are recommended:

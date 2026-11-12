@@ -49,8 +49,9 @@ a QR code — put the QR on the table and every guest who scans it gets a
 **guest session** (default 24 h) without touching the IdP. Invite tokens
 are multi-use and expire after `API_GUEST_INVITE_TTL_MINUTES` (default 12 h).
 
-Guests can browse images, use GenAI generation and push a result to a
-display; they cannot upload, delete, or touch devices, jobs, grids, display jobs or
+Guests can browse images (including the books an image shows), read the
+device-profile list GenAI needs to size a generation, use GenAI generation
+and push a result to a display; they cannot upload, delete, or touch devices, jobs, grids, display jobs or
 settings. The allowlist lives in
 `packages/api/src/inky_image_display_api/auth/policy.py`.
 

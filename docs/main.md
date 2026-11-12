@@ -45,7 +45,7 @@ has elapsed, or that were flagged with the UI's "Run now" button. The API
 rings the worker's MQTT wake topic when something is due, so runs start
 within seconds; a slow safety poll (default 10 min) covers missed wakes,
 and the worker announces liveness on a retained status topic (shown in the
-Jobs UI). The one-shot subcommands (`immich`, `gemini`, `display`) remain
+Jobs UI). The one-shot subcommands (`immich`, `gemini`, `calibre`, `display`) remain
 for manual/debug runs; `--all` ignores the schedule and runs every active
 job; `--dry-run` previews without claiming.
 
@@ -54,11 +54,11 @@ job; `--dry-run` previews without claiming.
 1. Reads the target panel dimensions from the job's `target_device_profile_id` (and the job's optional `orientation` override).
 2. Queries Immich using the job's filter criteria (albums, people, tags, dates, etc.).
 3. Filters results client-side by orientation, minimum color score, and vibrancy score.
-4. Downloads, resizes, and stores qualifying images to S3.
+4. Downloads, resizes, and stores qualifying images to S3 under `immich/<asset_id>-<width>x<height>.jpg`, so jobs targeting different panel sizes each get their own crop.
 5. Persists image metadata to the `images` table.
 6. Enforces each job's `max_images` cap (counted against only that job's own uploads) and the `retention_days` expiry by deleting old Immich-sourced images.
 
-After each job run (either subcommand), the worker POSTs a run report to `/api/sync-runs` — status, images added/skipped/deleted, errors — which the UI surfaces per job and which clears the job's "Run now" flag (see [configuration.md](configuration.md)).
+After each claimed job — whatever failed along the way — the worker POSTs a run report to `/api/sync-runs` — status, images added/skipped/deleted, errors — which the UI surfaces per job and which clears the job's "Run now" flag (see [configuration.md](configuration.md)).
 
 **`inky-image-display-sync gemini`** — for each due `GeminiSyncJob`:
 
@@ -66,7 +66,7 @@ After each job run (either subcommand), the worker POSTs a run report to `/api/s
 2. Iterates `subjects × images_per_subject`, calling the configured Gemini image model.
 3. Stores results in S3 under `gemini/{uuid}.jpg` and registers them with `source_name="gemini"`. Optional `retention_days` lets the API clean up later.
 
-Both subcommands share the same `DisplayAPIClient` (subclassed per source for the source-specific endpoints) and the same `ImageProcessor`/`ColorProfileAnalyzer` helpers.
+All subcommands share the same `DisplayAPIClient` (subclassed per source for the source-specific endpoints), parse responses with the shared `inky_image_display_shared.schemas.responses` models, and upload through the shared `inky_image_display_sync.storage.S3StorageClient` (bounded timeouts, calls off the event loop).
 
 ## Data flow
 

@@ -25,7 +25,10 @@ on) or when an operator acts ("show now" / "next"). Each display steps the queue
 and holds it for `display_duration_seconds` (or until an explicit release
 when unset); when the hold expires the member panels are released back to
 their own solo rotation. A single display participates in that system by
-living in a one-panel grid.
+living in a one-panel grid. If a scheduled display fails (e.g. the bucket
+is unreachable) the grid retries after 10 minutes (or at its next cron
+occurrence, if sooner) instead of on every 30-second tick, and other grids
+are unaffected.
 
 ## Mental model
 
@@ -91,8 +94,13 @@ panel at row 1, col 0" as a stable target.
 
 ### API-side cropping, push pre-rendered slices
 
-The display path uploads `grids/{grid_id}/{image_id}/{device_id}.jpg` and
-sends each controller a normal `DisplayCommand` pointing at its slice.
+The display path uploads `grids/{grid_id}/{image_id}/{device_id}-{geometry}.jpg`
+and sends each controller a normal `DisplayCommand` pointing at its slice.
+The geometry digest (canvas, placement rect, panel pixels) makes the slices
+a safe cache: a replayed queue entry reuses them without re-decoding the
+source, while a layout change or re-mounted panel gets fresh slices. The
+source is decoded once per display for all missing slices, under the API's
+image-process gate. Deleting the image removes its slices.
 Alternatives considered:
 
 - Cropping in the controller via a new "crop box" command field — requires
@@ -120,8 +128,9 @@ The mechanism is the `devices.claimed_by_grid_id` column:
 - Non-NULL = the named grid currently owns it (via its content queue);
   solo rotation skips this device until the claim is released.
 
-Claims end automatically when the display hold expires, or via
-`POST /api/grids/{id}/release` — both make the panels due immediately, so
+Claims end automatically when the display hold expires, via
+`POST /api/grids/{id}/release`, or when the grid is deleted — all make the
+panels due immediately, so
 the next rotation tick repaints them all; that mass rotation spreads their
 *following* refreshes evenly across the refresh interval (the
 `stagger_rotation` app setting, on by default) so they don't keep flashing
