@@ -1,8 +1,7 @@
-"""Tests for parsing and selecting from the Calibre-Web OPDS catalog.
+"""Tests for parsing and selecting from a Calibre OPDS catalogue.
 
-The fixture mirrors the real feed's shape: metadata split between Atom
-elements and a rendered XHTML blob, with entries that are missing the
-description, series, rating or categories that a full entry carries.
+The fixture uses the plain Atom/OPDS elements the parser relies on, including
+entries that are missing the optional ones.
 """
 
 import logging
@@ -20,21 +19,18 @@ from inky_image_display_sync.calibre.config import CalibreConnectionConfig
 
 _FEED = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:dcterms="http://purl.org/dc/terms/">
-  <title>Calibre-Web</title>
+  <title>Library</title>
   <entry>
     <title>Der Grüne Fluss</title>
     <author><name>Anna Bergström</name></author>
+    <author><name>Jonas Lind</name></author>
     <publisher><name>dtv</name></publisher>
     <dcterms:language>deu</dcterms:language>
     <category term="Fantasy" label="Belletristik/Fantasy"/>
     <category term="Fantasy" label="Fantasy"/>
-    <content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml">
-      RATING: &#9733;&#9733;&#9733;&#9733;<br/>
-      TAGS: Belletristik/Fantasy, Fantasy<br/>
-      SERIES: Nordlicht-Saga [5]<br/>
-      <p>&lt;p&gt;Der dritte Band
-der Nordlicht-Saga &amp;amp; Fortsetzung.&lt;/p&gt;</p>
-    </div></content>
+    <category scheme="custom_column:Gelesen" term="Gelesen" label="True"/>
+    <summary>&lt;p&gt;Der dritte Band
+der Nordlicht-Saga &amp;amp; Fortsetzung.&lt;/p&gt;</summary>
     <link type="image/jpeg" href="/opds/cover/769" rel="http://opds-spec.org/image"/>
     <link rel="http://opds-spec.org/acquisition" href="/opds/download/769/epub/"/>
   </entry>
@@ -42,9 +38,6 @@ der Nordlicht-Saga &amp;amp; Fortsetzung.&lt;/p&gt;</p>
     <title>Silent Harbour</title>
     <author><name>Peter Vane</name></author>
     <dcterms:language>eng</dcterms:language>
-    <content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml">
-      TAGS: <br/>
-    </div></content>
     <link type="image/jpeg" href="/opds/cover/945" rel="http://opds-spec.org/image"/>
   </entry>
   <entry>
@@ -59,29 +52,29 @@ def test_parses_full_entry():
     book = parse_catalog(_FEED)[0]
     assert book.book_id == 769
     assert book.title == "Der Grüne Fluss"
-    assert book.author == "Anna Bergström"
+    assert book.authors == ["Anna Bergström", "Jonas Lind"]
+    assert book.author == "Anna Bergström, Jonas Lind"
     assert book.publisher == "dtv"
     assert book.language == "deu"
-    assert book.series == "Nordlicht-Saga"
-    assert book.series_index == "5"
-    assert book.rating == 4
+    # The library's own columns (custom_column:*) are not tags.
     assert book.tags == ["Belletristik/Fantasy", "Fantasy"]
-    # Calibre-Web escapes the description's own HTML inside the feed's XHTML
-    # and hard-wraps it, so both have to be flattened away.
+    # Descriptions may carry escaped HTML and hard wrapping, both flattened away.
     assert book.description == "Der dritte Band der Nordlicht-Saga & Fortsetzung."
 
 
 def test_entry_without_optional_fields_degrades_to_none():
     book = parse_catalog(_FEED)[1]
     assert book.book_id == 945
-    assert (book.series, book.series_index, book.rating, book.description, book.publisher) == (
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
+    assert (book.description, book.publisher) == (None, None)
     assert book.tags == []
+
+
+def test_entry_without_authors_has_no_author():
+    entry = '<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>T</title>'
+    entry += '<link href="/opds/cover/1" rel="http://opds-spec.org/image"/></entry></feed>'
+    book = parse_catalog(entry)[0]
+    assert book.authors == []
+    assert book.author is None
 
 
 def test_entry_without_cover_link_is_skipped():
@@ -90,9 +83,9 @@ def test_entry_without_cover_link_is_skipped():
     assert [b.title for b in parse_catalog(_FEED)] == ["Der Grüne Fluss", "Silent Harbour"]
 
 
-def test_subject_line_includes_series_when_present():
+def test_subject_line_names_title_and_authors():
     full, bare = parse_catalog(_FEED)[:2]
-    assert full.as_subject() == '"Der Grüne Fluss" by Anna Bergström (Nordlicht-Saga #5)'
+    assert full.as_subject() == '"Der Grüne Fluss" by Anna Bergström, Jonas Lind'
     assert bare.as_subject() == '"Silent Harbour" by Peter Vane'
 
 
@@ -127,22 +120,23 @@ def test_malformed_feed_raises():
 
 
 def test_filter_matches_any_listed_value_case_insensitively():
-    rated, bare = parse_catalog(_FEED)[:2]
-    assert BookFilter(tags=["fantasy"]).matches(rated)
-    assert BookFilter(tags=["Fantasy", "History"]).matches(rated)
-    assert not BookFilter(tags=["History"]).matches(rated)
+    tagged, bare = parse_catalog(_FEED)[:2]
+    assert BookFilter(tags=["fantasy"]).matches(tagged)
+    assert BookFilter(tags=["Fantasy", "History"]).matches(tagged)
+    assert not BookFilter(tags=["History"]).matches(tagged)
     assert not BookFilter(tags=["Fantasy"]).matches(bare)
 
 
+def test_author_filter_matches_any_of_a_books_authors():
+    book = parse_catalog(_FEED)[0]
+    assert BookFilter(authors=["jonas lind"]).matches(book)
+    assert not BookFilter(authors=["Peter Vane"]).matches(book)
+
+
 def test_filter_constraints_combine_as_and():
-    rated = parse_catalog(_FEED)[0]
-    assert BookFilter(tags=["Fantasy"], languages=["deu"], min_rating=4).matches(rated)
-    assert not BookFilter(tags=["Fantasy"], languages=["eng"]).matches(rated)
-
-
-def test_unrated_book_never_satisfies_a_minimum_rating():
-    bare = parse_catalog(_FEED)[1]
-    assert not BookFilter(min_rating=1).matches(bare)
+    book = parse_catalog(_FEED)[0]
+    assert BookFilter(tags=["Fantasy"], languages=["deu"]).matches(book)
+    assert not BookFilter(tags=["Fantasy"], languages=["eng"]).matches(book)
 
 
 def test_empty_filter_matches_everything():
@@ -190,7 +184,7 @@ def _client_paging(pages: list[str]) -> tuple[CalibreClient, list[str]]:
         requested.append(path)
         return httpx2.Response(200, text=pages[len(requested) - 1])
 
-    client._get = fake_get  # ty: ignore[invalid-assignment]
+    client._get = fake_get
     return client, requested
 
 
@@ -222,3 +216,96 @@ async def test_zero_ttl_disables_the_cache():
     await client.fetch_catalog()
     await client.fetch_catalog()
     assert len(requested) == 2
+
+
+# --- authentication ---------------------------------------------------------
+
+
+def _client_with_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    handler,
+    username: str | None = None,
+    password: str | None = None,
+) -> CalibreClient:
+    """A client whose real ``_get`` runs against an in-process fake server."""
+    real_client = httpx2.AsyncClient
+    monkeypatch.setattr(
+        "inky_image_display_sync.calibre.client.httpx2.AsyncClient",
+        lambda **kwargs: real_client(transport=httpx2.MockTransport(handler), **kwargs),
+    )
+    return CalibreClient(
+        CalibreConnectionConfig(base_url="http://calibre.invalid", username=username, password=password),
+        logging.getLogger("test"),
+    )
+
+
+async def test_credentials_are_sent_as_basic_auth_on_catalog_and_cover(monkeypatch):
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        if "cover" in request.url.path:
+            return httpx2.Response(200, content=b"img")
+        return httpx2.Response(200, text=_page(1, 1))
+
+    client = _client_with_transport(monkeypatch, handler, username="inky", password="s3cret")
+    await client.fetch_catalog()
+    await client.fetch_cover(1)
+
+    # The expected value is the base64 encoding of inky:s3cret.
+    assert len(seen) == 2
+    assert all(r.headers["Authorization"] == "Basic aW5reTpzM2NyZXQ=" for r in seen)
+
+
+async def test_no_credentials_means_no_authorization_header(monkeypatch):
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        return httpx2.Response(200, text=_page(1, 1))
+
+    client = _client_with_transport(monkeypatch, handler)
+    await client.fetch_catalog()
+
+    assert "Authorization" not in seen[0].headers
+
+
+@pytest.mark.parametrize("status", [401, 403])
+async def test_rejected_credentials_raise_an_explicit_error(monkeypatch, status):
+    client = _client_with_transport(monkeypatch, lambda _r: httpx2.Response(status), username="inky", password="wrong")
+    with pytest.raises(CalibreError, match="rejected the credentials") as exc_info:
+        await client.fetch_catalog()
+    # The error text ends up in logs and the job's status, so the secret must not.
+    assert "wrong" not in str(exc_info.value)
+
+
+async def test_unauthorised_without_credentials_points_at_the_missing_config(monkeypatch):
+    client = _client_with_transport(monkeypatch, lambda _r: httpx2.Response(401))
+    with pytest.raises(CalibreError, match="CALIBRE_USERNAME"):
+        await client.fetch_catalog()
+
+
+async def test_redirects_are_not_followed_so_credentials_stay_on_the_base_host(monkeypatch):
+    hosts: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        hosts.append(request.url.host)
+        return httpx2.Response(302, headers={"Location": "http://elsewhere.invalid/opds"})
+
+    client = _client_with_transport(monkeypatch, handler, username="inky", password="s3cret")
+    with pytest.raises(CalibreError, match="302"):
+        await client.fetch_catalog()
+
+    assert hosts == ["calibre.invalid"]
+
+
+def test_half_a_credential_pair_is_rejected_at_startup():
+    with pytest.raises(ValueError, match="set together"):
+        CalibreConnectionConfig(base_url="http://calibre.invalid", username="inky")
+    with pytest.raises(ValueError, match="set together"):
+        CalibreConnectionConfig(base_url="http://calibre.invalid", password="s3cret")
+
+
+def test_password_is_masked_in_config_repr():
+    config = CalibreConnectionConfig(base_url="http://calibre.invalid", username="inky", password="s3cret")
+    assert "s3cret" not in repr(config)

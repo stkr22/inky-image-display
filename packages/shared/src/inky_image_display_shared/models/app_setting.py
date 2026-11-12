@@ -6,8 +6,7 @@ while allowing future settings to be numbers, booleans, or short lists
 without further migrations.
 """
 
-from datetime import datetime
-
+from pydantic import NaiveDatetime
 from sqlmodel import Field, SQLModel
 
 from inky_image_display_shared.time import utcnow
@@ -27,4 +26,4 @@ class AppSetting(SQLModel, table=True):
 
     key: str = Field(primary_key=True)
     value: str = Field(description="JSON-encoded scalar value")
-    updated_at: datetime = Field(default_factory=utcnow, sa_column_kwargs={"onupdate": utcnow})
+    updated_at: NaiveDatetime = Field(default_factory=utcnow, sa_column_kwargs={"onupdate": utcnow})

@@ -19,9 +19,9 @@ Images referencing a group are excluded from solo and grid-pool rotation;
 the grid's queue interleaves groups with loose pool images.
 """
 
-from datetime import datetime
 from uuid import UUID, uuid4
 
+from pydantic import NaiveDatetime
 from sqlmodel import Field, SQLModel
 
 from inky_image_display_shared.time import utcnow
@@ -47,7 +47,7 @@ class ImageGroup(SQLModel, table=True):
     # Position within the grid's queue; shared sequence with loose pool
     # images (Image.queue_position) so operators can interleave both.
     queue_position: int = Field(default=0)
-    last_displayed_at: datetime | None = Field(default=None)
+    last_displayed_at: NaiveDatetime | None = Field(default=None)
 
-    created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = Field(default_factory=utcnow, sa_column_kwargs={"onupdate": utcnow})
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    updated_at: NaiveDatetime = Field(default_factory=utcnow, sa_column_kwargs={"onupdate": utcnow})

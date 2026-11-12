@@ -1,18 +1,17 @@
-"""Async client for the Calibre-Web OPDS catalog.
+"""Async client for a Calibre OPDS catalogue.
 
 The whole library is paged in once and cached, and selection happens locally.
-Calibre-Web's own random feed (``/opds/discover``) takes no parameters and
+The server's own random feed (``/opds/discover``) takes no parameters and
 ignores offset and limit, so server-side random and server-side filtering are
-mutually exclusive. Holding the catalog ourselves gives both at once — filter
-on tags, language, series or rating and *then* sample — and makes a shelf
-reproducible from a seed, which the server can never offer.
+mutually exclusive. Holding the catalogue ourselves gives both at once — filter
+on tags, language or author and *then* sample — and makes a shelf reproducible
+from a seed, which the server can never offer.
 
-The catalog is Atom XML rather than JSON, and Calibre-Web packs the fields we
-care about into two places: proper Atom elements for title, author, publisher,
-language and cover, and a rendered XHTML blob in ``<content>`` that carries
-rating, tags, series and the description. The blob is parsed with the XML tree
-rather than by scraping strings so an entry missing any of those degrades to
-``None`` instead of shifting the other fields.
+Only plain Atom/OPDS elements are read: title, authors, publisher, language,
+categories, summary and the cover link. Servers differ in what else they put
+in an entry (Calibre-Web packs rating and series into a rendered blob, while
+Calibre-Web Automated omits them), so nothing outside the standard elements is
+relied on and an entry missing any of them degrades to ``None``.
 """
 
 from __future__ import annotations
@@ -25,24 +24,23 @@ import xml.etree.ElementTree as ET
 from typing import TYPE_CHECKING
 
 import httpx2
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
     import logging
-    from collections.abc import Sequence
+    from collections.abc import Collection, Sequence
 
     from inky_image_display_sync.calibre.config import CalibreConnectionConfig
 
 _ATOM = "http://www.w3.org/2005/Atom"
-_XHTML = "http://www.w3.org/1999/xhtml"
 _DCTERMS = "http://purl.org/dc/terms/"
-_NS = {"a": _ATOM, "x": _XHTML, "d": _DCTERMS}
+_NS = {"a": _ATOM, "d": _DCTERMS}
 
 # Both the full image and the thumbnail point at /opds/cover/<id>; the numeric
-# id is the only handle Calibre-Web exposes for a book in the feed.
+# id is the only handle the server exposes for a book in the feed.
 _COVER_REL = "http://opds-spec.org/image"
 
-# "00" is Calibre-Web's "All" letter bucket, and the feed pages 60 at a time.
+# "00" is the "All" letter bucket, and the feed pages 60 at a time.
 _CATALOG_PATH = "/opds/books/letter/00"
 _PAGE_SIZE = 60
 # Backstop against an endpoint that never returns a short page.
@@ -64,14 +62,16 @@ class CalibreBook(BaseModel):
 
     book_id: int
     title: str
-    author: str | None = None
+    authors: list[str] = []
     publisher: str | None = None
     language: str | None = None
-    series: str | None = None
-    series_index: str | None = None
-    rating: int | None = Field(default=None, ge=1, le=5)
     tags: list[str] = []
     description: str | None = None
+
+    @property
+    def author(self) -> str | None:
+        """All authors as one display string; None when the entry names none."""
+        return ", ".join(self.authors) or None
 
     def short_title(self, max_length: int = SPINE_TITLE_MAX_LENGTH) -> str:
         """Return the title trimmed to its main heading, for spine lettering.
@@ -92,9 +92,6 @@ class CalibreBook(BaseModel):
         parts = [f'"{self.title}"']
         if self.author:
             parts.append(f"by {self.author}")
-        if self.series:
-            index = f" #{self.series_index}" if self.series_index else ""
-            parts.append(f"({self.series}{index})")
         return " ".join(parts)
 
 
@@ -111,19 +108,14 @@ class BookFilter(BaseModel):
 
     tags: list[str] = []
     languages: list[str] = []
-    series: list[str] = []
     authors: list[str] = []
-    min_rating: int | None = Field(default=None, ge=1, le=5)
 
     def matches(self, book: CalibreBook) -> bool:
         """Report whether the book satisfies every configured constraint."""
-        if self.min_rating is not None and (book.rating or 0) < self.min_rating:
-            return False
         return (
             _any_match(self.tags, book.tags)
             and _any_match(self.languages, [book.language])
-            and _any_match(self.series, [book.series])
-            and _any_match(self.authors, [book.author])
+            and _any_match(self.authors, book.authors)
         )
 
 
@@ -140,13 +132,17 @@ def select_books(
     count: int,
     book_filter: BookFilter | None = None,
     seed: int | None = None,
+    exclude: Collection[int] = (),
 ) -> list[CalibreBook]:
     """Filter the catalog then take a random sample of at most ``count``.
+
+    ``exclude`` holds Calibre ids that must not be picked, e.g. books already
+    on display.
 
     Passing a seed makes the shelf reproducible, which is what lets a failed
     generation be retried with the same books rather than a fresh set.
     """
-    candidates = [b for b in books if book_filter is None or book_filter.matches(b)]
+    candidates = [b for b in books if b.book_id not in exclude and (book_filter is None or book_filter.matches(b))]
     if len(candidates) <= count:
         return candidates
     return random.Random(seed).sample(candidates, count)
@@ -164,31 +160,12 @@ _WHITESPACE = re.compile(r"\s+")
 def _clean_description(text: str) -> str:
     """Flatten a description into a single line of plain prose.
 
-    Calibre stores descriptions as HTML and Calibre-Web escapes that markup
-    inside the feed's own XHTML, so the parsed text arrives as a literal
-    ``<p>...</p>`` string wrapped at the source's line width. Both the tags and
-    the hard wrapping have to go before this is usable as prompt input.
+    Calibre stores descriptions as HTML, and some servers pass that markup
+    through the summary escaped, so the text can arrive as literal ``<p>...</p>``
+    with hard line wrapping. Tags and wrapping have to go before this is usable
+    as prompt input.
     """
     return _WHITESPACE.sub(" ", html.unescape(_TAG.sub(" ", text))).strip()
-
-
-def _parse_series(blob: str) -> tuple[str | None, str | None]:
-    """Pull ``SERIES: Name [index]`` out of the rendered content blob."""
-    _, _, rest = blob.partition("SERIES:")
-    line = rest.splitlines()[0].strip() if rest else ""
-    if not line:
-        return None, None
-    name, sep, index = line.rpartition("[")
-    if not sep:
-        return line, None
-    return name.strip() or None, index.rstrip("]").strip() or None
-
-
-def _parse_rating(blob: str) -> int | None:
-    """Count the stars on the ``RATING:`` line; unrated books have no line."""
-    _, _, rest = blob.partition("RATING:")
-    stars = rest.splitlines()[0].count("★") if rest else 0
-    return stars or None
 
 
 def _parse_entry(entry: ET.Element) -> CalibreBook | None:
@@ -202,25 +179,22 @@ def _parse_entry(entry: ET.Element) -> CalibreBook | None:
     if not title or not book_id.isdigit():
         return None
 
-    content = entry.find("a:content/x:div", _NS)
-    blob = "".join(content.itertext()) if content is not None else ""
-    series, series_index = _parse_series(blob)
-    # Calibre-Web renders the description as the trailing <p> of the blob;
-    # books without one simply have no paragraph.
-    paragraphs = content.findall("x:p", _NS) if content is not None else []
-    description = _clean_description("".join(paragraphs[0].itertext())) if paragraphs else None
-
+    summary = _text(entry, "a:summary")
     return CalibreBook(
         book_id=int(book_id),
         title=title,
-        author=_text(entry, "a:author/a:name"),
+        authors=[name for a in entry.findall("a:author/a:name", _NS) if (name := (a.text or "").strip())],
         publisher=_text(entry, "a:publisher/a:name"),
         language=_text(entry, "d:language"),
-        series=series,
-        series_index=series_index,
-        rating=_parse_rating(blob),
-        tags=[label for c in entry.findall("a:category", _NS) if (label := c.get("label"))],
-        description=description or None,
+        # custom_column:* categories are the library's own columns (e.g. a
+        # "Gelesen" read flag), whose label is the column's value ("True"),
+        # not a tag, so they would pollute tag filters.
+        tags=[
+            label
+            for c in entry.findall("a:category", _NS)
+            if (label := c.get("label")) and not c.get("scheme", "").startswith("custom_column:")
+        ],
+        description=(_clean_description(summary) if summary else None) or None,
     )
 
 
@@ -234,7 +208,7 @@ def parse_catalog(xml: str) -> list[CalibreBook]:
 
 
 class CalibreClient:
-    """Reads books and covers from Calibre-Web's OPDS catalog.
+    """Reads books and covers from a Calibre OPDS catalogue.
 
     The catalog is cached in memory for ``cache_ttl_seconds`` because paging the
     whole library costs a request per 60 books and a home library changes far
@@ -247,13 +221,29 @@ class CalibreClient:
         self.timeout = config.timeout_seconds
         self.verify_ssl = config.verify_ssl
         self.cache_ttl_seconds = config.cache_ttl_seconds
+        self._auth = (
+            httpx2.BasicAuth(config.username, config.password.get_secret_value())
+            if config.username is not None and config.password is not None
+            else None
+        )
         self.logger = logger
         self._cache: list[CalibreBook] | None = None
         self._cached_at = 0.0
 
     async def _get(self, path: str) -> httpx2.Response:
-        async with httpx2.AsyncClient(timeout=self.timeout, verify=self.verify_ssl) as client:
-            response = await client.get(f"{self.base_url}{path}")
+        # Redirects stay off on purpose: every URL is built from base_url, so
+        # credentials can only ever reach that host. A redirect (say, to a
+        # login page on another host) is reported as an error instead of being
+        # followed with an Authorization header.
+        async with httpx2.AsyncClient(timeout=self.timeout, verify=self.verify_ssl, follow_redirects=False) as client:
+            response = await client.get(f"{self.base_url}{path}", auth=self._auth)
+        if response.status_code in (httpx2.codes.UNAUTHORIZED, httpx2.codes.FORBIDDEN):
+            # Surfaced distinctly so a bad credential is never mistaken for an
+            # empty library or a transient outage.
+            hint = "" if self._auth else " (no CALIBRE_USERNAME/CALIBRE_PASSWORD configured)"
+            raise CalibreError(
+                f"Calibre OPDS rejected the credentials: GET {path} returned {response.status_code}{hint}"
+            )
         if response.status_code != httpx2.codes.OK:
             raise CalibreError(f"GET {path} returned {response.status_code}")
         return response

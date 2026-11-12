@@ -476,7 +476,7 @@ class TestProcessAssetCallsApiForResize:
         assert result == ProcessResult.DOWNLOADED
         process_mock.assert_awaited_once()
         # Payload uploaded to S3 must be the API's processed bytes, not the raw download.
-        upload_kwargs = service.storage.upload_from_bytes.call_args.kwargs  # ty: ignore[unresolved-attribute]
+        upload_kwargs = service.storage.upload_from_bytes.call_args.kwargs  # ty: ignore[missing-attribute]
         assert upload_kwargs["data"] == b"processed-image"
 
     @pytest.mark.asyncio
@@ -498,7 +498,7 @@ class TestProcessAssetCallsApiForResize:
             result = await service._process_asset(self._make_asset(), self._make_job(), self._landscape_reqs())
 
         assert result == ProcessResult.SKIPPED_UNDERSIZED
-        service.storage.upload_from_bytes.assert_not_called()  # ty: ignore[unresolved-attribute]
+        service.storage.upload_from_bytes.assert_not_called()  # ty: ignore[missing-attribute]
 
 
 def _make_random_job(**overrides: object) -> SyncJobItem:

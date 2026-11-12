@@ -1,21 +1,25 @@
+import { lazy } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { Spinner } from './components/ui'
 import { useAuth } from './lib/auth'
-import { DisplayJobForm } from './pages/DisplayJobForm'
-import { Displays } from './pages/Displays'
-import { CalibreJobForm } from './pages/CalibreJobForm'
-import { GeminiJobForm } from './pages/GeminiJobForm'
-import { GenAI } from './pages/GenAI'
-import { GridDetail } from './pages/GridDetail'
-import { ImageDetail } from './pages/ImageDetail'
-import { Images } from './pages/Images'
-import { ImageUpload } from './pages/ImageUpload'
-import { Jobs } from './pages/Jobs'
-import { Landing } from './pages/Landing'
-import { Settings } from './pages/Settings'
 import { SignIn } from './pages/SignIn'
-import { SyncJobForm } from './pages/SyncJobForm'
+
+// Pages are split per route so the first paint only ships the shell and the
+// page being opened; the pages are named exports, hence the default-wrapping.
+const DisplayJobForm = lazy(() => import('./pages/DisplayJobForm').then((m) => ({ default: m.DisplayJobForm })))
+const Displays = lazy(() => import('./pages/Displays').then((m) => ({ default: m.Displays })))
+const CalibreJobForm = lazy(() => import('./pages/CalibreJobForm').then((m) => ({ default: m.CalibreJobForm })))
+const GeminiJobForm = lazy(() => import('./pages/GeminiJobForm').then((m) => ({ default: m.GeminiJobForm })))
+const GenAI = lazy(() => import('./pages/GenAI').then((m) => ({ default: m.GenAI })))
+const GridDetail = lazy(() => import('./pages/GridDetail').then((m) => ({ default: m.GridDetail })))
+const ImageDetail = lazy(() => import('./pages/ImageDetail').then((m) => ({ default: m.ImageDetail })))
+const Images = lazy(() => import('./pages/Images').then((m) => ({ default: m.Images })))
+const ImageUpload = lazy(() => import('./pages/ImageUpload').then((m) => ({ default: m.ImageUpload })))
+const Jobs = lazy(() => import('./pages/Jobs').then((m) => ({ default: m.Jobs })))
+const Landing = lazy(() => import('./pages/Landing').then((m) => ({ default: m.Landing })))
+const Settings = lazy(() => import('./pages/Settings').then((m) => ({ default: m.Settings })))
+const SyncJobForm = lazy(() => import('./pages/SyncJobForm').then((m) => ({ default: m.SyncJobForm })))
 
 export function App() {
   const auth = useAuth()

@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 async def _seed_preset(engine: AsyncEngine) -> PromptPreset:
     """Insert a minimal default preset plus its five blocks."""
     async with engine.begin() as conn:
-        for table in [PromptPreset.__table__, PromptBlock.__table__]:  # ty: ignore[unresolved-attribute]
+        for table in [PromptPreset.__table__, PromptBlock.__table__]:  # ty: ignore[missing-attribute]
             await conn.run_sync(table.create, checkfirst=True)
 
     blocks = [

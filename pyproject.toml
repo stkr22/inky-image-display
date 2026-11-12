@@ -23,14 +23,14 @@ override-dependencies = ["idna>=3.18"]
 
 [dependency-groups]
 dev = [
-    "ruff~=0.16.4",
-    "ty~=0.0.74",
-    "pytest~=9.1.1",
+    "ruff~=0.17.4",
+    "ty~=0.0.101",
+    "pytest~=9.2.0",
     "pytest-cov~=7.1.0",
-    "pytest-asyncio~=1.4.0",
+    "pytest-asyncio~=1.4.1",
     "pytest-timeout~=2.4.0",
     "aiosqlite~=0.22.1",
-    "pillow~=12.3.0",
+    "pillow~=13.0.0",
 ]
 
 [tool.ty.rules]
@@ -46,6 +46,7 @@ testpaths = [
     "packages/api/tests",
 ]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 timeout = "30"
 
 [tool.ruff]

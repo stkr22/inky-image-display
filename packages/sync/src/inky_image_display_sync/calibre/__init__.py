@@ -1,4 +1,4 @@
-"""Calibre-Web integration for building displays from a book library."""
+"""Calibre OPDS integration for building displays from a book library."""
 
 from inky_image_display_sync.calibre.api_client import CalibreDisplayAPIClient, CalibreSyncJobItem
 from inky_image_display_sync.calibre.client import (

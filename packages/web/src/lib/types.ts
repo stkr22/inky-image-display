@@ -173,6 +173,12 @@ export interface GeminiJob {
   updated_at: string
 }
 
+export interface ImageBook {
+  position: number
+  book_id: number
+  title: string
+}
+
 export interface CalibreJob {
   id: string
   name: string
@@ -182,10 +188,10 @@ export interface CalibreJob {
   prompt_preset_id: string
   tags: string[]
   languages: string[]
-  series: string[]
   authors: string[]
-  min_rating: number | null
   books_per_shelf: number
+  shelf_rows: number
+  avoid_repeats: boolean
   images_per_run: number
   retention_days: number | null
   verify_spines: boolean

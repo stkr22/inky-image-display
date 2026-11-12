@@ -6,9 +6,9 @@ the next cron and read the worker logs". Each completed job run POSTs one
 row here so the UI can answer "did it work, and what did it do?" per job.
 """
 
-from datetime import datetime
 from uuid import UUID, uuid4
 
+from pydantic import NaiveDatetime
 from sqlmodel import Field, SQLModel
 
 from inky_image_display_shared.time import utcnow
@@ -50,11 +50,11 @@ class SyncJobRun(SQLModel, table=True):
     job_id: UUID = Field(index=True)
     job_name: str
     status: str = Field(description="'running', 'success' or 'error'")
-    started_at: datetime
-    finished_at: datetime | None = Field(default=None)
+    started_at: NaiveDatetime
+    finished_at: NaiveDatetime | None = Field(default=None)
     images_added: int = Field(default=0)
     images_skipped: int = Field(default=0)
     images_deleted: int = Field(default=0)
     detail: str | None = Field(default=None)
     error: str | None = Field(default=None)
-    created_at: datetime = Field(default_factory=utcnow)
+    created_at: NaiveDatetime = Field(default_factory=utcnow)

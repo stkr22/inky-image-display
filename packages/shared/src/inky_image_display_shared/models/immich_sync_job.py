@@ -1,9 +1,9 @@
 """Immich sync job configuration model."""
 
 import enum
-from datetime import datetime
 from uuid import UUID, uuid4
 
+from pydantic import NaiveDatetime
 from sqlalchemy import Column
 from sqlalchemy.types import JSON
 from sqlmodel import Field, SQLModel
@@ -117,8 +117,8 @@ class ImmichSyncJob(SQLModel, table=True):
     city: str | None = Field(default=None, description="Filter by city")
     state: str | None = Field(default=None, description="Filter by state/region")
     country: str | None = Field(default=None, description="Filter by country")
-    taken_after: datetime | None = Field(default=None, description="Photos taken after")
-    taken_before: datetime | None = Field(default=None, description="Photos taken before")
+    taken_after: NaiveDatetime | None = Field(default=None, description="Photos taken after")
+    taken_before: NaiveDatetime | None = Field(default=None, description="Photos taken before")
     rating: int | None = Field(default=None, ge=0, le=5, description="Minimum rating")
 
     # Scheduling lives on the job row so cadence is operator-tunable from
@@ -135,19 +135,19 @@ class ImmichSyncJob(SQLModel, table=True):
     # Cron fields are wall-clock — "daily at 06:00" must survive DST, so the
     # expression is evaluated in this zone (mirrors Grid.display_timezone).
     schedule_timezone: str = Field(default="UTC")
-    next_run_at: datetime | None = Field(
+    next_run_at: NaiveDatetime | None = Field(
         default=None,
         description="When the job is next due; advanced by the claim-due hand-out",
     )
-    last_run_at: datetime | None = Field(
+    last_run_at: NaiveDatetime | None = Field(
         default=None,
         description="Finish time of the most recent reported run",
     )
 
     # Set by the "Run now" endpoint; makes the job due immediately (active
     # or not) and the run report clears the flag.
-    run_requested_at: datetime | None = Field(default=None)
+    run_requested_at: NaiveDatetime | None = Field(default=None)
 
     # Timestamps
-    created_at: datetime = Field(default_factory=utcnow, description="When created")
-    updated_at: datetime = Field(default_factory=utcnow, description="When last updated")
+    created_at: NaiveDatetime = Field(default_factory=utcnow, description="When created")
+    updated_at: NaiveDatetime = Field(default_factory=utcnow, description="When last updated")

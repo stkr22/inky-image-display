@@ -5,6 +5,7 @@
 #   s3Writer / s3Reader:  access-key-id, secret-access-key
 #   immich:               apiKey
 #   gemini:               gemini-api-key
+#   calibre:              username, password (optional)
 #   auth:                 session-secret, sync-token, device-token,
 #                         oidc-client-secret (all optional; see docs/auth.md)
 
@@ -57,9 +58,13 @@ config:
   immich:
     baseUrl: ""  # e.g. https://immich.example.com
 
-  # Calibre-Web serving the OPDS catalogue the bookshelf source reads. The
+  # Calibre server (Calibre-Web, Calibre-Web Automated) serving the OPDS
+  # catalogue the bookshelf source reads. The
   # worker is the only caller, so an in-cluster service address is fine and
-  # avoids whatever auth sits in front of the public hostname.
+  # avoids whatever auth sits in front of the public hostname. If the server
+  # requires a login (Calibre-Web Automated with Anonymous Browsing off), set
+  # existingSecrets.calibre; the worker then sends HTTP basic auth to this
+  # host only.
   calibre:
     baseUrl: ""  # e.g. http://calibre-web.calibre-web.svc.cluster.local
 
@@ -89,6 +94,11 @@ existingSecrets:
   # unaffected; when set the Secret may still be absent (the env var is
   # marked optional).
   gemini: ""
+  # Optional (keys: username, password): HTTP basic-auth credentials for the
+  # OPDS catalogue at config.calibre.baseUrl. Needs a local account on the
+  # server (OIDC users have no password). When empty, requests are anonymous,
+  # which is what servers with Anonymous Browsing enabled expect.
+  calibre: ""
   # Recommended with config.auth. Keys (each optional in the Secret):
   #   session-secret      signs session cookies + guest invites; without it
   #                       every API restart logs everyone out
@@ -210,7 +220,7 @@ sync:
   display:
     enabled: false
 
-  # Opt-in: bookshelf images generated from a Calibre-Web library. Needs
+  # Opt-in: bookshelf images generated from a Calibre library. Needs
   # config.calibre.baseUrl and existingSecrets.gemini. Each bookshelf job's
   # own schedule decides how often images are generated (and billed);
   # verification adds roughly two extra generations per accepted shelf.

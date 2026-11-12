@@ -1,7 +1,7 @@
 """Async HTTP client for Immich API."""
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -77,7 +77,7 @@ class ImmichClient:
         self._client: httpx2.AsyncClient | None = None
 
     @asynccontextmanager
-    async def connect(self) -> AsyncIterator["ImmichClient"]:
+    async def connect(self) -> AsyncGenerator["ImmichClient"]:
         """Context manager for HTTP client lifecycle."""
         self._client = httpx2.AsyncClient(
             base_url=self.base_url,

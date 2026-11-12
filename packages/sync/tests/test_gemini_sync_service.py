@@ -112,7 +112,7 @@ async def test_no_active_jobs_returns_empty() -> None:
     service = _make_service(api_client)
 
     assert await service.sync_jobs(all_active=True) == []
-    service.storage.ensure_bucket_exists.assert_called_once()  # ty: ignore[unresolved-attribute]
+    service.storage.ensure_bucket_exists.assert_called_once()  # ty: ignore[missing-attribute]
 
 
 async def test_fan_out_generates_subjects_times_count_and_registers() -> None:
@@ -133,7 +133,7 @@ async def test_fan_out_generates_subjects_times_count_and_registers() -> None:
     assert generate_mock.await_count == 4
 
     # Every generated image was uploaded and registered with the expected payload.
-    assert service.storage.upload_from_bytes.call_count == 4  # ty: ignore[unresolved-attribute]
+    assert service.storage.upload_from_bytes.call_count == 4  # ty: ignore[missing-attribute]
     payload = api_client.register_image.call_args.args[0]
     assert payload.source_name == "gemini"
     assert payload.storage_path.startswith("gemini/")

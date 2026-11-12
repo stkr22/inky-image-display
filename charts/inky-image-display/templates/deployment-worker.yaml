@@ -69,6 +69,18 @@ spec:
               value: {{ required "config.calibre.baseUrl is required when sync.calibre.enabled" .Values.config.calibre.baseUrl | quote }}
             - name: CALIBRE_CACHE_TTL_SECONDS
               value: {{ .Values.sync.calibre.cacheTtlSeconds | quote }}
+            {{- with .Values.existingSecrets.calibre }}
+            - name: CALIBRE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: username
+            - name: CALIBRE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: password
+            {{- end }}
             {{- end }}
             {{- if or .Values.sync.gemini.enabled .Values.sync.display.enabled .Values.sync.calibre.enabled }}
             - name: GEMINI_API_KEY

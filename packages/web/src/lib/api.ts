@@ -9,6 +9,7 @@ import type {
   DeviceProfile,
   DisplayJob,
   CalibreJob,
+  ImageBook,
   GeminiJob,
   GenerationTask,
   Grid,
@@ -130,6 +131,7 @@ export const api = {
     return { items, total }
   },
   getImage: (id: string) => request<Image>(`/api/images/${id}`),
+  getImageBooks: (id: string) => request<ImageBook[]>(`/api/images/${id}/books`),
   getImageStats: () => request<ImageStats>('/api/images/stats'),
   uploadImage: (file: File, metadata: Record<string, unknown>) => {
     const formData = new FormData()

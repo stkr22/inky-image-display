@@ -290,10 +290,10 @@ class CalibreSyncJobResponse(BaseModel):
     prompt_preset_id: UUID
     tags: list[str]
     languages: list[str]
-    series: list[str]
     authors: list[str]
-    min_rating: int | None
     books_per_shelf: int
+    shelf_rows: int
+    avoid_repeats: bool
     images_per_run: int
     retention_days: int | None
     verify_spines: bool
@@ -305,6 +305,16 @@ class CalibreSyncJobResponse(BaseModel):
     run_requested_at: UtcDatetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class ImageBookResponse(BaseModel):
+    """One book shown on an image, in reading order."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    position: int
+    book_id: int
+    title: str
 
 
 # --- Grids ---

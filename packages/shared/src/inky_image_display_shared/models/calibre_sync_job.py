@@ -5,16 +5,17 @@ Mirrors the role of ``GeminiSyncJob`` for a book library. Each run picks
 job's criteria, sampled at random — and generates one image per set.
 
 A job runs exactly one ``mode``. Splitting them keeps the row honest: a shelf
-needs several books and a landscape panel, a hero needs one book, its cover
-art and a portrait panel, so a single row trying to do both would leave half
-its columns meaningless. Two rows also give the two modes independent
+needs several books and a landscape panel, a bookcase stacks several shelves on
+a portrait panel, a hero needs one book, its cover art and a portrait panel, so
+a single row trying to do all three would leave half its columns meaningless.
+Separate rows also give the modes independent
 schedules and filters, which is what you want anyway — "Fantasy shelves on
 Sundays" alongside "five-star heroes daily".
 """
 
-from datetime import datetime
 from uuid import UUID, uuid4
 
+from pydantic import NaiveDatetime
 from sqlalchemy import Column
 from sqlalchemy.types import JSON
 from sqlmodel import Field, SQLModel
@@ -26,6 +27,8 @@ from inky_image_display_shared.time import utcnow
 # these, so orientation is derived from the mode rather than stored.
 MODE_SHELF = "shelf"
 MODE_HERO = "hero"
+# Several stacked shelves on a portrait panel; a shelf is one landscape row.
+MODE_BOOKCASE = "bookcase"
 
 
 class CalibreSyncJob(SQLModel, table=True):
@@ -39,7 +42,7 @@ class CalibreSyncJob(SQLModel, table=True):
 
     mode: str = Field(
         default=MODE_SHELF,
-        description="'shelf' (a row of spines) or 'hero' (one book's cover).",
+        description="'shelf' (a row of spines), 'bookcase' (stacked shelves, portrait) or 'hero' (one cover).",
     )
     target_device_profile_id: UUID = Field(
         foreign_key="device_profiles.id",
@@ -55,15 +58,23 @@ class CalibreSyncJob(SQLModel, table=True):
     # together. Empty means "no constraint on this axis".
     tags: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     languages: list[str] = Field(default_factory=list, sa_column=Column(JSON))
-    series: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     authors: list[str] = Field(default_factory=list, sa_column=Column(JSON))
-    min_rating: int | None = Field(default=None, ge=1, le=5)
 
     books_per_shelf: int = Field(
         default=6,
         ge=2,
         le=12,
         description="Books on one shelf; ignored in hero mode.",
+    )
+    shelf_rows: int = Field(
+        default=3,
+        ge=2,
+        le=5,
+        description="Shelves stacked in one image; bookcase mode only.",
+    )
+    avoid_repeats: bool = Field(
+        default=True,
+        description="Skip books that are already on a live image, so none is on two walls at once.",
     )
     images_per_run: int = Field(default=1, ge=1, le=10)
     retention_days: int | None = Field(
@@ -91,18 +102,18 @@ class CalibreSyncJob(SQLModel, table=True):
         description="Five-field cron expression; None = manual runs only",
     )
     schedule_timezone: str = Field(default="UTC")
-    next_run_at: datetime | None = Field(
+    next_run_at: NaiveDatetime | None = Field(
         default=None,
         description="When the job is next due; advanced by the claim-due hand-out",
     )
-    last_run_at: datetime | None = Field(
+    last_run_at: NaiveDatetime | None = Field(
         default=None,
         description="Finish time of the most recent reported run",
     )
 
     # Set by the "Run now" endpoint; makes the job due immediately (active
     # or not) and the run report clears the flag.
-    run_requested_at: datetime | None = Field(default=None)
+    run_requested_at: NaiveDatetime | None = Field(default=None)
 
-    created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = Field(default_factory=utcnow)
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    updated_at: NaiveDatetime = Field(default_factory=utcnow)

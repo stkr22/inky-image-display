@@ -8,12 +8,19 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Form, HTTPException, Request, Response, UploadFile
-from inky_image_display_shared.models import Image
+from inky_image_display_shared.models import Image, ImageBook
 from PIL import Image as PILImage
-from sqlmodel import col, func, or_, select
+from sqlmodel import col, delete, func, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from inky_image_display_api.schemas import ImageCreate, ImageRegister, ImageResponse, ImageStatsResponse, ImageUpdate
+from inky_image_display_api.schemas import (
+    ImageBookResponse,
+    ImageCreate,
+    ImageRegister,
+    ImageResponse,
+    ImageStatsResponse,
+    ImageUpdate,
+)
 
 router = APIRouter(prefix="/api/images", tags=["images"])
 logger = logging.getLogger(__name__)
@@ -156,10 +163,23 @@ async def register_image(request: Request, body: ImageRegister) -> Image:
     )
     async with AsyncSession(request.app.state.engine) as session:
         session.add(image)
+        session.add_all(
+            ImageBook(image_id=image.id, position=i, book_id=b.book_id, title=b.title) for i, b in enumerate(body.books)
+        )
         await session.commit()
         await session.refresh(image)
     logger.info("Registered image %s (%s)", image.id, image.storage_path)
     return image
+
+
+@router.get("/{image_id}/books", response_model=list[ImageBookResponse])
+async def list_image_books(request: Request, image_id: UUID) -> list[ImageBook]:
+    """Books shown on an image, in reading order (empty for non-book images)."""
+    async with AsyncSession(request.app.state.engine) as session:
+        result = await session.exec(
+            select(ImageBook).where(col(ImageBook.image_id) == image_id).order_by(col(ImageBook.position))
+        )
+        return list(result.all())
 
 
 @router.get("/{image_id}", response_model=ImageResponse)
@@ -264,5 +284,8 @@ async def delete_image(request: Request, image_id: UUID) -> None:
         except Exception:
             logger.warning("Failed to delete S3 object %s", image.storage_path)
 
+        # SQLite does not enforce ON DELETE CASCADE unless asked to, so the
+        # book links are removed explicitly rather than left as orphans.
+        await session.exec(delete(ImageBook).where(col(ImageBook.image_id) == image_id))
         await session.delete(image)
         await session.commit()

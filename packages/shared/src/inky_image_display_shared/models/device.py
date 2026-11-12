@@ -1,8 +1,8 @@
 """Device display state model for Inky displays."""
 
-from datetime import datetime
 from uuid import UUID, uuid4
 
+from pydantic import NaiveDatetime
 from sqlmodel import Field, SQLModel
 
 from inky_image_display_shared.time import utcnow
@@ -28,8 +28,8 @@ class DeviceDisplayState(SQLModel, table=True):
     global_device_id: UUID = Field(primary_key=True)
     is_online: bool = Field(default=True, description="Whether device is currently reachable")
     current_image_id: UUID | None = Field(default=None, foreign_key="images.id")
-    displayed_since: datetime | None = Field(default=None, description="When current image was displayed")
-    scheduled_next_at: datetime = Field(default_factory=utcnow, description="Scheduled time for next image")
+    displayed_since: NaiveDatetime | None = Field(default=None, description="When current image was displayed")
+    scheduled_next_at: NaiveDatetime = Field(default_factory=utcnow, description="Scheduled time for next image")
 
 
 class Device(SQLModel, table=True):
@@ -78,18 +78,18 @@ class Device(SQLModel, table=True):
     # pool or a display-job session. Solo rotation skips claimed devices;
     # only one grid can hold the claim at a time.
     claimed_by_grid_id: UUID | None = Field(default=None, foreign_key="grids.id", ondelete="SET NULL")
-    displayed_since: datetime | None = Field(default=None)
-    scheduled_next_at: datetime = Field(default_factory=utcnow)
-    last_seen: datetime = Field(default_factory=utcnow)
+    displayed_since: NaiveDatetime | None = Field(default=None)
+    scheduled_next_at: NaiveDatetime = Field(default_factory=utcnow)
+    last_seen: NaiveDatetime = Field(default_factory=utcnow)
     # Display-refresh health, updated from device acks. None = no ack yet.
     last_refresh_ok: bool | None = Field(default=None)
     last_error: str | None = Field(default=None)
-    last_error_at: datetime | None = Field(default=None)
-    created_at: datetime = Field(default_factory=utcnow)
+    last_error_at: NaiveDatetime | None = Field(default=None)
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
     # onupdate ensures any SQLAlchemy UPDATE bumps this — the original
     # default_factory only applied on insert, so updated_at silently
     # froze at row creation time.
-    updated_at: datetime = Field(default_factory=utcnow, sa_column_kwargs={"onupdate": utcnow})
+    updated_at: NaiveDatetime = Field(default_factory=utcnow, sa_column_kwargs={"onupdate": utcnow})
     # Per-device rotation cadence. ``None`` falls back to
     # ``settings.default_display_duration`` so existing devices keep their
     # current behaviour without a migration backfill.

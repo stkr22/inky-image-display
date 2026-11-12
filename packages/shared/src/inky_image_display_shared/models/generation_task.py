@@ -6,9 +6,9 @@ UI. Rows are pruned to a bounded recent window — this is operational
 visibility ("did my generation work?"), not an audit log.
 """
 
-from datetime import datetime
 from uuid import UUID
 
+from pydantic import NaiveDatetime
 from sqlmodel import Field, SQLModel
 
 from inky_image_display_shared.time import utcnow
@@ -35,8 +35,8 @@ class GenerationTask(SQLModel, table=True):
     task_id: UUID = Field(primary_key=True)
     subject: str
     status: str = Field(default="queued", index=True)
-    created_at: datetime = Field(default_factory=utcnow)
-    finished_at: datetime | None = Field(default=None)
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    finished_at: NaiveDatetime | None = Field(default=None)
     image_id: UUID | None = Field(default=None)
     error: str | None = Field(default=None)
     detail: str | None = Field(default=None)
