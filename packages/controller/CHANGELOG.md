@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.7.1](https://github.com/stkr22/inky-image-display/compare/controller-v4.7.0...controller-v4.7.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* review fixes across api, sync, controller, shared and web ([081b5d3](https://github.com/stkr22/inky-image-display/commit/081b5d3493ba7db605372ac68447598d4c80da30))
+* **shared,controller:** bound Gemini calls and exit cleanly on SIGTERM ([53d8fdd](https://github.com/stkr22/inky-image-display/commit/53d8fddcc9bc4fa62351c2769422d53e7fa9946e))
+
 ## [4.7.0](https://github.com/stkr22/inky-image-display/compare/controller-v4.6.2...controller-v4.7.0) (2026-11-12)
 
 

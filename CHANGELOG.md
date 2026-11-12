@@ -1,5 +1,21 @@
 # Changelog
 
+## [7.5.1](https://github.com/stkr22/inky-image-display/compare/v7.5.0...v7.5.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **api:** stop Calibre run-now loops and harden image handling ([3725782](https://github.com/stkr22/inky-image-display/commit/37257829d59809bcca0b5711a52071490448f2d9))
+* review fixes across api, sync, controller, shared and web ([081b5d3](https://github.com/stkr22/inky-image-display/commit/081b5d3493ba7db605372ac68447598d4c80da30))
+* **shared,controller:** bound Gemini calls and exit cleanly on SIGTERM ([53d8fdd](https://github.com/stkr22/inky-image-display/commit/53d8fddcc9bc4fa62351c2769422d53e7fa9946e))
+* **sync:** always report claimed jobs and store expiry in UTC ([5046626](https://github.com/stkr22/inky-image-display/commit/50466268d11c7413b1f9c11b7d8f16ab19e07b63))
+* **web:** keep form edits on refetch and surface load errors ([6a5e410](https://github.com/stkr22/inky-image-display/commit/6a5e410851ae7d0cddfc6d9bdb45965d1161e96f))
+
+
+### Documentation
+
+* document upload limit, guest scope and Gemini version pin ([98bc57a](https://github.com/stkr22/inky-image-display/commit/98bc57a15f873c7e48ede50ace59c930f3c209d6))
+
 ## [7.5.0](https://github.com/stkr22/inky-image-display/compare/v7.4.0...v7.5.0) (2026-11-12)
 
 
