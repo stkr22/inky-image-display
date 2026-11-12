@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.5.0](https://github.com/stkr22/inky-image-display/compare/v7.4.0...v7.5.0) (2026-11-12)
+
+
+### Features
+
+* **sync,api,web:** OPDS auth, book tracking, bookcase mode ([#156](https://github.com/stkr22/inky-image-display/issues/156)) ([ada0773](https://github.com/stkr22/inky-image-display/commit/ada0773cd4d50a789ecebac4b69669b40c5b8d71))
+
 ## [7.4.0](https://github.com/stkr22/inky-image-display/compare/v7.3.0...v7.4.0) (2026-09-13)
 
 
