@@ -4,7 +4,7 @@ MockDisplay mirrors the real InkyDisplay's contract (auto-rotate portrait
 input, reject wrong sizes), so these tests pin that contract without hardware.
 """
 
-import time
+import threading
 import warnings
 
 import pytest
@@ -78,7 +78,10 @@ class _FakeGpio:
         self._panel = panel
 
     def get_value(self, pin: int) -> _FakeBusyValue:
-        return _FakeBusyValue("INACTIVE" if self._panel.busy_active else "ACTIVE")
+        active = self._panel.busy_active
+        if active == self._panel.awaited_busy_sample:
+            self._panel.busy_sampled.set()
+        return _FakeBusyValue("INACTIVE" if active else "ACTIVE")
 
 
 class _FakeInkyPanel:
@@ -120,6 +123,11 @@ class _FakeInkyPanel:
         self.set_image_calls = 0
         self.last_saturation: float | None = None
         self.busy_active = False
+        # Handshake with the watcher thread: _simulate_busy waits until a
+        # sample of the "during refresh" state was actually taken instead of
+        # sleeping and hoping the watcher got scheduled in time.
+        self.awaited_busy_sample: bool | None = None
+        self.busy_sampled = threading.Event()
         if busy_profile is not None and not gpio_lazy:
             self._attach_gpio()
 
@@ -156,11 +164,15 @@ class _FakeInkyPanel:
             warnings.warn("Busy Wait: Timed out after 32.00s", stacklevel=1)
 
     def _simulate_busy(self) -> None:
-        # Hold the line in the profile's "during refresh" state long enough for
-        # the watcher thread to sample it (~50 ms >> the test poll interval).
-        if self._busy_profile in ("asserts", "stuck"):
-            self.busy_active = True
-        time.sleep(0.05)
+        # Hold the line in the profile's "during refresh" state until the
+        # watcher thread has sampled it. The generous timeout only bounds a
+        # broken watcher; a healthy one samples within one poll interval.
+        during = self._busy_profile in ("asserts", "stuck")
+        self.busy_active = during
+        self.busy_sampled.clear()
+        self.awaited_busy_sample = during
+        assert self.busy_sampled.wait(timeout=5.0), "BUSY watcher never sampled the line"
+        self.awaited_busy_sample = None
         if self._busy_profile == "asserts":
             self.busy_active = False
 

@@ -29,10 +29,10 @@ if TYPE_CHECKING:
 PAST = datetime(2020, 1, 1, 12, 0, 0)
 
 
-def _app(async_engine, mock_settings, mock_s3_service, mock_mqtt) -> MagicMock:
+def _app(async_engine, settings, mock_s3_service, mock_mqtt) -> MagicMock:
     app = MagicMock()
     app.state.engine = async_engine
-    app.state.settings = mock_settings
+    app.state.settings = settings
     app.state.s3_service = mock_s3_service
     app.state.mqtt = mock_mqtt
     return app
@@ -78,14 +78,14 @@ async def _next_offsets(async_engine: AsyncEngine, now) -> list[float]:
 
 @pytest.mark.asyncio
 async def test_mass_rotation_spreads_next_refreshes_across_the_interval(
-    async_engine, mock_settings, mock_s3_service, mock_mqtt, seed_profile
+    async_engine, settings, mock_s3_service, mock_mqtt, seed_profile
 ) -> None:
     devices = [_due_device(seed_profile, f"panel-{i}") for i in range(3)]
     await _seed(async_engine, *_images(3), *devices)
     mock_mqtt.is_connected = MagicMock(return_value=True)
 
     before = utcnow()
-    await _rotate_due_devices(_app(async_engine, mock_settings, mock_s3_service, mock_mqtt))
+    await _rotate_due_devices(_app(async_engine, settings, mock_s3_service, mock_mqtt))
 
     # 3 panels, 3600 s interval → next refreshes at ~1200/2400/3600 s.
     offsets = await _next_offsets(async_engine, before)
@@ -96,13 +96,13 @@ async def test_mass_rotation_spreads_next_refreshes_across_the_interval(
 
 @pytest.mark.asyncio
 async def test_single_due_device_keeps_its_full_interval(
-    async_engine, mock_settings, mock_s3_service, mock_mqtt, seed_profile
+    async_engine, settings, mock_s3_service, mock_mqtt, seed_profile
 ) -> None:
     await _seed(async_engine, *_images(1), _due_device(seed_profile, "panel-solo"))
     mock_mqtt.is_connected = MagicMock(return_value=True)
 
     before = utcnow()
-    await _rotate_due_devices(_app(async_engine, mock_settings, mock_s3_service, mock_mqtt))
+    await _rotate_due_devices(_app(async_engine, settings, mock_s3_service, mock_mqtt))
 
     offsets = await _next_offsets(async_engine, before)
     assert offsets[0] == pytest.approx(3600, abs=5)
@@ -110,7 +110,7 @@ async def test_single_due_device_keeps_its_full_interval(
 
 @pytest.mark.asyncio
 async def test_disabled_setting_leaves_the_full_interval_for_everyone(
-    async_engine, mock_settings, mock_s3_service, mock_mqtt, seed_profile
+    async_engine, settings, mock_s3_service, mock_mqtt, seed_profile
 ) -> None:
     async with AsyncSession(async_engine) as session:
         await set_stagger_rotation(session, enabled=False)
@@ -119,7 +119,7 @@ async def test_disabled_setting_leaves_the_full_interval_for_everyone(
     mock_mqtt.is_connected = MagicMock(return_value=True)
 
     before = utcnow()
-    await _rotate_due_devices(_app(async_engine, mock_settings, mock_s3_service, mock_mqtt))
+    await _rotate_due_devices(_app(async_engine, settings, mock_s3_service, mock_mqtt))
 
     offsets = await _next_offsets(async_engine, before)
     assert len(offsets) == 2
@@ -129,7 +129,7 @@ async def test_disabled_setting_leaves_the_full_interval_for_everyone(
 
 @pytest.mark.asyncio
 async def test_device_interval_scales_its_own_stagger_slice(
-    async_engine, mock_settings, mock_s3_service, mock_mqtt, seed_profile
+    async_engine, settings, mock_s3_service, mock_mqtt, seed_profile
 ) -> None:
     # Per-device intervals stagger within their *own* interval, so a
     # short-cadence panel is not pushed out to the fleet default.
@@ -140,7 +140,7 @@ async def test_device_interval_scales_its_own_stagger_slice(
     mock_mqtt.is_connected = MagicMock(return_value=True)
 
     before = utcnow()
-    await _rotate_due_devices(_app(async_engine, mock_settings, mock_s3_service, mock_mqtt))
+    await _rotate_due_devices(_app(async_engine, settings, mock_s3_service, mock_mqtt))
 
     async with AsyncSession(async_engine) as session:
         devices = (await session.exec(select(Device))).all()

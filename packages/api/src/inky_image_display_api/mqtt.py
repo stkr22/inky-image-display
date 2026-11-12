@@ -1,9 +1,9 @@
 """MQTT transport between the API and connected devices.
 
-Replaces the previous WebSocket transport. The broker handles connection
-state, keepalive and Last-Will-and-Testament announcements, so the API
-only has to react to status messages and keep an in-memory set of devices
-currently considered online.
+A broker (rather than direct device connections) owns connection state,
+keepalive and Last-Will-and-Testament announcements, so the API only has
+to react to status messages and keep an in-memory set of devices
+currently considered online — and devices behind NAT need no inbound port.
 
 Topic layout (single-level wildcards used for subscriptions):
 
@@ -23,17 +23,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 import aiomqtt
-from fastapi import HTTPException, status
-from inky_image_display_shared.models import Device, DeviceProfile
-from inky_image_display_shared.schemas import (
-    DeviceAcknowledge,
-    DeviceRegistration,
-    DeviceStatus,
-    DisplayCommand,
-)
+from inky_image_display_shared.models import Device
+from inky_image_display_shared.schemas import DeviceAcknowledge, DeviceStatus, DisplayCommand
 from inky_image_display_shared.time import utcnow
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -68,66 +62,13 @@ def _device_id_from_topic(topic: str) -> str | None:
     return parts[2]
 
 
-async def upsert_device(
-    engine: AsyncEngine,
-    device_id: str,
-    registration: DeviceRegistration,
-) -> Literal["registered", "updated"]:
-    """Create or update a Device row; used by the HTTP /register endpoint."""
-    async with AsyncSession(engine) as session:
-        profile_result = await session.exec(
-            select(DeviceProfile).where(DeviceProfile.key == registration.device_profile_key)
-        )
-        profile = profile_result.first()
-        if profile is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unknown device_profile_key '{registration.device_profile_key}'",
-            )
-
-        result = await session.exec(select(Device).where(Device.device_id == device_id))
-        device = result.first()
-        now = utcnow()
-
-        if device is None:
-            device = Device(
-                device_id=device_id,
-                room=registration.room,
-                device_profile_id=profile.id,
-                display_orientation=registration.orientation,
-                is_online=False,  # Becomes True once we see the MQTT online status.
-                last_seen=now,
-            )
-            session.add(device)
-            outcome: Literal["registered", "updated"] = "registered"
-        else:
-            device.room = registration.room
-            device.device_profile_id = profile.id
-            device.display_orientation = registration.orientation
-            device.last_seen = now
-            # Registration happens exactly once per controller start, and the
-            # controller's failed-refresh retry loop dies with the process. A
-            # restart (e.g. the power cycle that recovers a latched panel)
-            # means any recorded failure describes a controller that no longer
-            # exists — reset to "no ack seen" so automatic dispatch resumes
-            # and the next push settles the device's real state.
-            device.last_refresh_ok = None
-            device.last_error = None
-            device.last_error_at = None
-            session.add(device)
-            outcome = "updated"
-
-        await session.commit()
-    return outcome
-
-
 async def _record_ack(
     engine: AsyncEngine,
     device_id: str,
     *,
     success: bool,
     error: str | None,
-    settings: Settings | None = None,
+    settings: Settings,
 ) -> None:
     """Persist a device ack: proof-of-life plus the refresh outcome.
 
@@ -159,10 +100,7 @@ async def _record_ack(
                     device.last_error_at = now
                 session.add(device)
                 await session.commit()
-                if settings is not None:
-                    _notify_refresh_transition(
-                        settings, device_id, previous_ok=previous_ok, success=success, error=error
-                    )
+                _notify_refresh_transition(settings, device_id, previous_ok=previous_ok, success=success, error=error)
     except Exception:
         logger.exception("Failed to record ack for device %s", device_id)
 
@@ -224,7 +162,6 @@ class MQTTService:
         self._settings = settings
         self._engine = engine
         self._client: aiomqtt.Client | None = None
-        self._client_ready = asyncio.Event()
         self._online: set[str] = set()
         # Whether the sync worker's retained status says it is online.
         self.worker_online = False
@@ -292,7 +229,6 @@ class MQTTService:
                     ),
                 ) as client:
                     self._client = client
-                    self._client_ready.set()
                     backoff = 5
 
                     await client.subscribe(f"{TOPIC_PREFIX}/+/status", qos=1)
@@ -307,26 +243,16 @@ class MQTTService:
 
                     async for message in client.messages:
                         await self._dispatch(message)
-            except asyncio.CancelledError:
-                raise
-            except aiomqtt.MqttError as exc:
+            except Exception as exc:
+                # MqttError is the expected case; anything else is a bug worth
+                # a traceback, but either way the transport must come back.
                 self._client = None
-                self._client_ready.clear()
                 self._online.clear()
                 self.worker_online = False
-                logger.warning(
-                    "MQTT connection lost: %s. Reconnecting in %ds...",
-                    exc,
-                    backoff,
-                )
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, max_backoff)
-            except Exception:
-                self._client = None
-                self._client_ready.clear()
-                self._online.clear()
-                self.worker_online = False
-                logger.exception("Unexpected MQTT failure; reconnecting in %ds", backoff)
+                if isinstance(exc, aiomqtt.MqttError):
+                    logger.warning("MQTT connection lost: %s. Reconnecting in %ds...", exc, backoff)
+                else:
+                    logger.exception("Unexpected MQTT failure; reconnecting in %ds", backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, max_backoff)
 

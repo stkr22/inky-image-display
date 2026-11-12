@@ -30,6 +30,7 @@ TOPIC_PREFIX = "inky/devices"
 # lives here as constants rather than being shipped over the wire.
 _INITIAL_RECONNECT_INTERVAL = 5
 _MAX_RECONNECT_INTERVAL = 60
+_DISCONNECT_PUBLISH_TIMEOUT = 5.0
 
 
 def _command_topic(device_id: str) -> str:
@@ -201,12 +202,15 @@ class MQTTClient:
         self._connected.clear()
         if self._client is not None:
             try:
-                await self._client.publish(
-                    _status_topic(self._device_id),
-                    DeviceStatus(status="offline").model_dump_json(),
-                    qos=1,
-                    retain=True,
-                )
+                # Bounded so a half-dead broker connection cannot stall
+                # shutdown; the Last-Will still covers that case.
+                async with asyncio.timeout(_DISCONNECT_PUBLISH_TIMEOUT):
+                    await self._client.publish(
+                        _status_topic(self._device_id),
+                        DeviceStatus(status="offline").model_dump_json(),
+                        qos=1,
+                        retain=True,
+                    )
             except Exception:
                 logger.debug("Failed to publish graceful offline status", exc_info=True)
         self._client = None

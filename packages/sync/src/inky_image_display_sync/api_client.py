@@ -6,9 +6,17 @@ sync source needs. Per-source extensions live next to their own module:
 - Immich-specific endpoints (sync_jobs): ``inky_image_display_sync.immich.api_client``
 - Gemini-specific endpoints (prompt library, gemini jobs):
   ``inky_image_display_sync.gemini.api_client``
+- Calibre and display-job endpoints: ``inky_image_display_sync.calibre`` /
+  ``inky_image_display_sync.display``
 
-Both extend :class:`DisplayAPIClient` so they reuse the same ``httpx2`` session
-without duplicating connection setup or error handling.
+All extend :class:`DisplayAPIClient` so they reuse the same ``httpx2`` session
+without duplicating connection setup or error handling. Responses are parsed
+with the shared ``inky_image_display_shared.schemas.responses`` models — the
+same definitions the API serialises with — so a contract change breaks loudly
+here instead of drifting.
+
+Request payloads stay local: they are what this client sends, and the API's
+own request schemas live in the API package.
 """
 
 from __future__ import annotations
@@ -17,6 +25,7 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
 import httpx2
+from inky_image_display_shared.schemas.responses import DeviceProfileResponse, DeviceResponse, ImageResponse
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
@@ -30,38 +39,9 @@ else:
     from uuid import UUID  # noqa: TC003
 
 
-class DeviceProfileItem(BaseModel):
-    """Device profile data returned by GET /api/device-profiles."""
-
-    id: UUID
-    key: str
-    name: str
-    width: int
-    height: int
-    model: str
-    is_default: bool
-
-
-class DeviceItem(BaseModel):
-    """Device data returned by GET /api/devices."""
-
-    id: UUID
-    device_id: str
-    device_profile_id: UUID
-    display_orientation: str
-    current_image_id: UUID | None
-
-
-class ImageItem(BaseModel):
-    """Image data returned by the API."""
-
-    id: UUID
-    source_name: str
-    source_id: str | None = None
-    sync_job_name: str | None = None
-    source_url: str | None
-    storage_path: str
-    expires_at: datetime | None
+# Kept at or below the API's per-request cap so one page is never silently
+# truncated to fewer rows than asked for.
+IMAGE_PAGE_SIZE = 500
 
 
 class BookRef(BaseModel):
@@ -173,47 +153,99 @@ class DisplayAPIClient:
 
     # --- Images ---
 
-    async def find_image_by_source(self, source_name: str, source_id: str) -> ImageItem | None:
-        """Return the image matching (source_name, source_id), or None."""
+    async def find_images_by_source(self, source_name: str, source_id: str) -> list[ImageResponse]:
+        """Return every image for (source_name, source_id), e.g. one per target size."""
         response = await self._request(
             "GET",
             "/api/images",
-            params={"source_name": source_name, "source_id": source_id, "limit": 1},
+            params={"source_name": source_name, "source_id": source_id, "limit": IMAGE_PAGE_SIZE},
         )
-        items = response.json()
-        return ImageItem.model_validate(items[0]) if items else None
+        return [ImageResponse.model_validate(i) for i in response.json()]
 
-    async def list_images(
-        self,
-        source_name: str | None = None,
-        sync_job_name: str | None = None,
-        expires_before: datetime | None = None,
-        limit: int = 1000,
-    ) -> list[ImageItem]:
-        """List images with optional filters."""
-        params: dict[str, str | int] = {"limit": limit}
+    @staticmethod
+    def _image_filters(
+        source_name: str | None,
+        sync_job_name: str | None,
+        expires_before: datetime | None,
+    ) -> dict[str, str | int]:
+        params: dict[str, str | int] = {}
         if source_name is not None:
             params["source_name"] = source_name
         if sync_job_name is not None:
             params["sync_job_name"] = sync_job_name
         if expires_before is not None:
             params["expires_before"] = expires_before.isoformat()
-        response = await self._request("GET", "/api/images", params=params)
-        return [ImageItem.model_validate(i) for i in response.json()]
+        return params
 
-    async def register_image(self, payload: ImageRegisterPayload) -> ImageItem:
+    async def _images_page(
+        self, filters: dict[str, str | int], limit: int, offset: int
+    ) -> tuple[list[ImageResponse], int | None]:
+        response = await self._request("GET", "/api/images", params=filters | {"limit": limit, "offset": offset})
+        total = response.headers.get("X-Total-Count")
+        return [ImageResponse.model_validate(i) for i in response.json()], int(total) if total is not None else None
+
+    async def list_images(
+        self,
+        source_name: str | None = None,
+        sync_job_name: str | None = None,
+        expires_before: datetime | None = None,
+        limit: int = IMAGE_PAGE_SIZE,
+        offset: int = 0,
+    ) -> list[ImageResponse]:
+        """List one page of images with optional filters."""
+        filters = self._image_filters(source_name, sync_job_name, expires_before)
+        images, _ = await self._images_page(filters, limit, offset)
+        return images
+
+    async def list_all_images(
+        self,
+        source_name: str | None = None,
+        sync_job_name: str | None = None,
+        expires_before: datetime | None = None,
+    ) -> list[ImageResponse]:
+        """List every matching image, page by page.
+
+        Stops on the reported total rather than on a short page, so a server
+        that caps ``limit`` below what we ask for still gets paged through.
+        Callers must not delete while this runs — offsets shift under deletes —
+        so collect first and act afterwards.
+        """
+        filters = self._image_filters(source_name, sync_job_name, expires_before)
+        images: list[ImageResponse] = []
+        while True:
+            page, total = await self._images_page(filters, IMAGE_PAGE_SIZE, len(images))
+            images.extend(page)
+            if not page or total is None or len(images) >= total:
+                return images
+
+    async def count_images(
+        self,
+        source_name: str | None = None,
+        sync_job_name: str | None = None,
+    ) -> int:
+        """Count matching images without transferring them.
+
+        The list endpoint reports the unpaged total in ``X-Total-Count``; asking
+        for one row keeps the count exact however large the library grows.
+        """
+        _, total = await self._images_page(self._image_filters(source_name, sync_job_name, None), 1, 0)
+        if total is None:
+            raise DisplayAPIError("GET /api/images did not return X-Total-Count")
+        return total
+
+    async def register_image(self, payload: ImageRegisterPayload) -> ImageResponse:
         """Register a pre-uploaded S3 image in the database."""
         response = await self._request("POST", "/api/images/register", json=payload.model_dump(mode="json"))
-        return ImageItem.model_validate(response.json())
+        return ImageResponse.model_validate(response.json())
 
-    async def update_image(self, image_id: UUID, payload: ImageUpdatePayload) -> ImageItem:
+    async def update_image(self, image_id: UUID, payload: ImageUpdatePayload) -> ImageResponse:
         """Update metadata for an existing image."""
         response = await self._request(
             "PUT",
             f"/api/images/{image_id}",
             json=payload.model_dump(mode="json", exclude_unset=True),
         )
-        return ImageItem.model_validate(response.json())
+        return ImageResponse.model_validate(response.json())
 
     async def delete_image(self, image_id: UUID) -> None:
         """Delete an image (DB record + S3 object) via the API."""
@@ -257,17 +289,17 @@ class DisplayAPIClient:
 
     # --- Devices ---
 
-    async def get_devices(self, id: UUID | None = None) -> list[DeviceItem]:
+    async def get_devices(self, id: UUID | None = None) -> list[DeviceResponse]:
         """Fetch devices, optionally filtered by primary-key UUID."""
         params: dict[str, str] = {}
         if id is not None:
             params["id"] = str(id)
         response = await self._request("GET", "/api/devices", params=params)
-        return [DeviceItem.model_validate(d) for d in response.json()]
+        return [DeviceResponse.model_validate(d) for d in response.json()]
 
     # --- Device profiles ---
 
-    async def get_device_profile(self, profile_id: UUID) -> DeviceProfileItem:
+    async def get_device_profile(self, profile_id: UUID) -> DeviceProfileResponse:
         """Fetch a single device profile by primary-key UUID."""
         response = await self._request("GET", f"/api/device-profiles/{profile_id}")
-        return DeviceProfileItem.model_validate(response.json())
+        return DeviceProfileResponse.model_validate(response.json())

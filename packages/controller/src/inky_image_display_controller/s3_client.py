@@ -50,7 +50,7 @@ class S3ImageClient:
     ) -> None:
         """Configure the S3 client with credentials.
 
-        Typically called after receiving RegistrationResponse from MQTT.
+        Called with the credentials from the HTTP ``/register`` response.
 
         Args:
             endpoint: S3 server endpoint (host:port).
@@ -101,7 +101,7 @@ class S3ImageClient:
         if not self.is_configured:
             raise CommunicationError("S3 client not configured. Await registration.")
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(
                 self._executor,

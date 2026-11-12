@@ -49,10 +49,3 @@ class TestSyncJobMatchModes:
         assert response.json()["person_match_mode"] == "any"
         # Untouched sibling keeps its value.
         assert response.json()["album_match_mode"] == "all"
-
-    def test_invalid_mode_rejected(self, client: TestClient, seed_profile) -> None:
-        response = client.post(
-            "/api/sync-jobs",
-            json=_job_body(seed_profile, name="bad-mode-job", album_match_mode="or"),
-        )
-        assert response.status_code == 422

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -38,7 +39,9 @@ def _image(grid_id=None, *, group_id=None, position=0, shown=None, slot=None) ->
 
 
 def _app(engine, settings, s3, mqtt):
-    state = SimpleNamespace(engine=engine, settings=settings, s3_service=s3, mqtt=mqtt)
+    state = SimpleNamespace(
+        engine=engine, settings=settings, s3_service=s3, mqtt=mqtt, process_gate=asyncio.Semaphore(1)
+    )
     return SimpleNamespace(state=state)
 
 
@@ -130,13 +133,13 @@ class TestShowHoldRelease:
 
     @pytest.mark.asyncio
     async def test_start_group_pushes_claims_and_holds(
-        self, async_engine, mock_settings, mock_s3_service, seed_profile, mqtt
+        self, async_engine, settings, mock_s3_service, seed_profile, mqtt
     ) -> None:
         grid, device = await _grid_with_device(async_engine, seed_profile)
         group = ImageGroup(name="story", target_grid_id=grid.id)
         screen = _image(group_id=group.id, slot=(0, 0))
         await _add(async_engine, group, screen)
-        app = _app(async_engine, mock_settings, mock_s3_service, mqtt)
+        app = _app(async_engine, settings, mock_s3_service, mqtt)
 
         async with AsyncSession(async_engine) as session:
             db_grid = (await session.exec(select(Grid).where(Grid.id == grid.id))).one()
@@ -157,14 +160,14 @@ class TestShowHoldRelease:
 
     @pytest.mark.asyncio
     async def test_show_next_steps_through_the_queue(
-        self, async_engine, mock_settings, mock_s3_service, seed_profile, mqtt
+        self, async_engine, settings, mock_s3_service, seed_profile, mqtt
     ) -> None:
         grid, device = await _grid_with_device(async_engine, seed_profile)
         group = ImageGroup(name="story", target_grid_id=grid.id, queue_position=0)
         screen = _image(group_id=group.id, slot=(0, 0))
         pool_image = _image(grid.id, position=1)
         await _add(async_engine, group, screen, pool_image)
-        app = _app(async_engine, mock_settings, mock_s3_service, mqtt)
+        app = _app(async_engine, settings, mock_s3_service, mqtt)
 
         # Step 1: the fresh group front-runs the queue.
         async with AsyncSession(async_engine) as session:
@@ -189,14 +192,14 @@ class TestShowHoldRelease:
 
     @pytest.mark.asyncio
     async def test_show_next_skips_group_without_panel_assignments(
-        self, async_engine, mock_settings, mock_s3_service, seed_profile, mqtt
+        self, async_engine, settings, mock_s3_service, seed_profile, mqtt
     ) -> None:
         grid, _device = await _grid_with_device(async_engine, seed_profile)
         group = ImageGroup(name="unassigned", target_grid_id=grid.id, queue_position=0)
         member = _image(group_id=group.id)
         pool_image = _image(grid.id, position=1)
         await _add(async_engine, group, member, pool_image)
-        app = _app(async_engine, mock_settings, mock_s3_service, mqtt)
+        app = _app(async_engine, settings, mock_s3_service, mqtt)
 
         with patch.object(queue_service.grid_service, "render_and_upload", new=AsyncMock(return_value={})):
             async with AsyncSession(async_engine) as session:
@@ -209,10 +212,10 @@ class TestShowHoldRelease:
 
     @pytest.mark.asyncio
     async def test_show_next_with_empty_queue_touches_nothing(
-        self, async_engine, mock_settings, mock_s3_service, seed_profile, mqtt
+        self, async_engine, settings, mock_s3_service, seed_profile, mqtt
     ) -> None:
         grid, _device = await _grid_with_device(async_engine, seed_profile)
-        app = _app(async_engine, mock_settings, mock_s3_service, mqtt)
+        app = _app(async_engine, settings, mock_s3_service, mqtt)
 
         async with AsyncSession(async_engine) as session:
             db_grid = (await session.exec(select(Grid).where(Grid.id == grid.id))).one()
@@ -221,13 +224,13 @@ class TestShowHoldRelease:
 
     @pytest.mark.asyncio
     async def test_release_makes_devices_immediately_due_for_solo_rotation(
-        self, async_engine, mock_settings, mock_s3_service, seed_profile, mqtt
+        self, async_engine, settings, mock_s3_service, seed_profile, mqtt
     ) -> None:
         grid, device = await _grid_with_device(async_engine, seed_profile)
         group = ImageGroup(name="story", target_grid_id=grid.id)
         screen = _image(group_id=group.id, slot=(0, 0))
         await _add(async_engine, group, screen)
-        app = _app(async_engine, mock_settings, mock_s3_service, mqtt)
+        app = _app(async_engine, settings, mock_s3_service, mqtt)
 
         async with AsyncSession(async_engine) as session:
             db_grid = (await session.exec(select(Grid).where(Grid.id == grid.id))).one()
@@ -261,7 +264,7 @@ class TestQueueTick:
 
     @pytest.mark.asyncio
     async def test_expired_hold_releases_the_panels(
-        self, async_engine, mock_settings, mock_s3_service, seed_profile, mqtt
+        self, async_engine, settings, mock_s3_service, seed_profile, mqtt
     ) -> None:
         grid = Grid(id=uuid4(), name="wall", width_cm=27.1, height_cm=20.3, hold_until=NOW - timedelta(minutes=1))
         device = Device(
@@ -272,7 +275,7 @@ class TestQueueTick:
             claimed_by_grid_id=grid.id,
         )
         await _add(async_engine, grid, device)
-        app = _app(async_engine, mock_settings, mock_s3_service, mqtt)
+        app = _app(async_engine, settings, mock_s3_service, mqtt)
 
         await queue_service.queue_tick(app)
 
@@ -284,7 +287,7 @@ class TestQueueTick:
 
     @pytest.mark.asyncio
     async def test_due_schedule_shows_next_entry_and_advances_lease(
-        self, async_engine, mock_settings, mock_s3_service, seed_profile, mqtt
+        self, async_engine, settings, mock_s3_service, seed_profile, mqtt
     ) -> None:
         grid, _device = await _grid_with_device(
             async_engine,
@@ -296,7 +299,7 @@ class TestQueueTick:
         group = ImageGroup(name="story", target_grid_id=grid.id)
         screen = _image(group_id=group.id, slot=(0, 0))
         await _add(async_engine, group, screen)
-        app = _app(async_engine, mock_settings, mock_s3_service, mqtt)
+        app = _app(async_engine, settings, mock_s3_service, mqtt)
 
         await queue_service.queue_tick(app)
 
@@ -342,3 +345,83 @@ class TestDisplayDue:
         grid.display_schedule_enabled = True
         grid.display_next_at = None
         assert queue_service.display_due(grid, NOW) is False
+
+
+class TestTickResilience:
+    @pytest.fixture
+    def mqtt(self) -> MagicMock:
+        mqtt = MagicMock()
+        mqtt.is_connected = MagicMock(return_value=True)
+        mqtt.send_command = AsyncMock()
+        return mqtt
+
+    @pytest.mark.asyncio
+    async def test_failing_grid_does_not_block_others_and_backs_off(
+        self, async_engine, settings, mock_s3_service, seed_profile, mqtt
+    ) -> None:
+        due: dict[str, Any] = {"display_schedule_enabled": True, "display_cron": "0 0 * * *", "display_next_at": NOW}
+        broken, _ = await _grid_with_device(async_engine, seed_profile, **due)
+        # The broken grid's only entry is a loose image whose render explodes.
+        await _add(async_engine, _image(broken.id))
+        healthy = Grid(id=uuid4(), name="other", width_cm=27.1, height_cm=20.3, **due)
+        other_device = Device(id=uuid4(), device_id="panel-2", device_profile_id=seed_profile.id, is_online=True)
+        placement = GridDevice(
+            grid_id=healthy.id,
+            device_id=other_device.id,
+            row=0,
+            col=0,
+            top_left_x_cm=0.0,
+            top_left_y_cm=0.0,
+            width_cm=27.1,
+            height_cm=20.3,
+        )
+        group = ImageGroup(name="story", target_grid_id=healthy.id)
+        await _add(async_engine, healthy, other_device, placement, group, _image(group_id=group.id, slot=(0, 0)))
+        app = _app(async_engine, settings, mock_s3_service, mqtt)
+
+        with patch.object(
+            queue_service.grid_service, "render_and_upload", new=AsyncMock(side_effect=RuntimeError("bucket down"))
+        ):
+            await queue_service.queue_tick(app)
+
+        async with AsyncSession(async_engine) as session:
+            db_broken = await session.get(Grid, broken.id)
+            db_healthy = await session.get(Grid, healthy.id)
+        assert db_healthy is not None
+        assert db_healthy.current_group_id == group.id
+        assert db_broken is not None
+        assert db_broken.current_image_id is None
+        # Backed off: not due on the next 30 s tick, but retried well before tomorrow.
+        assert db_broken.display_next_at is not None
+        assert utcnow() + timedelta(minutes=5) < db_broken.display_next_at <= utcnow() + timedelta(minutes=11)
+
+    @pytest.mark.asyncio
+    async def test_show_next_advances_lease_in_the_same_commit(
+        self, async_engine, settings, mock_s3_service, seed_profile, mqtt
+    ) -> None:
+        grid, _ = await _grid_with_device(
+            async_engine, seed_profile, display_schedule_enabled=True, display_cron="0 0 * * *", display_next_at=NOW
+        )
+        group = ImageGroup(name="story", target_grid_id=grid.id)
+        await _add(async_engine, group, _image(group_id=group.id, slot=(0, 0)))
+        app = _app(async_engine, settings, mock_s3_service, mqtt)
+
+        async with AsyncSession(async_engine) as session:
+            db_grid = await session.get(Grid, grid.id)
+            assert db_grid is not None
+            commits = 0
+            original_commit = session.commit
+
+            async def counting_commit() -> None:
+                nonlocal commits
+                commits += 1
+                await original_commit()
+
+            session.commit = counting_commit
+            assert await queue_service.show_next(app, session, db_grid, scheduled_at=utcnow()) is True
+        assert commits == 1
+        async with AsyncSession(async_engine) as session:
+            db_grid = await session.get(Grid, grid.id)
+        assert db_grid is not None
+        assert db_grid.display_next_at is not None
+        assert db_grid.display_next_at > utcnow()

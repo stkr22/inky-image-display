@@ -7,11 +7,11 @@ service (batch jobs).
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 
-from google import genai
 from google.genai import types
+
+from inky_image_display_shared.ai._client import open_async_client
 
 # Fallback model used when a preset/request leaves ``model_name`` unset.
 # The active model is stored on each ``PromptPreset`` row so it can be tuned
@@ -76,28 +76,28 @@ class RenderedPrompt:
         return "3:4" if self.is_portrait else "4:3"
 
 
-def _call_gemini_sync(
+async def _call_gemini(
     api_key: str,
     model: str,
     prompt_text: str,
     aspect_ratio: str,
-    reference_image: bytes | None = None,
+    reference_image: bytes | None,
 ) -> bytes:
-    """Blocking Gemini call. Returns raw image bytes from the first inline part."""
-    client = genai.Client(api_key=api_key)
+    """Gemini call returning raw image bytes from the first inline part."""
     contents: types.ContentListUnionDict = [prompt_text]
     if reference_image is not None:
         # Reference first: the prompt then reads as instructions *about* the
         # attached image rather than a description to be illustrated.
         contents.insert(0, types.Part.from_bytes(data=reference_image, mime_type="image/jpeg"))
-    response = client.models.generate_content(
-        model=model,
-        contents=contents,
-        config=types.GenerateContentConfig(
-            response_modalities=["IMAGE"],
-            image_config=types.ImageConfig(aspect_ratio=aspect_ratio),
-        ),
-    )
+    async with open_async_client(api_key) as client:
+        response = await client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+                image_config=types.ImageConfig(aspect_ratio=aspect_ratio),
+            ),
+        )
     candidates = response.candidates or []
     content = candidates[0].content if candidates else None
     parts = content.parts if content else None
@@ -124,8 +124,9 @@ async def generate_image_bytes(
     """Call Gemini and return the raw generated image bytes.
 
     Resize/crop to the panel's exact dimensions is the API's responsibility
-    (``POST /api/images/process``) — this helper just talks to Gemini. The
-    SDK is synchronous, so the network call is offloaded to a worker thread.
+    (``POST /api/images/process``) — this helper just talks to Gemini. It uses
+    the SDK's async client so cancelling the caller (shutdown, a superseded
+    task) aborts the in-flight request instead of leaving a thread blocked.
     ``model`` defaults to :data:`DEFAULT_MODEL` for callers that haven't
     loaded a preset yet.
 
@@ -135,11 +136,4 @@ async def generate_image_bytes(
     the treatment; the reference supplies the subject matter.
     """
     prompt_text = prompt.render(subject)
-    return await asyncio.to_thread(
-        _call_gemini_sync,
-        api_key,
-        model,
-        prompt_text,
-        prompt.aspect_ratio,
-        reference_image,
-    )
+    return await _call_gemini(api_key, model, prompt_text, prompt.aspect_ratio, reference_image)

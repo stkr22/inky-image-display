@@ -20,6 +20,7 @@ dependencies = [
     "pydantic-settings~=2.16.2",
     "pyyaml~=6.0.3",
     "typer~=0.29.1",
+    "urllib3~=2.8.0",
 ]
 
 [project.optional-dependencies]

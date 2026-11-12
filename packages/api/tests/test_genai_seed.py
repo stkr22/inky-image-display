@@ -17,55 +17,27 @@ dashes-form IDs) and asserts migration 0006 normalises them.
 
 from __future__ import annotations
 
-import importlib.util
-import os
-import tempfile
 import uuid
-from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-import inky_image_display_api
-import pytest
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from inky_image_display_api.database import create_tables
 from inky_image_display_api.routes.prompt_presets import router as presets_router
 from inky_image_display_api.services.generation_service import resolve_preset
 from inky_image_display_shared.models import PromptPreset
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from sqlalchemy.pool import NullPool
+from inky_image_display_shared.time import utcnow
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from .conftest import load_migration
+
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
     from types import ModuleType
 
-
-@pytest.fixture
-async def seeded_engine(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[AsyncEngine]:
-    """Fresh SQLite DB with all migrations applied — exercises real seeding.
-
-    The alembic ``env.py`` honours ``API_DATABASE_PATH`` and overrides the cfg
-    URL with it. In dev environments where that var points at the shared
-    workspace DB, tests would unwittingly migrate it. Point it at the temp DB
-    for the duration of the fixture.
-    """
-    fd, db_path_str = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    db_path = Path(db_path_str)
-    monkeypatch.setenv("API_DATABASE_PATH", db_path_str)
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    await create_tables(engine)
-    try:
-        yield engine
-    finally:
-        await engine.dispose()
-        db_path.unlink(missing_ok=True)
+    from sqlalchemy.ext.asyncio import AsyncEngine
 
 
 class TestSeededPresetIsReachable:
@@ -142,7 +114,7 @@ class TestDefaultBlocksRepainted:
 
     async def test_operator_edited_block_is_preserved(self, seeded_engine: AsyncEngine) -> None:
         """A block whose text was changed in the UI must survive a 0013 re-run untouched."""
-        mig0013 = _load_migration("0013_repaint_default_prompt_blocks")
+        mig0013 = load_migration("0013_repaint_default_prompt_blocks")
         custom = "MY HAND-TUNED PALETTE — keep this."
 
         async with seeded_engine.begin() as conn:
@@ -177,7 +149,7 @@ class TestDefaultBlocksTuned:
 
     async def test_operator_edited_block_is_preserved(self, seeded_engine: AsyncEngine) -> None:
         """A block edited in the UI must survive a 0015 re-run untouched."""
-        mig0015 = _load_migration("0015_add_motd")
+        mig0015 = load_migration("0015_add_motd")
         custom = "MY HAND-TUNED STYLE — keep this."
 
         async with seeded_engine.begin() as conn:
@@ -212,7 +184,7 @@ class TestScenePresetSeeded:
         assert row[1] == "scene_full_frame"
 
     async def test_seed_is_idempotent(self, seeded_engine: AsyncEngine) -> None:
-        mig0015 = _load_migration("0015_add_motd")
+        mig0015 = load_migration("0015_add_motd")
         async with seeded_engine.begin() as conn:
             await conn.run_sync(lambda sync_conn: _run_upgrade(sync_conn, mig0015))
         async with seeded_engine.begin() as conn:
@@ -227,7 +199,7 @@ class TestUuidFormatBackfill:
 
     async def test_backfill_normalises_existing_dashed_ids(self, seeded_engine: AsyncEngine) -> None:
         """Inject dashes-form rows like pre-fix prod, re-run 0006, verify lookups."""
-        mig0006 = _load_migration("0006_normalize_seeded_uuid_format")
+        mig0006 = load_migration("0006_normalize_seeded_uuid_format")
 
         # Wipe the (correctly-formatted) seed so we can plant pre-fix data.
         async with seeded_engine.begin() as conn:
@@ -235,7 +207,7 @@ class TestUuidFormatBackfill:
             await conn.execute(sa.text("DELETE FROM prompt_blocks"))
 
             block_ids = {kind: str(uuid.uuid4()) for kind in ("s", "p", "l", "c", "b")}
-            now = datetime.now().isoformat(sep=" ")
+            now = utcnow().isoformat(sep=" ")
             for kind_short, full_kind in (
                 ("s", "style"),
                 ("p", "palette"),
@@ -283,16 +255,6 @@ class TestUuidFormatBackfill:
             preset, blocks = await resolve_preset(session, uuid.UUID(preset_id))
         assert preset.name == "legacy"
         assert len(blocks) == 5
-
-
-def _load_migration(stem: str) -> ModuleType:
-    """Import a migration module by file stem so its upgrade() can run in isolation."""
-    api_root = Path(inky_image_display_api.__file__).parent
-    spec = importlib.util.spec_from_file_location(stem, api_root / "_migrations" / "versions" / f"{stem}.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def _run_upgrade(sync_conn: sa.engine.Connection, mig_module: ModuleType) -> None:

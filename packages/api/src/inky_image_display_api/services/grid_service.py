@@ -3,15 +3,17 @@
 A grid is a virtual canvas in physical centimetres on which devices are
 placed. When a grid displays an image, the source image is cover-fitted to
 the canvas and each placed device receives a pre-cropped slice at its
-native pixel resolution. Slices are uploaded under
-``grids/{grid_id}/{image_id}/{device_id}.jpg`` and pushed to devices via
-the normal MQTT ``DisplayCommand`` flow.
+native pixel resolution. Slices are cached under
+``grids/{grid_id}/{image_id}/`` and pushed to devices by the queue
+(``queue_service``) via the normal MQTT ``DisplayCommand`` flow.
 """
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
-from dataclasses import dataclass
+from dataclasses import astuple, dataclass
 from datetime import timedelta
 from io import BytesIO
 from typing import TYPE_CHECKING
@@ -19,12 +21,14 @@ from typing import TYPE_CHECKING
 import pillow_heif
 from fastapi import HTTPException
 from inky_image_display_shared.models import Device, DeviceProfile, Grid, GridDevice, Image
-from inky_image_display_shared.schemas import DisplayCommand
 from inky_image_display_shared.time import utcnow
 from PIL import Image as PILImage
 from PIL import ImageOps
 from PIL.Image import Resampling
 from sqlmodel import col, select
+
+from inky_image_display_api.services.image_deletion import grid_crop_dir
+from inky_image_display_api.services.s3_service import stat_or_none
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -32,7 +36,6 @@ if TYPE_CHECKING:
 
     from sqlmodel.ext.asyncio.session import AsyncSession
 
-    from inky_image_display_api.mqtt import MQTTService
     from inky_image_display_api.services.s3_service import S3Service
 
 pillow_heif.register_heif_opener()
@@ -78,29 +81,32 @@ class SlotTarget:
     is_portrait: bool
 
 
+async def placement_targets(session: AsyncSession, grid_id: UUID) -> list[tuple[GridDevice, SlotTarget]]:
+    """Every placement with its device and oriented panel size, in slot order.
+
+    One joined query: the display paths run this per push, and a query per
+    placement for device and profile added up on larger walls.
+    """
+    result = await session.exec(
+        select(GridDevice, Device, DeviceProfile)
+        .join(Device, col(Device.id) == col(GridDevice.device_id))
+        .join(DeviceProfile, col(DeviceProfile.id) == col(Device.device_profile_id))
+        .where(col(GridDevice.grid_id) == grid_id)
+        .order_by(col(GridDevice.row), col(GridDevice.col))
+    )
+    rows: list[tuple[GridDevice, SlotTarget]] = []
+    for placement, device, profile in result.all():
+        width, height = oriented_pixel_dims(profile, device.display_orientation)
+        target = SlotTarget(
+            device=device, width=width, height=height, is_portrait=device.display_orientation == "portrait"
+        )
+        rows.append((placement, target))
+    return rows
+
+
 async def resolve_slot_targets(session: AsyncSession, grid_id: UUID) -> dict[tuple[int, int], SlotTarget]:
     """Map each grid slot (row, col) to its device and panel dimensions."""
-    placements = await session.exec(select(GridDevice).where(col(GridDevice.grid_id) == grid_id))
-    targets: dict[tuple[int, int], SlotTarget] = {}
-    for placement in placements.all():
-        device_result = await session.exec(select(Device).where(col(Device.id) == placement.device_id))
-        device = device_result.first()
-        if device is None:
-            continue
-        profile_result = await session.exec(
-            select(DeviceProfile).where(col(DeviceProfile.id) == device.device_profile_id)
-        )
-        profile = profile_result.first()
-        if profile is None:
-            continue
-        width, height = oriented_pixel_dims(profile, device.display_orientation)
-        targets[(placement.row, placement.col)] = SlotTarget(
-            device=device,
-            width=width,
-            height=height,
-            is_portrait=device.display_orientation == "portrait",
-        )
-    return targets
+    return {(placement.row, placement.col): target for placement, target in await placement_targets(session, grid_id)}
 
 
 async def list_grid_devices(session: AsyncSession, grid_id: UUID) -> list[GridDevice]:
@@ -129,22 +135,30 @@ async def apply_layout(session: AsyncSession, grid: Grid, device_rows: list[list
     if len(set(flat)) != len(flat):
         raise HTTPException(status_code=400, detail="A device can appear only once in the layout")
 
+    # Batched: one query for the devices with their profiles, one for
+    # conflicting placements, instead of several per device.
+    found = await session.exec(
+        select(Device, DeviceProfile)
+        .join(DeviceProfile, col(DeviceProfile.id) == col(Device.device_profile_id))
+        .where(col(Device.id).in_(flat))
+    )
+    by_id = {device.id: (device, profile) for device, profile in found.all()}
+    if len(by_id) != len(flat):
+        raise HTTPException(status_code=404, detail="Device not found")
+    elsewhere = await session.exec(
+        select(GridDevice.device_id).where(col(GridDevice.device_id).in_(flat), col(GridDevice.grid_id) != grid.id)
+    )
+    taken = elsewhere.first()
+    if taken is not None:
+        raise HTTPException(
+            status_code=409, detail=f"Device {by_id[taken][0].device_id} is already part of another grid"
+        )
+
     sized_rows: list[list[tuple[Device, float, float]]] = []
     for row in device_rows:
         sized_row: list[tuple[Device, float, float]] = []
         for device_id in row:
-            device = await get_device_or_404(session, device_id)
-            other = await session.exec(
-                select(GridDevice).where(
-                    col(GridDevice.device_id) == device_id,
-                    col(GridDevice.grid_id) != grid.id,
-                )
-            )
-            if other.first() is not None:
-                raise HTTPException(
-                    status_code=409, detail=f"Device {device.device_id} is already part of another grid"
-                )
-            profile = await get_profile(session, device.device_profile_id)
+            device, profile = by_id[device_id]
             width_cm, height_cm = oriented_physical_dims(profile, device.display_orientation)
             sized_row.append((device, width_cm, height_cm))
         sized_rows.append(sized_row)
@@ -156,12 +170,16 @@ async def apply_layout(session: AsyncSession, grid: Grid, device_rows: list[list
 
     # Devices dropped from the layout stop being driven by this grid.
     kept_ids = set(flat)
-    for placement in await list_grid_devices(session, grid.id):
-        if placement.device_id not in kept_ids:
-            device = await get_device_or_404(session, placement.device_id)
-            if device.claimed_by_grid_id == grid.id:
-                device.claimed_by_grid_id = None
-                session.add(device)
+    placements = await list_grid_devices(session, grid.id)
+    dropped_ids = [p.device_id for p in placements if p.device_id not in kept_ids]
+    if dropped_ids:
+        dropped = await session.exec(
+            select(Device).where(col(Device.id).in_(dropped_ids), col(Device.claimed_by_grid_id) == grid.id)
+        )
+        for device in dropped.all():
+            device.claimed_by_grid_id = None
+            session.add(device)
+    for placement in placements:
         await session.delete(placement)
     await session.flush()
 
@@ -199,55 +217,52 @@ async def get_grid_or_404(session: AsyncSession, grid_id: UUID) -> Grid:
     return grid
 
 
-async def get_device_or_404(session: AsyncSession, device_id: UUID) -> Device:
-    """Fetch a device by primary key, raising 404 if missing."""
-    result = await session.exec(select(Device).where(col(Device.id) == device_id))
-    device = result.first()
-    if device is None:
-        raise HTTPException(status_code=404, detail="Device not found")
-    return device
+@dataclass(frozen=True)
+class CropSpec:
+    """Plain-value crop geometry, safe to hand to a worker thread.
+
+    ORM instances must not cross into the thread (an expired attribute
+    would try to lazy-load there), so the render step gets copies.
+    """
+
+    canvas_width_cm: float
+    canvas_height_cm: float
+    left_cm: float
+    top_cm: float
+    width_cm: float
+    height_cm: float
+    target_size: tuple[int, int]
+
+    @classmethod
+    def of(cls, grid: Grid, placement: GridDevice, target_size: tuple[int, int]) -> CropSpec:
+        """Snapshot the geometry of one placement on ``grid``."""
+        return cls(
+            canvas_width_cm=grid.width_cm,
+            canvas_height_cm=grid.height_cm,
+            left_cm=placement.top_left_x_cm,
+            top_cm=placement.top_left_y_cm,
+            width_cm=placement.width_cm,
+            height_cm=placement.height_cm,
+            target_size=target_size,
+        )
 
 
-async def get_profile(session: AsyncSession, profile_id: UUID) -> DeviceProfile:
-    """Fetch a device profile by id, raising 500 if missing (should not happen)."""
-    result = await session.exec(select(DeviceProfile).where(col(DeviceProfile.id) == profile_id))
-    profile = result.first()
-    if profile is None:
-        raise HTTPException(status_code=500, detail="Device profile not found")
-    return profile
+def decode_rgb(image_data: bytes) -> PILImage.Image:
+    """Decode, apply EXIF rotation and normalise to RGB."""
+    with PILImage.open(BytesIO(image_data)) as original:
+        oriented = ImageOps.exif_transpose(original) or original
+        return oriented.convert("RGB") if oriented.mode != "RGB" else oriented.copy()
 
 
-def compute_crop_for_device(
-    image_data: bytes,
-    grid: Grid,
-    placement: GridDevice,
-    target_pixel_size: tuple[int, int],
-    *,
-    quality: int = 85,
-) -> bytes:
-    """Crop and resize the source image to the device's slice.
+def crop_decoded(rgb: PILImage.Image, spec: CropSpec, *, quality: int = 85) -> bytes:
+    """Crop and resize an already-decoded source to one device's slice.
 
     The source image is cover-fitted to the canvas (so it fully covers
     every cm of the grid, cropping overflow on one axis). The device's
     cm-rectangle then maps directly onto the projected region.
-
-    Args:
-        image_data: Source image bytes.
-        grid: The grid the device is placed on.
-        placement: The device's cm-rect on the grid.
-        target_pixel_size: Final ``(width_px, height_px)`` for the device.
-        quality: JPEG output quality.
-
-    Returns:
-        JPEG bytes sized to ``target_pixel_size``.
-
     """
-    with PILImage.open(BytesIO(image_data)) as original:
-        oriented = ImageOps.exif_transpose(original) or original
-        rgb = oriented.convert("RGB") if oriented.mode != "RGB" else oriented.copy()
-
     img_w, img_h = rgb.size
-    canvas_aspect = grid.width_cm / grid.height_cm
+    canvas_aspect = spec.canvas_width_cm / spec.canvas_height_cm
     image_aspect = img_w / img_h
 
     # Cover-fit: pick the source-image rect that maps to the entire canvas
@@ -263,123 +278,82 @@ def compute_crop_for_device(
         used_left = 0.0
         used_top = (img_h - used_h) / 2
 
-    px_per_cm_x = used_w / grid.width_cm
-    px_per_cm_y = used_h / grid.height_cm
+    px_per_cm_x = used_w / spec.canvas_width_cm
+    px_per_cm_y = used_h / spec.canvas_height_cm
 
-    crop_left = used_left + placement.top_left_x_cm * px_per_cm_x
-    crop_top = used_top + placement.top_left_y_cm * px_per_cm_y
-    crop_right = crop_left + placement.width_cm * px_per_cm_x
-    crop_bottom = crop_top + placement.height_cm * px_per_cm_y
+    crop_left = used_left + spec.left_cm * px_per_cm_x
+    crop_top = used_top + spec.top_cm * px_per_cm_y
+    crop_right = crop_left + spec.width_cm * px_per_cm_x
+    crop_bottom = crop_top + spec.height_cm * px_per_cm_y
 
     cropped = rgb.crop((int(crop_left), int(crop_top), int(crop_right), int(crop_bottom)))
-    resized = cropped.resize(target_pixel_size, resample=Resampling.LANCZOS)
+    resized = cropped.resize(spec.target_size, resample=Resampling.LANCZOS)
 
     out = BytesIO()
     resized.save(out, format="JPEG", quality=quality)
     return out.getvalue()
 
 
-def grid_crop_storage_path(grid_id: UUID, image_id: UUID, device_id: UUID) -> str:
-    """Build the S3 object key for a grid crop."""
-    return f"grids/{grid_id}/{image_id}/{device_id}.jpg"
+def compute_crop_for_device(
+    image_data: bytes,
+    grid: Grid,
+    placement: GridDevice,
+    target_pixel_size: tuple[int, int],
+    *,
+    quality: int = 85,
+) -> bytes:
+    """Decode ``image_data`` and crop one device's slice (single-slice form)."""
+    return crop_decoded(decode_rgb(image_data), CropSpec.of(grid, placement, target_pixel_size), quality=quality)
+
+
+def grid_crop_storage_path(grid_id: UUID, image_id: UUID, device_id: UUID, spec: CropSpec) -> str:
+    """Build the S3 object key for a grid crop.
+
+    The geometry digest is part of the name so a cached crop is reused only
+    while it is still correct: re-arranging the layout or re-mounting a
+    panel in another orientation yields a new key instead of a stale slice.
+    """
+    digest = hashlib.sha256(repr(astuple(spec)).encode()).hexdigest()[:12]
+    return f"{grid_crop_dir(grid_id, image_id)}{device_id}-{digest}.jpg"
+
+
+def _render_missing_crops(s3: S3Service, source_key: str, crops: list[tuple[str, CropSpec]]) -> None:
+    """Render and upload the crops not already in the bucket.
+
+    Runs in a worker thread: the MinIO SDK and Pillow both block. The
+    source is decoded once for all slices, and not at all when every crop
+    is cached — a replayed queue entry costs a few stats, not a decode.
+    """
+    missing = [(key, spec) for key, spec in crops if stat_or_none(s3, key) is None]
+    if not missing:
+        return
+    source = decode_rgb(s3.get_object_bytes(source_key))
+    for key, spec in missing:
+        s3.upload_image(key, crop_decoded(source, spec), "image/jpeg")
 
 
 async def render_and_upload(
-    session: AsyncSession,
     grid: Grid,
     image: Image,
+    rows: list[tuple[GridDevice, SlotTarget]],
     s3: S3Service,
+    gate: asyncio.Semaphore,
 ) -> dict[UUID, str]:
-    """Render per-device crops and upload them to S3.
+    """Ensure every placement's crop exists in S3; return device id -> key.
 
-    Returns a mapping ``device_id -> storage_path`` for each placement.
+    The process gate bounds concurrent full-size decodes across the API
+    (uploads, GenAI, previews) so a burst can't exhaust memory.
     """
-    placements = await list_grid_devices(session, grid.id)
-    if not placements:
+    if not rows:
         raise HTTPException(status_code=400, detail="Grid has no devices placed")
-
-    source_bytes = s3.get_object_bytes(image.storage_path)
-
-    out: dict[UUID, str] = {}
-    for placement in placements:
-        device = await get_device_or_404(session, placement.device_id)
-        profile = await get_profile(session, device.device_profile_id)
-        target_size = oriented_pixel_dims(profile, device.display_orientation)
-        crop_bytes = compute_crop_for_device(source_bytes, grid, placement, target_size)
-        path = grid_crop_storage_path(grid.id, image.id, placement.device_id)
-        s3.upload_image(path, crop_bytes, "image/jpeg")
-        out[placement.device_id] = path
-    return out
-
-
-async def claim_devices_and_push(
-    session: AsyncSession,
-    grid: Grid,
-    image: Image,
-    crop_paths: dict[UUID, str],
-    mqtt: MQTTService,
-) -> None:
-    """Claim every grid member device and push its slice via MQTT.
-
-    The display is held like any queue content: for the grid's display
-    duration, or until an explicit release when unset. Aborts (raises 409)
-    without partial state changes if any member is already claimed by a
-    different grid.
-    """
-    now = utcnow()
-    placements = await list_grid_devices(session, grid.id)
-
-    # Pre-flight: refuse if any member is held by another grid.
-    devices: list[Device] = []
-    for placement in placements:
-        device = await get_device_or_404(session, placement.device_id)
-        if device.claimed_by_grid_id is not None and device.claimed_by_grid_id != grid.id:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Device {device.device_id} is already claimed by another grid",
-            )
-        devices.append(device)
-
-    # Apply claims and push commands. While claimed the devices' own
-    # ``scheduled_next_at`` is inert — solo rotation skips them; the
-    # release path makes them due immediately.
-    for device in devices:
-        path = crop_paths[device.id]
-        device.claimed_by_grid_id = grid.id
-        device.current_image_id = image.id
-        device.displayed_since = now
-        device.updated_at = now
-        session.add(device)
-
-        if mqtt.is_connected(device.device_id):
-            command = DisplayCommand(
-                action="display",
-                image_path=path,
-                image_id=str(image.id),
-            )
-            try:
-                await mqtt.send_command(device.device_id, command)
-            except Exception:
-                logger.exception("Failed to push grid command to %s", device.device_id)
-        else:
-            logger.info("Device %s offline; crop uploaded but command not delivered", device.device_id)
-
-    grid.current_image_id = image.id
-    grid.displayed_since = now
-    grid.hold_until = hold_horizon(grid, now)
-    grid.updated_at = now
-    image.last_displayed_at = now
-    session.add(grid)
-    session.add(image)
-    await session.commit()
-
-
-async def release_grid(session: AsyncSession, grid: Grid) -> None:
-    """Clear claims on every member device; the grid stops driving them."""
-    placements = await list_grid_devices(session, grid.id)
-    for placement in placements:
-        device = await get_device_or_404(session, placement.device_id)
-        if device.claimed_by_grid_id == grid.id:
-            device.claimed_by_grid_id = None
-            session.add(device)
-    await session.commit()
+    crops = {
+        target.device.id: (
+            grid_crop_storage_path(grid.id, image.id, target.device.id, spec),
+            spec,
+        )
+        for placement, target in rows
+        for spec in [CropSpec.of(grid, placement, (target.width, target.height))]
+    }
+    async with gate:
+        await asyncio.to_thread(_render_missing_crops, s3, image.storage_path, list(crops.values()))
+    return {device_id: key for device_id, (key, _spec) in crops.items()}

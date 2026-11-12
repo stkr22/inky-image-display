@@ -5,7 +5,6 @@ so every consumer (UI service, sync service) validates against the same
 wire contract; they are re-exported here for backwards compatibility.
 """
 
-from datetime import UTC, datetime
 from typing import Annotated, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -32,8 +31,10 @@ from inky_image_display_shared.schemas.responses import (
     SyncJobRunResponse,
     UtcDatetime,
 )
+from inky_image_display_shared.time import NaiveUtc
 from pydantic import AfterValidator, BaseModel, Field, field_validator, model_validator
 
+from inky_image_display_api.services.image_deletion import RESERVED_STORAGE_PREFIXES
 from inky_image_display_api.services.sync_job_scheduling import validate_cron
 
 __all__ = [
@@ -112,6 +113,22 @@ ScheduleTimezone = Annotated[str, AfterValidator(_validate_timezone)]
 # --- Images ---
 
 
+def _not_reserved_prefix(value: str) -> str:
+    if value in RESERVED_STORAGE_PREFIXES:
+        raise ValueError(f"'{value}' is reserved for derived objects")
+    return value
+
+
+# ``source_name`` becomes the first S3 key segment (``{source}/{uuid}.jpg``),
+# so it must be a single safe path segment and must not collide with the
+# derived-object namespaces the API writes and deletes on its own.
+SourceName = Annotated[
+    str,
+    Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_-]*$"),
+    AfterValidator(_not_reserved_prefix),
+]
+
+
 class ImageCreate(BaseModel):
     """Metadata supplied when uploading an image (multipart form).
 
@@ -119,7 +136,7 @@ class ImageCreate(BaseModel):
     uploaded file's dimensions.
     """
 
-    source_name: str = "manual"
+    source_name: SourceName = "manual"
     title: str | None = None
     description: str | None = None
     author: str | None = None
@@ -154,7 +171,7 @@ class ImageRegister(BaseModel):
     original_height: int | None = None
     is_portrait: bool = False
     display_duration_seconds: RefreshIntervalSeconds | None = None
-    expires_at: datetime | None = None
+    expires_at: NaiveUtc | None = None
     # Group membership for worker-generated screens: the display worker
     # registers each rendered panel image into its run's group with the
     # grid slot it belongs to.
@@ -184,7 +201,7 @@ class ImageUpdate(BaseModel):
     original_height: int | None = None
     is_portrait: bool | None = None
     display_duration_seconds: RefreshIntervalSeconds | None = None
-    expires_at: datetime | None = None
+    expires_at: NaiveUtc | None = None
     target_grid_id: UUID | None = None
     # Operator veto: True removes the image from all automatic rotation
     # (solo and grid) without deleting it; manual pushes still work.
@@ -261,8 +278,8 @@ class SyncJobCreate(BaseModel):
     city: str | None = None
     state: str | None = None
     country: str | None = None
-    taken_after: datetime | None = None
-    taken_before: datetime | None = None
+    taken_after: NaiveUtc | None = None
+    taken_before: NaiveUtc | None = None
     rating: int | None = None
 
 
@@ -294,8 +311,8 @@ class SyncJobUpdate(BaseModel):
     city: str | None = None
     state: str | None = None
     country: str | None = None
-    taken_after: datetime | None = None
-    taken_before: datetime | None = None
+    taken_after: NaiveUtc | None = None
+    taken_before: NaiveUtc | None = None
     rating: int | None = None
 
 
@@ -304,20 +321,11 @@ class SyncJobRunReport(BaseModel):
 
     job_type: Literal["immich", "gemini", "display", "calibre"]
 
-    @field_validator("started_at", "finished_at", check_fields=False)
-    @classmethod
-    def _to_naive_utc(cls, value: datetime) -> datetime:
-        # Stored datetimes are naive UTC by convention; normalize aware
-        # inputs so comparisons against stored columns can't blow up.
-        if value.tzinfo is not None:
-            return value.astimezone(UTC).replace(tzinfo=None)
-        return value
-
     job_id: UUID
     job_name: str
     status: Literal["success", "error"]
-    started_at: datetime
-    finished_at: datetime
+    started_at: NaiveUtc
+    finished_at: NaiveUtc
     images_added: int = 0
     images_skipped: int = 0
     images_deleted: int = 0

@@ -4,15 +4,17 @@ import logging
 from typing import Annotated
 from uuid import UUID
 
+from aiomqtt import MqttError
 from anyio import to_thread
 from fastapi import APIRouter, HTTPException, Query, Request
 from inky_image_display_shared.models import Device, DeviceProfile, Image
 from inky_image_display_shared.schemas import DeviceRegistration, DisplayCommand, RegistrationResponse
 from inky_image_display_shared.time import utcnow
+from minio.error import S3Error
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from inky_image_display_api.mqtt import upsert_device
+from inky_image_display_api.mqtt import MQTTService
 from inky_image_display_api.schemas import (
     DeviceResponse,
     DeviceUpdate,
@@ -20,12 +22,15 @@ from inky_image_display_api.schemas import (
     ImageSummary,
     NextImageResponse,
 )
+from inky_image_display_api.services.device_registry import upsert_device
+from inky_image_display_api.services.image_deletion import derived_fit_key
 from inky_image_display_api.services.image_processor import ImageProcessor
 from inky_image_display_api.services.image_service import (
     build_display_command,
     get_next_image_for_device,
     update_display_state,
 )
+from inky_image_display_api.services.s3_service import stat_or_none
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
 logger = logging.getLogger(__name__)
@@ -97,9 +102,7 @@ async def register_device(request: Request, registration: DeviceRegistration) ->
         mqtt_host=settings.device_mqtt_host,
         mqtt_port=settings.device_mqtt_port,
         mqtt_username=settings.device_mqtt_username,
-        mqtt_password=(
-            settings.device_mqtt_password.get_secret_value() if settings.device_mqtt_password is not None else None
-        ),
+        mqtt_password=settings.device_mqtt_password,
         mqtt_tls=settings.device_mqtt_tls,
         mqtt_transport=settings.device_mqtt_transport,
         mqtt_websocket_path=settings.device_mqtt_websocket_path,
@@ -186,24 +189,51 @@ async def _panel_dimensions(session: AsyncSession, device: Device) -> tuple[int,
     return profile.width, profile.height
 
 
-def _fit_image_to_panel(s3, storage_path: str, width: int, height: int) -> str:
+async def _fit_image_to_panel(request: Request, storage_path: str, width: int, height: int) -> str:
     """Cover-crop a stored image to exact panel dims; return the derived key.
 
     Derived copies live under ``derived/`` keyed by target size, so
     repeated sends of the same image to the same panel reuse the first
     crop. They are not registered as library images — the library keeps
-    one logical picture, not one row per panel size.
+    one logical picture, not one row per panel size. Only a genuine
+    not-found counts as a miss, so an S3 outage surfaces as 502 instead of
+    a full-size decode; the decode itself waits on the process gate.
     """
-    derived_key = f"derived/{width}x{height}/{storage_path}"
-    try:
-        s3.stat_object(derived_key)
-    except Exception:
+    s3 = request.app.state.s3_service
+    derived_key = derived_fit_key(storage_path, width, height)
+
+    def _render() -> bool:
         original = s3.get_object_bytes(storage_path)
         processed = ImageProcessor.process_for_display(original, width, height, upscale=True)
         if processed is None:
-            raise HTTPException(status_code=422, detail="Image could not be fitted to the panel") from None
+            return False
         s3.upload_image(derived_key, processed, "image/jpeg")
+        return True
+
+    try:
+        if await to_thread.run_sync(stat_or_none, s3, derived_key) is None:
+            async with request.app.state.process_gate:
+                rendered = await to_thread.run_sync(_render)
+            if not rendered:
+                raise HTTPException(status_code=422, detail="Image could not be fitted to the panel")
+    except S3Error as exc:
+        raise HTTPException(status_code=502, detail="Upstream storage error") from exc
     return derived_key
+
+
+async def _send_or_503(manager: MQTTService, device_id: str, command: DisplayCommand) -> None:
+    """Send a command, mapping transport failures to 503.
+
+    The ``is_connected`` pre-check races with a device dropping offline or
+    the broker connection going away; either is a temporary condition the
+    client should retry, not a server bug.
+    """
+    try:
+        await manager.send_command(device_id, command)
+    except KeyError as exc:
+        raise HTTPException(status_code=503, detail="Device went offline; retry shortly") from exc
+    except (RuntimeError, MqttError) as exc:
+        raise HTTPException(status_code=503, detail="MQTT broker unavailable; retry shortly") from exc
 
 
 @router.post("/{device_id}/display")
@@ -249,11 +279,7 @@ async def send_display_command(
         if matches:
             command = build_display_command(image)
         elif body.fit == "auto":
-            s3 = request.app.state.s3_service
-            storage_path = image.storage_path
-            derived_key = await to_thread.run_sync(
-                _fit_image_to_panel, s3, storage_path, expected_width, expected_height
-            )
+            derived_key = await _fit_image_to_panel(request, image.storage_path, expected_width, expected_height)
             command = build_display_command(image)
             command.image_path = derived_key
         else:
@@ -265,7 +291,7 @@ async def send_display_command(
                 ),
             )
 
-        await manager.send_command(device_id, command)
+        await _send_or_503(manager, device_id, command)
         await update_display_state(session, device, image, request.app.state.settings)
 
     return {"status": "ok"}
@@ -302,7 +328,7 @@ async def next_image(request: Request, device_id: str) -> NextImageResponse:
         )
 
         command = build_display_command(image)
-        await manager.send_command(device_id, command)
+        await _send_or_503(manager, device_id, command)
         await update_display_state(session, device, image, request.app.state.settings)
 
         return response
@@ -316,5 +342,5 @@ async def clear_device(request: Request, device_id: str) -> dict[str, str]:
         raise HTTPException(status_code=404, detail="Device not connected")
 
     command = DisplayCommand(action="clear")
-    await manager.send_command(device_id, command)
+    await _send_or_503(manager, device_id, command)
     return {"status": "ok"}

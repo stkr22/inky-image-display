@@ -18,9 +18,10 @@ across the whole grid.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
+from fastapi import HTTPException
 from inky_image_display_shared.models import Device, Grid, Image, ImageGroup
 from inky_image_display_shared.schemas import DisplayCommand
 from inky_image_display_shared.schemas.responses import GroupDisplayResult
@@ -37,6 +38,9 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
+
+# How long a grid whose scheduled display raised waits before trying again.
+_FAILED_DISPLAY_RETRY = timedelta(minutes=10)
 
 
 class QueueError(Exception):
@@ -102,12 +106,12 @@ def slot_images(images: list[Image]) -> dict[tuple[int, int], Image]:
     return slotted
 
 
-async def _push_command(app: FastAPI, device: Device, image: Image) -> bool:
+async def _push_command(app: FastAPI, device: Device, image: Image, *, image_path: str | None = None) -> bool:
     """Push one image to a device; True when the command reached it."""
     if not app.state.mqtt.is_connected(device.device_id):
         logger.info("Device %s offline; push deferred to reconnect", device.device_id)
         return False
-    command = DisplayCommand(action="display", image_path=image.storage_path, image_id=str(image.id))
+    command = DisplayCommand(action="display", image_path=image_path or image.storage_path, image_id=str(image.id))
     try:
         await app.state.mqtt.send_command(device.device_id, command)
     except Exception:
@@ -163,38 +167,43 @@ async def _show_group(  # noqa: PLR0913 — one push spans grid, group, and tran
     return result
 
 
-async def _push_canvas_image(
+async def _push_canvas_image(  # noqa: PLR0913 — one push spans grid, image, and transport
     app: FastAPI,
     session: AsyncSession,
     grid: Grid,
     image: Image,
     *,
     now: datetime,
+    refuse_foreign_claims: bool,
 ) -> tuple[list[str], list[str]]:
-    """Push one image cover-cropped across every panel. No commit."""
-    crop_paths = await grid_service.render_and_upload(session, grid, image, app.state.s3_service)
-    placements = await grid_service.list_grid_devices(session, grid.id)
+    """Push one image cover-cropped across every panel. No commit.
+
+    A panel held by another grid is skipped on the scheduled path (one odd
+    panel must not stall the wall) but refused with 409 for an operator's
+    manual push, so they learn why the wall didn't fully change — checked
+    before anything is rendered or sent.
+    """
+    rows = await grid_service.placement_targets(session, grid.id)
+    foreign = [t.device for _, t in rows if t.device.claimed_by_grid_id not in (None, grid.id)]
+    if foreign and refuse_foreign_claims:
+        raise HTTPException(status_code=409, detail=f"Device {foreign[0].device_id} is already claimed by another grid")
+    crop_paths = await grid_service.render_and_upload(grid, image, rows, app.state.s3_service, app.state.process_gate)
     displayed: list[str] = []
     offline: list[str] = []
-    for placement in placements:
-        device = await grid_service.get_device_or_404(session, placement.device_id)
-        if device.claimed_by_grid_id is not None and device.claimed_by_grid_id != grid.id:
+    for _placement, target in rows:
+        device = target.device
+        if device in foreign:
             logger.warning("Device %s held by another grid; skipped", device.device_id)
             continue
         _claim(device, grid, image, now)
         session.add(device)
         crop_path = crop_paths.get(device.id)
-        if crop_path is None or not app.state.mqtt.is_connected(device.device_id):
+        if crop_path is None:
             offline.append(device.device_id)
             continue
         # Canvas pushes address the per-device crop object, not the source.
-        command = DisplayCommand(action="display", image_path=crop_path, image_id=str(image.id))
-        try:
-            await app.state.mqtt.send_command(device.device_id, command)
-            displayed.append(device.device_id)
-        except Exception:
-            logger.exception("Failed to push grid crop to %s", device.device_id)
-            offline.append(device.device_id)
+        pushed = await _push_command(app, device, image, image_path=crop_path)
+        (displayed if pushed else offline).append(device.device_id)
     grid.current_group_id = None
     grid.current_image_id = image.id
     grid.displayed_since = now
@@ -215,11 +224,13 @@ async def _next_playable(session: AsyncSession, grid_id: UUID) -> tuple[str, Ima
     return None
 
 
-async def show_next(app: FastAPI, session: AsyncSession, grid: Grid) -> bool:
+async def show_next(app: FastAPI, session: AsyncSession, grid: Grid, *, scheduled_at: datetime | None = None) -> bool:
     """Show the next queue entry and hold it; the queue's only step function.
 
     Returns False (without touching the panels) when the queue has no
-    playable entry. Commits on success.
+    playable entry. Commits on success. ``scheduled_at`` marks a schedule
+    run: the display lease advances in the *same* commit as the display
+    itself, so a crash between the two can't show the entry twice.
     """
     entry = await _next_playable(session, grid.id)
     if entry is None:
@@ -231,12 +242,28 @@ async def show_next(app: FastAPI, session: AsyncSession, grid: Grid) -> bool:
     if kind == "group" and isinstance(obj, ImageGroup):
         await _show_group(app, session, grid, obj, images, now=now)
     elif isinstance(obj, Image):
-        await _push_canvas_image(app, session, grid, obj, now=now)
+        await _push_canvas_image(app, session, grid, obj, now=now, refuse_foreign_claims=False)
+    grid.hold_until = grid_service.hold_horizon(grid, now)
+    grid.updated_at = now
+    if scheduled_at is not None:
+        grid.display_next_at = next_cron_run(grid.display_cron, grid.display_timezone, scheduled_at)
+    session.add(grid)
+    await session.commit()
+    return True
+
+
+async def show_image(app: FastAPI, session: AsyncSession, grid: Grid, image: Image) -> None:
+    """Operator override: show ``image`` across the grid now and hold it. Commits.
+
+    Shares the scheduled path's push so manual and queued displays claim,
+    crop and hold identically.
+    """
+    now = utcnow()
+    await _push_canvas_image(app, session, grid, image, now=now, refuse_foreign_claims=True)
     grid.hold_until = grid_service.hold_horizon(grid, now)
     grid.updated_at = now
     session.add(grid)
     await session.commit()
-    return True
 
 
 async def start_group(app: FastAPI, session: AsyncSession, grid: Grid, group: ImageGroup) -> GroupDisplayResult:
@@ -260,7 +287,8 @@ async def start_group(app: FastAPI, session: AsyncSession, grid: Grid, group: Im
 async def release_queue(session: AsyncSession, grid: Grid) -> None:
     """End the grid's display and hand the panels back to solo rotation.
 
-    Runs on hold expiry and on operator release alike. Every panel is due
+    Runs on hold expiry, operator release and grid deletion alike, so a
+    panel always leaves a grid in the same state. Every panel is due
     immediately, so the next rotation tick repaints them all at once; that
     mass rotation then staggers each panel's *following* refresh (see
     ``rotation._rotate_due_devices``) so they don't keep flashing in
@@ -300,32 +328,62 @@ def display_due(grid: Grid, now: datetime) -> bool:
 
 
 async def queue_tick(app: FastAPI) -> None:
-    """Expire holds and start due scheduled displays; runs from the rotation loop."""
+    """Expire holds and start due scheduled displays; runs from the rotation loop.
+
+    Each grid is handled in its own session and try-block: one grid with a
+    broken source image or an unreachable bucket must not stop the other
+    walls from releasing or starting.
+    """
     now = utcnow()
-    # expire_on_commit=False: release_queue commits per grid, and the next
-    # loop iteration still reads the already-loaded grid rows.
-    async with AsyncSession(app.state.engine, expire_on_commit=False) as session:
-        expired = await session.exec(select(Grid).where(col(Grid.hold_until).is_not(None), col(Grid.hold_until) <= now))
-        for grid in expired.all():
-            await release_queue(session, grid)
-            logger.info("Grid %s display ended; panels returned to solo rotation", grid.id)
+    async with AsyncSession(app.state.engine) as session:
+        expired = await session.exec(
+            select(Grid.id).where(col(Grid.hold_until).is_not(None), col(Grid.hold_until) <= now)
+        )
+        expired_ids = list(expired.all())
+    for grid_id in expired_ids:
+        try:
+            async with AsyncSession(app.state.engine) as session:
+                grid = await session.get(Grid, grid_id)
+                if grid is not None:
+                    await release_queue(session, grid)
+                    logger.info("Grid %s display ended; panels returned to solo rotation", grid_id)
+        except Exception:
+            logger.exception("Failed to release grid %s", grid_id)
 
     async with AsyncSession(app.state.engine) as session:
         grids_result = await session.exec(select(Grid).where(col(Grid.display_schedule_enabled).is_(True)))
         due_ids = [grid.id for grid in grids_result.all() if display_due(grid, now)]
 
     for grid_id in due_ids:
+        try:
+            async with AsyncSession(app.state.engine) as session:
+                grid = await session.get(Grid, grid_id)
+                if grid is None or not display_due(grid, now):
+                    continue
+                # An empty queue does not advance the lease — the next tick
+                # retries until content (e.g. the day's generated group) exists.
+                if await show_next(app, session, grid, scheduled_at=now):
+                    logger.info("Grid %s scheduled display started", grid_id)
+        except Exception:
+            logger.exception("Scheduled display failed for grid %s; retrying later", grid_id)
+            await _defer_after_failure(app, grid_id, now)
+
+
+async def _defer_after_failure(app: FastAPI, grid_id: UUID, now: datetime) -> None:
+    """Push a failed grid's lease out so it isn't retried every 30 s tick.
+
+    Retrying soon (not skipping to the next cron occurrence) keeps a
+    transient failure from costing the day's display, while the delay
+    stops a persistent one from re-decoding and re-pushing in a hot loop.
+    """
+    try:
         async with AsyncSession(app.state.engine) as session:
             grid = await session.get(Grid, grid_id)
-            if grid is None or not display_due(grid, now):
-                continue
-            # An empty queue does not advance the lease — the next tick
-            # retries until content (e.g. the day's generated group) exists.
-            if not await show_next(app, session, grid):
-                continue
-            grid = await session.get(Grid, grid_id)  # show_next committed; re-fetch
-            if grid is not None:
-                grid.display_next_at = next_cron_run(grid.display_cron, grid.display_timezone, now)
-                session.add(grid)
-                await session.commit()
-            logger.info("Grid %s scheduled display started", grid_id)
+            if grid is None:
+                return
+            retry_at = now + _FAILED_DISPLAY_RETRY
+            grid.display_next_at = min(retry_at, next_cron_run(grid.display_cron, grid.display_timezone, now))
+            session.add(grid)
+            await session.commit()
+    except Exception:
+        logger.exception("Could not defer grid %s after a failed display", grid_id)

@@ -35,9 +35,9 @@ from inky_image_display_api.schemas import (
 )
 from inky_image_display_api.services import display_job_service, grid_service, motd_renderer, queue_service
 from inky_image_display_api.services.display_job_service import MOTD_SCENE_PRESET_NAME
-from inky_image_display_api.services.image_group_service import group_response
+from inky_image_display_api.services.image_group_service import group_responses
 from inky_image_display_api.services.queue_service import QueueError
-from inky_image_display_api.services.sync_job_scheduling import begin_runs, next_cron_run
+from inky_image_display_api.services.sync_job_scheduling import begin_runs, claim_due_jobs, next_cron_run
 
 router = APIRouter(prefix="/api/display-jobs", tags=["display-jobs"])
 logger = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ async def claim_due_display_jobs(request: Request) -> list[DisplayJobClaim]:
     now = utcnow()
     claims: list[DisplayJobClaim] = []
     async with AsyncSession(request.app.state.engine) as session:
-        jobs = await display_job_service.claim_due_jobs(session, now)
+        jobs = await claim_due_jobs(session, DisplayJob, now, extra=display_job_service.has_target_clause())
         await begin_runs(session, "display", [(j.id, j.name) for j in jobs], now)
         for job in jobs:
             await session.refresh(job)
@@ -303,4 +303,4 @@ async def list_generated_groups(request: Request, job_id: UUID, limit: int = 10)
             .order_by(col(ImageGroup.created_at).desc())
             .limit(max(1, min(limit, 50)))
         )
-        return [await group_response(session, group) for group in result.all()]
+        return await group_responses(session, list(result.all()))

@@ -2,7 +2,7 @@
 
 const DUE_NOW_WINDOW_SECONDS = 30
 
-export function parseDatetime(value: string | null | undefined): Date | null {
+function parseDatetime(value: string | null | undefined): Date | null {
   if (!value) return null
   // The API emits offset-aware ISO strings; treat naive strings as UTC for
   // backwards compatibility with older payloads.
@@ -40,7 +40,7 @@ export function formatRelative(value: string | null | undefined, fallback = '—
   return delta > 0 ? `in ${text}` : `${text} ago`
 }
 
-export function humanizeSeconds(seconds: number): string {
+function humanizeSeconds(seconds: number): string {
   if (seconds < 60) return `${seconds}s`
   const minutes = Math.floor(seconds / 60)
   if (minutes < 60) return `${minutes}m`
@@ -61,4 +61,11 @@ export function splitHoursMinutes(seconds: number | null | undefined): [number, 
   if (!seconds || seconds < 0) return [0, 0]
   const minutesTotal = Math.floor(seconds / 60)
   return [Math.floor(minutesTotal / 60), minutesTotal % 60]
+}
+
+// Only http(s) URLs become links: source URLs come from external systems
+// (Immich, generated news stories), and a javascript: URL must never be
+// clickable.
+export function isHttpUrl(url: string | null | undefined): url is string {
+  return Boolean(url && (url.startsWith('http://') || url.startsWith('https://')))
 }

@@ -42,6 +42,10 @@ npx playwright install chromium   # first run only
 npm run test:e2e                  # or WEB_E2E_BASE_URL=... to target elsewhere
 ```
 
+Specs that create or delete images (`upload-crop`, `guest`) run in a separate
+`mutating` Playwright project, after the read-only specs and one at a time,
+so gallery pages never race another spec's cleanup.
+
 - `smoke.spec.ts` — every route renders its heading with zero console errors,
   failed requests, or unexpected 4xx/5xx (503s from the optional Immich/Gemini
   integrations are allowed); legacy redirects, jobs tab URL state, dark-mode
@@ -51,7 +55,8 @@ npm run test:e2e                  # or WEB_E2E_BASE_URL=... to target elsewhere
   thumbnail endpoint serves a variant, then deletes the image so reruns stay
   clean. Also seeds and searches an image through the gallery search box.
 - `guest.spec.ts` — mints a guest invite on the Settings page, opens it in a
-  fresh browser context, and verifies the restricted guest UI plus sign-out;
+  fresh browser context, and verifies the restricted guest UI (GenAI, gallery
+  and image detail make no request outside the guest allowlist) plus sign-out;
   also checks that a bogus invite token is rejected.
 - `sync-job-form.spec.ts` — stubs the `/api/immich/*` browse proxy in-browser
   to verify each filter picker reports its own lookup failure (e.g. an API key
@@ -65,10 +70,14 @@ library and clean up everything they create.
 
 ```
 src/
-├── lib/          api client, API types, date/interval formatting, image-fit math
-├── components/   design-system primitives: layout/nav, tiles, dialogs, toasts, form fields
+├── lib/          api client, API types, shared query definitions (queries.ts),
+│                 date/interval formatting, image-fit math
+├── components/   design-system primitives: layout/nav, tiles, dialogs, toasts, form fields,
+│   │             the shared job-form shell (JobFormShell), router error screen
+│   └── groups/   image-group dialogs used by the gallery
 └── pages/        one file per route (Landing, Images, ImageDetail, ImageUpload,
-                  Displays, GridDetail, Jobs, SyncJobForm, GeminiJobForm, GenAI, Settings)
+                  Displays, GridDetail, Jobs, SyncJobForm, GeminiJobForm,
+                  CalibreJobForm, DisplayJobForm, GenAI, Settings)
 ```
 
 Routing matches the NiceGUI app one-to-one, including the legacy redirects
@@ -86,6 +95,13 @@ Routing matches the NiceGUI app one-to-one, including the legacy redirects
   auto-set from the decoded image.
 - **Optimistic job toggles** — the active switch flips immediately and rolls
   back on error.
+- **Error surfacing** — any failed fetch or unhandled mutation error raises a
+  toast (deduplicated; queries expecting failures opt out with
+  `meta: { silentError: true }`), and lists/forms show an inline error with
+  Retry instead of an empty state.
+- **Edit forms seed once** — job/image/settings forms are keyed on the record
+  id and don't refetch on window focus, so background refreshes never
+  overwrite unsaved input.
 - **Gemini job delete asks for confirmation** (the NiceGUI version deleted
   without confirming — almost certainly an oversight).
 - **Schedule rows for grids deep-link to the grid detail page** instead of the

@@ -80,7 +80,7 @@ def build_display_command(image: Image) -> DisplayCommand:
         image: Image to display.
 
     Returns:
-        A display command ready to push over WebSocket.
+        A display command ready to publish to the device over MQTT.
 
     """
     return DisplayCommand(

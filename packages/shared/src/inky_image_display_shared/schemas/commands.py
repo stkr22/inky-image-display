@@ -5,9 +5,18 @@ The same payloads ride MQTT for command/ack/status traffic and the
 HTTP ``/api/devices/register`` endpoint for the initial handshake.
 """
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PlainSerializer, SecretStr
+
+# Credentials handed to the device must reach it in clear text, but pydantic's
+# SecretStr serialises to "**********" by default. Expose the value only in
+# JSON mode (the wire format) so ``repr()``/log lines and python-mode dumps
+# keep it masked.
+WireSecret = Annotated[
+    SecretStr,
+    PlainSerializer(lambda v: v.get_secret_value(), return_type=str, when_used="json"),
+]
 
 
 class DeviceRegistration(BaseModel):
@@ -43,13 +52,13 @@ class RegistrationResponse(BaseModel):
     s3_endpoint: str = Field(description="S3 server endpoint")
     s3_bucket: str = Field(description="Bucket containing images")
     s3_access_key: str = Field(description="Read-only access key")
-    s3_secret_key: str = Field(description="Read-only secret key")
+    s3_secret_key: WireSecret = Field(description="Read-only secret key")
     s3_secure: bool = Field(default=False, description="Use HTTPS for S3")
     s3_region: str | None = Field(default=None, description="S3 region")
     mqtt_host: str = Field(description="MQTT broker hostname")
     mqtt_port: int = Field(default=1883, description="MQTT broker port")
     mqtt_username: str | None = Field(default=None, description="MQTT username")
-    mqtt_password: str | None = Field(default=None, description="MQTT password")
+    mqtt_password: WireSecret | None = Field(default=None, description="MQTT password")
     mqtt_tls: bool = Field(default=False, description="Use TLS for the broker connection")
     mqtt_transport: Literal["tcp", "websockets"] = Field(
         default="tcp",

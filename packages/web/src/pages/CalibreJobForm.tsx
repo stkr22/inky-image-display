@@ -2,71 +2,56 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { Button, ChipsInput, NumberField, SelectField, Switch, TextField } from '../components/fields'
+import { useParams } from 'react-router-dom'
+import { ChipsInput, NumberField, SelectField, Switch, TextField } from '../components/fields'
+import { JobFormLoader, JobFormShell, useJobSave } from '../components/JobFormShell'
 import { ScheduleEditor, type ScheduleValue } from '../components/ScheduleEditor'
-import { useNotify } from '../components/Toast'
-import { BackLink, PageHeader, Spinner } from '../components/ui'
-import { api, errMessage } from '../lib/api'
+import { api } from '../lib/api'
+import { useDefaultChoice } from '../lib/useDefaultChoice'
+import { deviceProfilesQuery, promptPresetsQuery } from '../lib/queries'
+import type { CalibreJob } from '../lib/types'
+
+const BACK_TO = '/jobs?tab=books'
 
 export function CalibreJobForm() {
   const { jobId } = useParams<{ jobId: string }>()
-  const navigate = useNavigate()
-  const notify = useNotify()
-  const isEdit = Boolean(jobId)
+  return (
+    <JobFormLoader jobId={jobId} queryKey="calibre-job" fetchJob={api.getCalibreJob} backTo={BACK_TO} what="bookshelf job">
+      {(job) => <CalibreJobFields job={job} />}
+    </JobFormLoader>
+  )
+}
 
-  const { data: profiles } = useQuery({ queryKey: ['device-profiles'], queryFn: api.listDeviceProfiles })
-  const { data: presets } = useQuery({ queryKey: ['prompt-presets'], queryFn: api.listPromptPresets })
-  const { data: job, isPending: jobPending } = useQuery({
-    queryKey: ['calibre-job', jobId],
-    queryFn: () => api.getCalibreJob(jobId!),
-    enabled: isEdit,
-  })
+function CalibreJobFields({ job }: { job: CalibreJob | undefined }) {
+  const isEdit = job !== undefined
+  const { data: profiles } = useQuery(deviceProfilesQuery)
+  const { data: presets } = useQuery(promptPresetsQuery)
 
-  const [name, setName] = useState('')
-  const [mode, setMode] = useState('shelf')
-  const [targetProfile, setTargetProfile] = useState('')
-  const [presetId, setPresetId] = useState('')
-  const [tags, setTags] = useState<string[]>([])
-  const [languages, setLanguages] = useState<string[]>([])
-  const [authors, setAuthors] = useState<string[]>([])
-  const [booksPerShelf, setBooksPerShelf] = useState<number | ''>(6)
-  const [shelfRows, setShelfRows] = useState<number | ''>(3)
-  const [avoidRepeats, setAvoidRepeats] = useState(true)
-  const [imagesPerRun, setImagesPerRun] = useState<number | ''>(1)
-  const [retentionDays, setRetentionDays] = useState<number | ''>('')
-  const [verifySpines, setVerifySpines] = useState(true)
-  const [maxAttempts, setMaxAttempts] = useState<number | ''>(4)
-  const [active, setActive] = useState(true)
-  const [schedule, setSchedule] = useState<ScheduleValue>({ cron: '0 6 * * 0', timezone: 'UTC' })
-  const [error, setError] = useState('')
+  const [name, setName] = useState(job?.name ?? '')
+  const [mode, setMode] = useState(job?.mode || 'shelf')
+  const [targetProfile, setTargetProfile] = useState(job?.target_device_profile_id ?? '')
+  const [presetId, setPresetId] = useState(job?.prompt_preset_id ?? '')
+  const [tags, setTags] = useState<string[]>(job?.tags ?? [])
+  const [languages, setLanguages] = useState<string[]>(job?.languages ?? [])
+  const [authors, setAuthors] = useState<string[]>(job?.authors ?? [])
+  const [booksPerShelf, setBooksPerShelf] = useState<number | ''>(job?.books_per_shelf || 6)
+  const [shelfRows, setShelfRows] = useState<number | ''>(job?.shelf_rows || 3)
+  const [avoidRepeats, setAvoidRepeats] = useState(job?.avoid_repeats ?? true)
+  const [imagesPerRun, setImagesPerRun] = useState<number | ''>(job?.images_per_run || 1)
+  const [retentionDays, setRetentionDays] = useState<number | ''>(
+    typeof job?.retention_days === 'number' ? job.retention_days : '',
+  )
+  const [verifySpines, setVerifySpines] = useState(job?.verify_spines ?? true)
+  const [maxAttempts, setMaxAttempts] = useState<number | ''>(job?.max_attempts || 4)
+  const [active, setActive] = useState(job?.is_active ?? true)
+  const [schedule, setSchedule] = useState<ScheduleValue>(
+    job ? { cron: job.schedule_cron, timezone: job.schedule_timezone || 'UTC' } : { cron: '0 6 * * 0', timezone: 'UTC' },
+  )
 
   const isHero = mode === 'hero'
   const isCase = mode === 'bookcase'
 
-  useEffect(() => {
-    if (!job) return
-    setName(job.name)
-    setMode(job.mode || 'shelf')
-    setTargetProfile(job.target_device_profile_id)
-    setPresetId(job.prompt_preset_id)
-    setTags(job.tags ?? [])
-    setLanguages(job.languages ?? [])
-    setAuthors(job.authors ?? [])
-    setBooksPerShelf(job.books_per_shelf || 6)
-    setShelfRows(job.shelf_rows || 3)
-    setAvoidRepeats(job.avoid_repeats ?? true)
-    setImagesPerRun(job.images_per_run || 1)
-    setRetentionDays(typeof job.retention_days === 'number' ? job.retention_days : '')
-    setVerifySpines(job.verify_spines)
-    setMaxAttempts(job.max_attempts || 4)
-    setActive(job.is_active)
-    setSchedule({ cron: job.schedule_cron, timezone: job.schedule_timezone || 'UTC' })
-  }, [job])
-
-  useEffect(() => {
-    if (!isEdit && !targetProfile && profiles?.length) setTargetProfile(profiles[0].id)
-  }, [profiles, isEdit, targetProfile])
+  useDefaultChoice(!isEdit, targetProfile, setTargetProfile, profiles)
   // The migration seeds one preset per mode, so switching mode should follow
   // along rather than leaving a shelf job pointed at the hero prompt.
   useEffect(() => {
@@ -74,13 +59,19 @@ export function CalibreJobForm() {
     const wanted = isHero ? 'bookshelf_hero' : isCase ? 'bookshelf_bookcase' : 'bookshelf_shelf'
     setPresetId(presets.find((p) => p.name === wanted)?.id ?? presets[0].id)
   }, [presets, isEdit, isHero, isCase])
+  const { error, saving, fail, submit } = useJobSave({
+    jobId: job?.id,
+    create: api.createCalibreJob,
+    update: api.updateCalibreJob,
+    listKey: ['calibre-jobs'],
+    detailKey: 'calibre-job',
+    backTo: BACK_TO,
+  })
 
-  if (isEdit && jobPending) return <Spinner />
-
-  const save = async () => {
-    if (!name) return setError('Name is required')
-    if (!targetProfile) return setError('Target device profile is required')
-    if (!presetId) return setError('Preset is required')
+  const save = () => {
+    if (!name) return fail('Name is required')
+    if (!targetProfile) return fail('Target device profile is required')
+    if (!presetId) return fail('Preset is required')
     const body = {
       name,
       is_active: active,
@@ -100,27 +91,18 @@ export function CalibreJobForm() {
       verify_spines: verifySpines,
       max_attempts: Number(maxAttempts) || 4,
     }
-    try {
-      if (isEdit) await api.updateCalibreJob(jobId!, body)
-      else await api.createCalibreJob(body)
-    } catch (err) {
-      setError(`Save failed: ${errMessage(err)}`)
-      return
-    }
-    notify('Saved', 'positive')
-    navigate('/jobs?tab=books')
+    submit(body)
   }
 
   return (
-    <>
-      <div className="row w-full items-center gap-2">
-        <BackLink to="/jobs?tab=books" title="Back to jobs" />
-        <PageHeader
-          eyebrow={isEdit ? 'Bookshelf / edit' : 'Bookshelf / new'}
-          title={isEdit ? 'Edit bookshelf job' : 'New bookshelf job'}
-        />
-      </div>
-
+    <JobFormShell
+      backTo={BACK_TO}
+      eyebrow={isEdit ? 'Bookshelf / edit' : 'Bookshelf / new'}
+      title={isEdit ? 'Edit bookshelf job' : 'New bookshelf job'}
+      error={error}
+      saving={saving}
+      onSave={save}
+    >
       <div className="bento-tile w-full" style={{ padding: 24 }}>
         <div className="ink-form-section w-full">
           <TextField label="Name" value={name} onChange={setName} />
@@ -214,17 +196,6 @@ export function CalibreJobForm() {
           />
         </div>
       </div>
-
-      <span className="ink-form-error">{error}</span>
-
-      <div className="ink-action-bar">
-        <Button flat onClick={() => navigate('/jobs?tab=books')}>
-          Cancel
-        </Button>
-        <Button primary icon="save" onClick={save}>
-          Save
-        </Button>
-      </div>
-    </>
+    </JobFormShell>
   )
 }

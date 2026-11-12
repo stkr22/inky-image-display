@@ -309,3 +309,28 @@ def test_half_a_credential_pair_is_rejected_at_startup():
 def test_password_is_masked_in_config_repr():
     config = CalibreConnectionConfig(base_url="http://calibre.invalid", username="inky", password="s3cret")
     assert "s3cret" not in repr(config)
+
+
+def test_plain_http_with_credentials_warns_at_startup(caplog: pytest.LogCaptureFixture):
+    # Rejecting would break common LAN setups, but the operator should know
+    # the password travels unencrypted.
+    with caplog.at_level(logging.WARNING, logger="test"):
+        CalibreClient(
+            CalibreConnectionConfig(base_url="http://calibre.lan", username="u", password="p"),
+            logging.getLogger("test"),
+        )
+    assert any("unencrypted" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.parametrize(
+    ("base_url", "username", "password"),
+    [("https://calibre.lan", "u", "p"), ("http://calibre.lan", None, None)],
+    ids=["https-with-credentials", "http-anonymous"],
+)
+def test_no_warning_without_cleartext_credentials(caplog: pytest.LogCaptureFixture, base_url, username, password):
+    with caplog.at_level(logging.WARNING, logger="test"):
+        CalibreClient(
+            CalibreConnectionConfig(base_url=base_url, username=username, password=password),
+            logging.getLogger("test"),
+        )
+    assert not caplog.records

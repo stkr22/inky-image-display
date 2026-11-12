@@ -3,6 +3,7 @@
 
 import type { CSSProperties, ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { errMessage } from '../lib/api'
 
 export function BentoGrid({ children }: { children: ReactNode }) {
   return <div className="bento-grid">{children}</div>
@@ -58,19 +59,29 @@ export function Badge({ children, tone = 'neutral' }: { children?: ReactNode; to
   return <span className={`ink-badge ${tone === 'neutral' ? '' : tone}`}>{children}</span>
 }
 
+// Browser tab label; React 19 hoists <title> into <head>. When several
+// <title>s are mounted the first one wins, so secondary headers on a page
+// pass documentTitle={false}.
+export function DocumentTitle({ title }: { title: string }) {
+  return <title>{`${title} · Inky`}</title>
+}
+
 export function PageHeader({
   eyebrow,
   title,
+  documentTitle,
   actions,
   children,
 }: {
   eyebrow: string
   title: string
+  documentTitle?: string | false
   actions?: ReactNode
   children?: ReactNode
 }) {
   return (
     <div className="row items-end justify-between w-full wrap gap-3">
+      {documentTitle !== false && <DocumentTitle title={documentTitle ?? title} />}
       <div className="col gap-0">
         <span className="ink-eyebrow">{eyebrow}</span>
         <h2 className="ink-h2">{title}</h2>
@@ -95,6 +106,23 @@ export function Spinner() {
 
 export function ErrorNote({ children }: { children: ReactNode }) {
   return <span style={{ color: 'var(--ink-danger)', fontSize: 14 }}>{children}</span>
+}
+
+// Inline load-failure note with a retry, so a failed fetch doesn't render as
+// an empty list ("No jobs yet") or a blank form.
+export function LoadError({ what, error, onRetry }: { what: string; error: unknown; onRetry?: () => void }) {
+  return (
+    <div className="row items-center gap-2 wrap">
+      <ErrorNote>
+        Could not load {what}: {errMessage(error)}
+      </ErrorNote>
+      {onRetry && (
+        <button type="button" className="ink-btn ink-btn-flat" onClick={onRetry}>
+          Retry
+        </button>
+      )}
+    </div>
+  )
 }
 
 export function BackLink({ to, title }: { to: string; title: string }) {

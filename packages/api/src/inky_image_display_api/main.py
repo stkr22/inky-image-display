@@ -72,7 +72,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # S3
     s3_service = S3Service(settings)
 
-    # MQTT transport — replaces the previous WebSocket connection manager.
     mqtt = MQTTService(settings, engine)
 
     app.state.settings = settings
@@ -109,35 +108,44 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         logger.info("Inky Image Display API stopped")
 
 
+def register_routers(app: FastAPI) -> None:
+    """Mount every API router on ``app``.
+
+    Shared with the test app factory so a router added here is exercised by
+    the route tests too, instead of silently missing from a hand-kept copy.
+    """
+    app.include_router(health_router)
+    app.include_router(auth.router)
+    app.include_router(debug.router)
+    app.include_router(images.router)
+    app.include_router(image_groups.router)
+    app.include_router(images_process.router)
+    # eink_preview shares the /api/images prefix; registered after images so
+    # its literal /eink-preview POST still wins over any dynamic sibling.
+    app.include_router(eink_preview.router)
+    app.include_router(devices.router)
+    app.include_router(device_profiles.router)
+    app.include_router(grids.router)
+    app.include_router(schedule.router)
+    app.include_router(sync_jobs.router)
+    app.include_router(sync_runs.router)
+    app.include_router(prompt_blocks.router)
+    app.include_router(prompt_presets.router)
+    app.include_router(gemini_sync_jobs.router)
+    app.include_router(calibre_sync_jobs.router)
+    app.include_router(genai_generate.router)
+    app.include_router(display_jobs.router)
+    app.include_router(immich_browse.router)
+    app.include_router(app_settings.router)
+    app.include_router(media.router)
+
+
 app = FastAPI(title="Inky Image Display API", lifespan=lifespan)
 # Sessions + auth enforcement for every request (config comes from
 # app.state.auth at request time, so importing this module stays
 # environment-free).
 app.add_middleware(SessionAuthMiddleware)
-app.include_router(health_router)
-app.include_router(auth.router)
-app.include_router(debug.router)
-app.include_router(images.router)
-app.include_router(image_groups.router)
-app.include_router(images_process.router)
-# eink_preview shares the /api/images prefix; registered after images so
-# its literal /eink-preview POST still wins over any dynamic sibling.
-app.include_router(eink_preview.router)
-app.include_router(devices.router)
-app.include_router(device_profiles.router)
-app.include_router(grids.router)
-app.include_router(schedule.router)
-app.include_router(sync_jobs.router)
-app.include_router(sync_runs.router)
-app.include_router(prompt_blocks.router)
-app.include_router(prompt_presets.router)
-app.include_router(gemini_sync_jobs.router)
-app.include_router(calibre_sync_jobs.router)
-app.include_router(genai_generate.router)
-app.include_router(display_jobs.router)
-app.include_router(immich_browse.router)
-app.include_router(app_settings.router)
-app.include_router(media.router)
+register_routers(app)
 
 
 # Registered last so every explicit route above wins; serves the built React

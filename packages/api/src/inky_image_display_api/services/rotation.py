@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 from fastapi import FastAPI
-from inky_image_display_shared.models import Device, DisplayJob, GeminiSyncJob, ImmichSyncJob
+from inky_image_display_shared.models import CalibreSyncJob, Device, DisplayJob, GeminiSyncJob, ImmichSyncJob
 from inky_image_display_shared.time import utcnow
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -16,7 +16,7 @@ from inky_image_display_api.services.image_service import (
     get_next_image_for_device,
     update_display_state,
 )
-from inky_image_display_api.services.refresh_health import dispatch_allowed_clause
+from inky_image_display_api.services.refresh_health import auto_dispatch_clause
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,7 @@ async def wake_due_job_workers(app: FastAPI) -> None:
         checks = (
             ("immich", select(col(ImmichSyncJob.id)).where(sync_job_scheduling.due_clause(ImmichSyncJob, now))),
             ("gemini", select(col(GeminiSyncJob.id)).where(sync_job_scheduling.due_clause(GeminiSyncJob, now))),
+            ("calibre", select(col(CalibreSyncJob.id)).where(sync_job_scheduling.due_clause(CalibreSyncJob, now))),
             ("display", select(col(DisplayJob.id)).where(display_job_service.due_clause(now))),
         )
         for job_type, stmt in checks:
@@ -101,17 +102,14 @@ async def _rotate_due_devices(app: FastAPI) -> None:
     re-enters rotation here. The gate expires (``dispatch_allowed_clause``)
     because that retry lives only in controller memory — after a controller
     restart or a lost success ack the failure flag would otherwise halt the
-    device forever.
+    device forever. Pinned devices are skipped too (``auto_dispatch_clause``).
     """
     now = utcnow()
     async with AsyncSession(app.state.engine) as session:
         result = await session.exec(
             select(Device).where(
-                Device.is_online == True,  # noqa: E712 — SQLModel comparison
-                Device.scheduled_next_at <= now,
-                col(Device.is_pinned).is_(False),
-                col(Device.claimed_by_grid_id).is_(None),
-                dispatch_allowed_clause(now, app.state.settings.refresh_error_backoff_seconds),
+                col(Device.scheduled_next_at) <= now,
+                auto_dispatch_clause(now, app.state.settings.refresh_error_backoff_seconds),
             )
         )
         due_devices = [device for device in result.all() if app.state.mqtt.is_connected(device.device_id)]

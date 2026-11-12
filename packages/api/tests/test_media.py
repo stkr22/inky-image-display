@@ -12,16 +12,7 @@ from inky_image_display_api.routes import media
 from minio.error import S3Error
 from PIL import Image as PILImage
 
-
-def _no_such_key() -> S3Error:
-    return S3Error(
-        code="NoSuchKey",
-        message="missing",
-        resource="/x",
-        request_id="r",
-        host_id="h",
-        response=MagicMock(),
-    )
+from .conftest import make_settings, no_such_key
 
 
 def _jpeg_bytes(width: int, height: int) -> bytes:
@@ -58,10 +49,7 @@ def gate() -> _CountingGate:
 @pytest.fixture
 def media_app(s3: MagicMock, gate: _CountingGate) -> FastAPI:
     app = FastAPI()
-    settings = MagicMock()
-    settings.media_cache_max_age = 3600
-    settings.web_dist_path = None
-    app.state.settings = settings
+    app.state.settings = make_settings(media_cache_max_age=3600)
     app.state.s3_service = s3
     app.state.thumb_gate = gate
     app.include_router(media.router)
@@ -76,7 +64,7 @@ def client(media_app: FastAPI) -> TestClient:
 
 class TestOriginals:
     def test_missing_object_is_404(self, client: TestClient, s3: MagicMock) -> None:
-        s3.stat_object.side_effect = _no_such_key()
+        s3.stat_object.side_effect = no_such_key()
         assert client.get("/media/manual/x.jpg").status_code == 404
 
     def test_streams_with_cache_headers(self, client: TestClient, s3: MagicMock) -> None:
@@ -114,7 +102,7 @@ class TestThumbnails:
     def test_cache_miss_generates_and_caches(self, client: TestClient, s3: MagicMock) -> None:
         original = _jpeg_bytes(1200, 800)
         # First stat (thumb) misses, second stat (original) hits.
-        s3.stat_object.side_effect = [_no_such_key(), MagicMock(etag="orig", content_type="image/jpeg")]
+        s3.stat_object.side_effect = [no_such_key(), MagicMock(etag="orig", content_type="image/jpeg")]
         s3.get_object_bytes.return_value = original
 
         response = client.get("/media/manual/x.jpg", params={"w": 300})
@@ -129,7 +117,7 @@ class TestThumbnails:
             assert thumb.height == 160
 
     def test_small_original_served_without_caching(self, client: TestClient, s3: MagicMock) -> None:
-        s3.stat_object.side_effect = [_no_such_key(), MagicMock(etag="orig", content_type="image/jpeg")]
+        s3.stat_object.side_effect = [no_such_key(), MagicMock(etag="orig", content_type="image/jpeg")]
         s3.get_object_bytes.return_value = _jpeg_bytes(100, 80)
 
         response = client.get("/media/manual/x.jpg", params={"w": 480})
@@ -139,18 +127,41 @@ class TestThumbnails:
         s3.upload_image.assert_not_called()
 
     def test_missing_original_with_width_is_404(self, client: TestClient, s3: MagicMock) -> None:
-        s3.stat_object.side_effect = [_no_such_key(), _no_such_key()]
+        s3.stat_object.side_effect = [no_such_key(), no_such_key()]
         assert client.get("/media/manual/x.jpg", params={"w": 480}).status_code == 404
 
     def test_generation_holds_the_concurrency_gate(
         self, client: TestClient, s3: MagicMock, gate: _CountingGate
     ) -> None:
-        s3.stat_object.side_effect = [_no_such_key(), MagicMock(etag="orig", content_type="image/jpeg")]
+        s3.stat_object.side_effect = [no_such_key(), MagicMock(etag="orig", content_type="image/jpeg")]
         s3.get_object_bytes.return_value = _jpeg_bytes(1200, 800)
 
         client.get("/media/manual/x.jpg", params={"w": 480})
 
         assert gate.entered == 1
+
+    def test_original_download_happens_inside_the_gate(
+        self, client: TestClient, s3: MagicMock, gate: _CountingGate
+    ) -> None:
+        """The compressed original is part of the per-request memory peak."""
+        s3.stat_object.side_effect = [no_such_key(), MagicMock(etag="orig", content_type="image/jpeg")]
+        entered_at_download: list[int] = []
+
+        def download(_key: str) -> bytes:
+            entered_at_download.append(gate.entered)
+            return _jpeg_bytes(1200, 800)
+
+        s3.get_object_bytes.side_effect = download
+
+        assert client.get("/media/manual/x.jpg", params={"w": 480}).status_code == 200
+        assert entered_at_download == [1]
+
+    def test_storage_outage_is_502_not_a_rerender(self, client: TestClient, s3: MagicMock) -> None:
+        s3.stat_object.side_effect = S3Error(
+            code="InternalError", message="down", resource="/x", request_id="r", host_id="h", response=MagicMock()
+        )
+        assert client.get("/media/manual/x.jpg", params={"w": 480}).status_code == 502
+        s3.get_object_bytes.assert_not_called()
 
     def test_reduced_scale_decode_keeps_aspect_ratio(self) -> None:
         """draft() shrinks the decoded raster, so the resize ratio must be

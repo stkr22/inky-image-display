@@ -5,34 +5,35 @@ calls the Gemini image model with the job's prompt preset, asks the API to
 resize the result, uploads to S3, and registers it via the Display API.
 Mirrors the role of ``ImmichSyncService`` for an AI image source — share
 only the cross-cutting helpers (``GeminiDisplayAPIClient``,
-``S3StorageClient``) rather than a generic pipeline, because the per-source
-logic differs enough that a forced abstraction would obscure more than help.
+``S3StorageClient``, :mod:`inky_image_display_sync.jobs`) rather than a
+generic pipeline, because the per-source logic differs enough that a forced
+abstraction would obscure more than help.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from inky_image_display_shared.ai import RenderedPrompt, generate_image_bytes
-from inky_image_display_shared.time import utcnow
 
-from inky_image_display_sync.api_client import ImageRegisterPayload, SyncRunReportPayload
+from inky_image_display_sync.api_client import ImageRegisterPayload
 from inky_image_display_sync.gemini.config import GeminiConnectionConfig, GeminiSyncConfig
-from inky_image_display_sync.immich.config import S3WriterConfig
-from inky_image_display_sync.immich.storage import S3StorageClient
+from inky_image_display_sync.jobs import expiry, report_run, run_claimed, target_dims
+from inky_image_display_sync.storage import S3StorageClient, S3WriterConfig
 
 if TYPE_CHECKING:
     import logging
+    from datetime import datetime
 
-    from inky_image_display_sync.gemini.api_client import (
-        GeminiDisplayAPIClient,
-        GeminiSyncJobItem,
-        PromptBlockItem,
-        PromptPresetItem,
+    from inky_image_display_shared.schemas.responses import (
+        GeminiSyncJobResponse,
+        PromptBlockResponse,
+        PromptPresetResponse,
     )
+
+    from inky_image_display_sync.gemini.api_client import GeminiDisplayAPIClient
 
 
 @dataclass
@@ -73,7 +74,7 @@ class GeminiSyncService:
         Run-now flags); ``all_active`` ignores the schedule and runs every
         active job (manual/debug invocations).
         """
-        self.storage.ensure_bucket_exists()
+        await self.storage.ensure_bucket_exists()
         if all_active:
             jobs = await self.api_client.get_active_gemini_jobs()
         else:
@@ -82,54 +83,29 @@ class GeminiSyncService:
             self.logger.info("No %s Gemini sync jobs", "active" if all_active else "due")
             return []
 
-        # Cache blocks so we only fetch them once per run.
-        blocks_by_id = {b.id: b for b in await self.api_client.list_prompt_blocks()}
-
-        results: list[GeminiSyncResult] = []
-        for job in jobs:
-            started_at = utcnow()
-            try:
-                preset = await self.api_client.get_prompt_preset(job.prompt_preset_id)
-            except Exception as exc:
-                self.logger.error("Failed to load preset for job %s: %s", job.name, exc)
-                result = GeminiSyncResult(job_name=job.name, failed=1, errors=[str(exc)])
-                results.append(result)
-                await self._report_run(job, result, started_at)
-                continue
-
-            result = await self._run_job(job, preset, blocks_by_id)
-            results.append(result)
-            self.logger.info(
-                "Gemini job %s: generated=%d failed=%d",
-                job.name,
-                result.generated,
-                result.failed,
-            )
-            await self._report_run(job, result, started_at)
-        return results
-
-    async def _report_run(self, job: GeminiSyncJobItem, result: GeminiSyncResult, started_at: datetime) -> None:
-        """POST the run outcome so the UI can show last-run status per job."""
-        await self.api_client.report_sync_run(
-            SyncRunReportPayload(
-                job_type="gemini",
-                job_id=job.id,
-                job_name=job.name,
-                status="error" if result.errors else "success",
-                started_at=started_at,
-                finished_at=utcnow(),
-                images_added=result.generated,
-                detail=f"generated={result.generated} failed={result.failed}",
-                error="; ".join(result.errors[:3]) if result.errors else None,
-            )
+        library = PromptLibrary(self.api_client)
+        return await run_claimed(
+            jobs,
+            run_one=lambda job: self._run_job(job, library),
+            on_error=lambda job, exc: GeminiSyncResult(job_name=job.name, failed=1, errors=[str(exc)]),
+            report=self._report_run,
+            logger=self.logger,
         )
 
-    async def _run_job(
-        self,
-        job: GeminiSyncJobItem,
-        preset: PromptPresetItem,
-        blocks_by_id: dict,
-    ) -> GeminiSyncResult:
+    async def _report_run(self, job: GeminiSyncJobResponse, result: GeminiSyncResult, started_at: datetime) -> None:
+        self.logger.info("Gemini job %s: generated=%d failed=%d", job.name, result.generated, result.failed)
+        await report_run(
+            self.api_client,
+            job_type="gemini",
+            job=job,
+            started_at=started_at,
+            errors=result.errors,
+            detail=f"generated={result.generated} failed={result.failed}",
+            images_added=result.generated,
+        )
+
+    async def _run_job(self, job: GeminiSyncJobResponse, library: PromptLibrary) -> GeminiSyncResult:
+        preset = await self.api_client.get_prompt_preset(job.prompt_preset_id)
         result = GeminiSyncResult(job_name=job.name)
         try:
             profile = await self.api_client.get_device_profile(job.target_device_profile_id)
@@ -139,17 +115,9 @@ class GeminiSyncService:
             return result
 
         is_portrait = job.orientation == "portrait"
-        if is_portrait:
-            target_width, target_height = profile.height, profile.width
-        else:
-            target_width, target_height = profile.width, profile.height
-
-        prompt = build_prompt(preset, blocks_by_id, is_portrait)
-        expires_at = (
-            datetime.now() + timedelta(days=job.retention_days)
-            if job.retention_days is not None and job.retention_days > 0
-            else None
-        )
+        target_width, target_height = target_dims(profile, is_portrait)
+        prompt = build_prompt(preset, await library.blocks(), is_portrait)
+        expires_at = expiry(job.retention_days)
 
         for subject in job.subjects:
             for _ in range(job.images_per_subject):
@@ -173,7 +141,7 @@ class GeminiSyncService:
     async def _generate_one(  # noqa: PLR0913
         self,
         *,
-        job: GeminiSyncJobItem,
+        job: GeminiSyncJobResponse,
         subject: str,
         prompt: RenderedPrompt,
         model: str,
@@ -182,7 +150,7 @@ class GeminiSyncService:
         expires_at: datetime | None,
     ) -> None:
         raw_bytes = await generate_image_bytes(
-            self.gemini_config.api_key,
+            self.gemini_config.api_key.get_secret_value(),
             prompt,
             subject,
             model=model,
@@ -199,7 +167,7 @@ class GeminiSyncService:
 
         image_uuid = uuid4()
         storage_path = f"{self.sync_config.storage_prefix}/{image_uuid}.jpg"
-        self.storage.upload_from_bytes(
+        await self.storage.upload_from_bytes(
             object_path=storage_path,
             data=jpeg_bytes,
             content_type="image/jpeg",
@@ -222,21 +190,53 @@ class GeminiSyncService:
         )
 
 
+class PromptLibrary:
+    """Prompt blocks fetched at most once per run, on first use.
+
+    Fetched lazily inside a job rather than up front so a failing lookup
+    fails the jobs that need it (and gets reported) instead of escaping the
+    run after the claim has already advanced every job's schedule.
+    """
+
+    def __init__(self, api_client: GeminiDisplayAPIClient) -> None:
+        """Bind to the client the blocks will be fetched from."""
+        self._api_client = api_client
+        self._blocks: dict[UUID, PromptBlockResponse] | None = None
+
+    async def blocks(self) -> dict[UUID, PromptBlockResponse]:
+        """Return every block by id, fetching on the first call only."""
+        if self._blocks is None:
+            self._blocks = {b.id: b for b in await self._api_client.list_prompt_blocks()}
+        return self._blocks
+
+
 def build_prompt(
-    preset: PromptPresetItem,
-    blocks_by_id: dict[UUID, PromptBlockItem],
+    preset: PromptPresetResponse,
+    blocks_by_id: dict[UUID, PromptBlockResponse],
     is_portrait: bool,
 ) -> RenderedPrompt:
     """Assemble the image prompt from a preset's blocks.
 
     Shared with the display worker, whose illustrations use the same
     preset machinery.
+
+    Raises:
+        ValueError: If the preset references a block that no longer exists —
+            a bare ``KeyError`` would surface in the run report as just a UUID.
+
     """
+
+    def text(role: str, block_id: UUID) -> str:
+        block = blocks_by_id.get(block_id)
+        if block is None:
+            raise ValueError(f"preset {preset.name!r} references missing {role} block {block_id}")
+        return block.text
+
     return RenderedPrompt(
-        style=blocks_by_id[preset.style_block_id].text,
-        palette=blocks_by_id[preset.palette_block_id].text,
-        legibility=blocks_by_id[preset.legibility_block_id].text,
-        composition=blocks_by_id[preset.composition_block_id].text,
-        background=blocks_by_id[preset.background_block_id].text,
+        style=text("style", preset.style_block_id),
+        palette=text("palette", preset.palette_block_id),
+        legibility=text("legibility", preset.legibility_block_id),
+        composition=text("composition", preset.composition_block_id),
+        background=text("background", preset.background_block_id),
         is_portrait=is_portrait,
     )

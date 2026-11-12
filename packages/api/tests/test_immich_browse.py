@@ -1,26 +1,23 @@
 """Tests for the Immich browse proxy endpoints."""
 
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from inky_image_display_api.config import Settings
 from inky_image_display_api.routes import immich_browse
-from pydantic import SecretStr
+
+from .conftest import make_settings
 
 
 @pytest.fixture
-def immich_settings() -> MagicMock:
-    settings = MagicMock()
-    settings.immich_base_url = "http://immich.test"
-    settings.immich_api_key = SecretStr("key")
-    settings.immich_timeout_seconds = 5.0
-    return settings
+def immich_settings() -> Settings:
+    return make_settings(immich_base_url="http://immich.test", immich_api_key="key", immich_timeout_seconds=5.0)
 
 
 @pytest.fixture
-def immich_app(immich_settings: MagicMock) -> FastAPI:
+def immich_app(immich_settings: Settings) -> FastAPI:
     app = FastAPI()
     app.state.settings = immich_settings
     app.include_router(immich_browse.router)
@@ -36,7 +33,7 @@ def _patch_fetch(monkeypatch: pytest.MonkeyPatch, payload_by_path: dict[str, Any
 
 
 class TestImmichBrowse:
-    def test_unconfigured_returns_503(self, immich_app: FastAPI, immich_settings: MagicMock) -> None:
+    def test_unconfigured_returns_503(self, immich_app: FastAPI, immich_settings: Settings) -> None:
         immich_settings.immich_base_url = None
         immich_settings.immich_api_key = None
         with TestClient(immich_app) as client:

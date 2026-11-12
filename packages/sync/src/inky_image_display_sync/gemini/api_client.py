@@ -8,83 +8,47 @@ code lives here.
 
 from __future__ import annotations
 
-from uuid import UUID  # noqa: TC003 -- pydantic needs this at runtime
+from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+from inky_image_display_shared.schemas.responses import (
+    GeminiSyncJobResponse,
+    PromptBlockResponse,
+    PromptPresetResponse,
+)
 
 from inky_image_display_sync.api_client import DisplayAPIClient
 
-
-class GeminiSyncJobItem(BaseModel):
-    """Gemini sync job data returned by GET /api/genai/jobs."""
-
-    id: UUID
-    name: str
-    is_active: bool
-    target_device_profile_id: UUID
-    prompt_preset_id: UUID
-    orientation: str
-    subjects: list[str]
-    images_per_subject: int
-    retention_days: int | None
-
-
-class PromptBlockItem(BaseModel):
-    """Prompt block returned by GET /api/genai/blocks."""
-
-    id: UUID
-    kind: str
-    name: str
-    text: str
-    is_default: bool
-
-
-class PromptPresetItem(BaseModel):
-    """Prompt preset returned by GET /api/genai/presets."""
-
-    id: UUID
-    name: str
-    style_block_id: UUID
-    palette_block_id: UUID
-    legibility_block_id: UUID
-    composition_block_id: UUID
-    background_block_id: UUID
-    model_name: str
-    is_default: bool
+if TYPE_CHECKING:
+    from uuid import UUID
 
 
 class GeminiDisplayAPIClient(DisplayAPIClient):
     """Display API client with Gemini-specific methods added."""
 
-    async def get_active_gemini_jobs(self) -> list[GeminiSyncJobItem]:
+    async def get_active_gemini_jobs(self) -> list[GeminiSyncJobResponse]:
         """Fetch all active Gemini sync jobs (schedule ignored — for --all runs)."""
         response = await self._request("GET", "/api/genai/jobs", params={"is_active": "true"})
-        return [GeminiSyncJobItem.model_validate(j) for j in response.json()]
+        return [GeminiSyncJobResponse.model_validate(j) for j in response.json()]
 
-    async def get_due_gemini_jobs(self) -> list[GeminiSyncJobItem]:
+    async def get_due_gemini_jobs(self) -> list[GeminiSyncJobResponse]:
         """Preview due jobs without claiming them (dry-run mode)."""
         response = await self._request("GET", "/api/genai/jobs", params={"due": "true"})
-        return [GeminiSyncJobItem.model_validate(j) for j in response.json()]
+        return [GeminiSyncJobResponse.model_validate(j) for j in response.json()]
 
-    async def claim_due_gemini_jobs(self) -> list[GeminiSyncJobItem]:
+    async def claim_due_gemini_jobs(self) -> list[GeminiSyncJobResponse]:
         """Claim due jobs: the API advances their schedules on hand-out."""
         response = await self._request("POST", "/api/genai/jobs/claim-due")
-        return [GeminiSyncJobItem.model_validate(j) for j in response.json()]
+        return [GeminiSyncJobResponse.model_validate(j) for j in response.json()]
 
-    async def get_prompt_preset(self, preset_id: UUID) -> PromptPresetItem:
+    async def get_prompt_preset(self, preset_id: UUID) -> PromptPresetResponse:
         """Fetch a single prompt preset by id."""
         response = await self._request("GET", f"/api/genai/presets/{preset_id}")
-        return PromptPresetItem.model_validate(response.json())
+        return PromptPresetResponse.model_validate(response.json())
 
-    async def list_prompt_blocks(self) -> list[PromptBlockItem]:
+    async def list_prompt_blocks(self) -> list[PromptBlockResponse]:
         """Fetch all prompt blocks."""
         response = await self._request("GET", "/api/genai/blocks")
-        return [PromptBlockItem.model_validate(b) for b in response.json()]
+        return [PromptBlockResponse.model_validate(b) for b in response.json()]
 
 
-__all__ = [
-    "GeminiDisplayAPIClient",
-    "GeminiSyncJobItem",
-    "PromptBlockItem",
-    "PromptPresetItem",
-]
+__all__ = ["GeminiDisplayAPIClient"]

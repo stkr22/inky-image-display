@@ -1,32 +1,30 @@
 """Immich sync service - orchestrates fetch, download, store, record workflow."""
 
-import logging
+from __future__ import annotations
+
 import random
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 from enum import Enum, auto
-from uuid import UUID
+from typing import TYPE_CHECKING
 
 from inky_image_display_shared.time import utcnow
 
-from inky_image_display_sync.api_client import ImageTooSmallError, SyncRunReportPayload
-from inky_image_display_sync.immich.api_client import (
-    ImageItem,
-    ImageRegisterPayload,
-    ImageUpdatePayload,
-    ImmichDisplayAPIClient,
-    SyncJobItem,
-)
+from inky_image_display_sync.api_client import ImageRegisterPayload, ImageTooSmallError, ImageUpdatePayload
 from inky_image_display_sync.immich.client import ImmichClient, SearchFilterCombo
-from inky_image_display_sync.immich.config import (
-    DeviceRequirements,
-    ImmichConnectionConfig,
-    ImmichSyncConfig,
-    S3WriterConfig,
-)
-from inky_image_display_sync.immich.models import ImmichAsset
-from inky_image_display_sync.immich.storage import S3StorageClient
+from inky_image_display_sync.immich.config import DeviceRequirements, ImmichConnectionConfig, ImmichSyncConfig
+from inky_image_display_sync.jobs import expiry, report_run, run_claimed, target_dims
+from inky_image_display_sync.storage import S3StorageClient, S3WriterConfig
 from inky_image_display_sync.utils.metadata_builder import MetadataBuilder
+
+if TYPE_CHECKING:
+    import logging
+    from datetime import datetime
+    from uuid import UUID
+
+    from inky_image_display_shared.schemas.responses import ImageResponse, SyncJobResponse
+
+    from inky_image_display_sync.immich.api_client import ImmichDisplayAPIClient
+    from inky_image_display_sync.immich.models import ImmichAsset
 
 # Canonical source name marker for Immich records (matches Image.source_name).
 IMMICH_SOURCE_NAME = "immich"
@@ -51,9 +49,14 @@ class SyncResult:
     skipped_undersized: int = 0  # Too small for target dimensions
     stopped_at_limit: bool = False  # True if total image limit was reached
     errors: list[str] = field(default_factory=list)
+    # Set instead of counters when the job had nothing to do, so the run
+    # report answers "why did nothing new appear?" in words.
+    note: str | None = None
 
     def __str__(self) -> str:
         """Return human-readable summary."""
+        if self.note is not None:
+            return self.note
         limit_info = ", stopped_at_limit=True" if self.stopped_at_limit else ""
         return (
             f"SyncResult(fetched={self.fetched}, filtered={self.filtered}, "
@@ -87,7 +90,7 @@ class ImmichSyncService:
     2. For each job, fetch assets from Immich matching filters
     3. Apply client-side filters (orientation, dimensions, color)
     4. Download original file from Immich
-    5. Upload to S3 with path: {prefix}/{asset_id}.{ext}
+    5. Upload to S3 with path: {prefix}/{asset_id}-{width}x{height}.jpg
     6. Register Image record via the Display API
     """
 
@@ -138,6 +141,10 @@ class ImmichSyncService:
         job uploaded (``images.sync_job_name``), so one job can never spend
         another's budget.
         """
+        # Before the claim: once jobs are claimed, anything that raises
+        # outside the per-job loop would lose them until their next slot.
+        await self.storage.ensure_bucket_exists()
+
         if all_active:
             jobs = await self.api_client.get_active_sync_jobs()
             if not jobs:
@@ -153,72 +160,69 @@ class ImmichSyncService:
 
         # Cleanup first so expired images free up each job's budget before
         # counting. Runs only when jobs were handed out, so its cost is
-        # bounded by job cadence rather than cron frequency.
+        # bounded by job cadence rather than cron frequency. Best-effort:
+        # a failed cleanup only means old images linger one more cycle,
+        # which is no reason to skip the sync itself.
         deleted_by_job: dict[str, int] = {}
         if self.sync_config.retention_days > 0:
-            _, deleted_by_job = await self._cleanup_expired_images()
+            try:
+                _, deleted_by_job = await self._cleanup_expired_images()
+            except Exception:
+                self.logger.exception("Expired-image cleanup failed; syncing anyway")
 
-        self.storage.ensure_bucket_exists()
+        async def report(job: SyncJobResponse, result: SyncResult, started_at: datetime) -> None:
+            await self._report_run(job, result, started_at, images_deleted=deleted_by_job.get(job.name, 0))
 
         async with self.immich.connect():
-            for job in jobs:
-                await self._run_and_report_job(job, images_deleted=deleted_by_job.get(job.name, 0))
+            await run_claimed(
+                jobs,
+                run_one=self._run_job,
+                on_error=lambda _job, exc: SyncResult(errors=[str(exc)]),
+                report=report,
+                logger=self.logger,
+            )
 
-    async def _run_and_report_job(self, job: SyncJobItem, images_deleted: int) -> None:
-        """Run one job and POST its outcome to /api/sync-runs.
+    async def _run_job(self, job: SyncJobResponse) -> SyncResult:
+        """Run one job within its ``max_images`` budget."""
+        max_uploads_remaining: int | None = None
+        if job.max_images > 0:
+            existing = await self._count_job_images(job.name)
+            max_uploads_remaining = job.max_images - existing
+            self.logger.info(
+                "Job '%s': %d/%d images already synced, can upload %d",
+                job.name,
+                existing,
+                job.max_images,
+                max(0, max_uploads_remaining),
+            )
+            if max_uploads_remaining <= 0:
+                self.logger.info("Skipping job '%s': reached its image limit (%d)", job.name, job.max_images)
+                return SyncResult(note=f"Nothing to do: job holds {existing}/{job.max_images} images (max_images cap)")
+
+        self.logger.info("Processing sync job: %s", job.name)
+        result = await self._sync_job(job, max_uploads_remaining=max_uploads_remaining)
+        self.logger.info("Job '%s' completed: %s", job.name, result)
+        return result
+
+    async def _report_run(
+        self, job: SyncJobResponse, result: SyncResult, started_at: datetime, images_deleted: int
+    ) -> None:
+        """POST the outcome to /api/sync-runs.
 
         The report is what the UI shows and what clears the job's "Run now"
         flag, so it is sent for every outcome — including the at-cap skip
-        (a real answer to "why did nothing new appear?") and hard failures.
+        and hard failures.
         """
-        started_at = utcnow()
-        result: SyncResult | None = None
-        detail: str | None = None
-        error: str | None = None
-
-        try:
-            max_uploads_remaining: int | None = None
-            skip_at_cap = False
-            if job.max_images > 0:
-                existing = await self._count_job_images(job.name)
-                max_uploads_remaining = job.max_images - existing
-                self.logger.info(
-                    "Job '%s': %d/%d images already synced, can upload %d",
-                    job.name,
-                    existing,
-                    job.max_images,
-                    max(0, max_uploads_remaining),
-                )
-                if max_uploads_remaining <= 0:
-                    self.logger.info("Skipping job '%s': reached its image limit (%d)", job.name, job.max_images)
-                    detail = f"Nothing to do: job holds {existing}/{job.max_images} images (max_images cap)"
-                    skip_at_cap = True
-
-            if not skip_at_cap:
-                self.logger.info("Processing sync job: %s", job.name)
-                result = await self._sync_job(job, max_uploads_remaining=max_uploads_remaining)
-                self.logger.info("Job '%s' completed: %s", job.name, result)
-                detail = str(result)
-                if result.errors:
-                    error = "; ".join(result.errors[:3])
-        except Exception as exc:
-            self.logger.exception("Job '%s' failed", job.name)
-            error = str(exc)
-
-        await self.api_client.report_sync_run(
-            SyncRunReportPayload(
-                job_type="immich",
-                job_id=job.id,
-                job_name=job.name,
-                status="error" if error else "success",
-                started_at=started_at,
-                finished_at=utcnow(),
-                images_added=result.downloaded if result else 0,
-                images_skipped=(result.skipped_existing + result.skipped_undersized) if result else 0,
-                images_deleted=images_deleted,
-                detail=detail,
-                error=error,
-            )
+        await report_run(
+            self.api_client,
+            job_type="immich",
+            job=job,
+            started_at=started_at,
+            errors=result.errors,
+            detail=str(result),
+            images_added=result.downloaded,
+            images_skipped=result.skipped_existing + result.skipped_undersized,
+            images_deleted=images_deleted,
         )
 
     async def _cleanup_expired_images(self) -> tuple[CleanupResult, dict[str, int]]:
@@ -234,11 +238,12 @@ class ImmichSyncService:
         """
         result = CleanupResult()
         deleted_by_job: dict[str, int] = {}
-        now = datetime.now()
 
-        expired_images = await self.api_client.list_images(
+        # Collected in full before deleting anything: deleting while paging
+        # would shift the offsets and skip every other page.
+        expired_images = await self.api_client.list_all_images(
             source_name=IMMICH_SOURCE_NAME,
-            expires_before=now,
+            expires_before=utcnow(),
         )
         result.expired = len(expired_images)
 
@@ -273,7 +278,7 @@ class ImmichSyncService:
         self.logger.info("Cleanup completed: %s", result)
         return result, deleted_by_job
 
-    async def _sync_job(self, job: SyncJobItem, max_uploads_remaining: int | None = None) -> SyncResult:
+    async def _sync_job(self, job: SyncJobResponse, max_uploads_remaining: int | None = None) -> SyncResult:
         """Execute a single sync job.
 
         Args:
@@ -357,41 +362,20 @@ class ImmichSyncService:
 
         When ``orientation`` is None the job did not specify one, so we
         default to landscape — same shape used for downstream filtering.
-
-        Raises:
-            ValueError: If the profile cannot be loaded.
-
         """
         profile = await self.api_client.get_device_profile(profile_id)
         effective_orientation = orientation or "landscape"
-
-        # profile.width/height are panel-native (landscape). Swap for portrait
-        # so width/height describe the orientation-aware raster target.
-        if effective_orientation == "portrait":
-            width, height = profile.height, profile.width
-        else:
-            width, height = profile.width, profile.height
-
-        return DeviceRequirements(
-            width=width,
-            height=height,
-            orientation=effective_orientation,
-        )
+        width, height = target_dims(profile, effective_orientation == "portrait")
+        return DeviceRequirements(width=width, height=height, orientation=effective_orientation)
 
     async def _count_job_images(self, job_name: str) -> int:
-        """Count images already synced by a specific job.
-
-        Returns:
-            Number of Immich images whose sync_job_name matches ``job_name``
-
-        """
-        images = await self.api_client.list_images(source_name=IMMICH_SOURCE_NAME, sync_job_name=job_name)
-        return len(images)
+        """Count the Immich images a specific job has synced."""
+        return await self.api_client.count_images(source_name=IMMICH_SOURCE_NAME, sync_job_name=job_name)
 
     async def _process_asset(
         self,
         asset: ImmichAsset,
-        job: SyncJobItem,
+        job: SyncJobResponse,
         device_reqs: DeviceRequirements,
     ) -> ProcessResult:
         """Process a single asset: download, store, register.
@@ -406,22 +390,28 @@ class ImmichSyncService:
 
         """
         source_url = self._build_source_url(asset.id)
+        target_width = device_reqs.width
+        target_height = device_reqs.height
 
         existing = None
         if self.sync_config.skip_existing:
-            existing = await self._find_existing_image(asset.id)
+            existing = await self._find_existing_image(asset.id, target_width, target_height)
             if existing:
-                self.logger.debug("Skipping existing asset: %s", asset.id)
+                self.logger.debug("Skipping existing asset: %s at %dx%d", asset.id, target_width, target_height)
                 return ProcessResult.SKIPPED_EXISTING
 
-        target_width = device_reqs.width
-        target_height = device_reqs.height
-        storage_path = f"{self.sync_config.storage_prefix}/{asset.id}.jpg"
+        # The size is part of the key: jobs targeting different panels need
+        # different crops of the same asset, and reusing one JPEG for another
+        # size would hand the controller an image that fails its size check.
+        storage_path = f"{self.sync_config.storage_prefix}/{asset.id}-{target_width}x{target_height}.jpg"
 
-        if self.storage.object_exists(storage_path):
+        if await self.storage.object_exists(storage_path):
             self.logger.debug("Object already in S3: %s", storage_path)
         else:
             self.logger.info("Downloading asset: %s", asset.id)
+            # Buffered, not streamed: httpx2 can't stream a multipart upload
+            # from an async source, and the API's processor decodes the whole
+            # image in memory anyway, so streaming would not lower the peak.
             image_bytes = b"".join([chunk async for chunk in self.immich.download_original(asset.id)])
 
             self.logger.debug("Processing image via API to %dx%d", target_width, target_height)
@@ -431,7 +421,7 @@ class ImmichSyncService:
                 self.logger.info("Skipping asset %s: too small for target dimensions", asset.id)
                 return ProcessResult.SKIPPED_UNDERSIZED
 
-            self.storage.upload_from_bytes(
+            await self.storage.upload_from_bytes(
                 object_path=storage_path,
                 data=image_bytes,
                 content_type="image/jpeg",
@@ -448,9 +438,17 @@ class ImmichSyncService:
 
         return ProcessResult.DOWNLOADED
 
-    async def _find_existing_image(self, asset_id: str) -> ImageItem | None:
-        """Find existing image by (source_name='immich', source_id=asset_id) via the API."""
-        return await self.api_client.find_image_by_source(IMMICH_SOURCE_NAME, asset_id)
+    async def _find_existing_image(self, asset_id: str, width: int, height: int) -> ImageResponse | None:
+        """Find this asset's image already synced at exactly ``width`` x ``height``.
+
+        ``source_id`` stays the bare Immich asset id (the UI shows it as such),
+        so the size is matched on the recorded raster dims instead.
+        """
+        candidates = await self.api_client.find_images_by_source(IMMICH_SOURCE_NAME, asset_id)
+        return next(
+            (i for i in candidates if (i.original_width, i.original_height) == (width, height)),
+            None,
+        )
 
     async def _upsert_image_record(  # noqa: PLR0913, PLR0917
         self,
@@ -470,9 +468,7 @@ class ImmichSyncService:
         """
         title, description, tags = await self._build_image_metadata(asset)
 
-        expires_at: datetime | None = None
-        if self.sync_config.retention_days > 0:
-            expires_at = datetime.now() + timedelta(days=self.sync_config.retention_days)
+        expires_at = expiry(self.sync_config.retention_days)
 
         original_width = device_reqs.width
         original_height = device_reqs.height
@@ -581,7 +577,7 @@ class ImmichSyncService:
             return [[single] for single in ids]
         return [ids]
 
-    def _filter_combos(self, job: SyncJobItem, *, tags_any: bool) -> list[SearchFilterCombo]:
+    def _filter_combos(self, job: SyncJobResponse, *, tags_any: bool) -> list[SearchFilterCombo]:
         """Cartesian product of per-field query values for a job.
 
         Fields in 'any' mode contribute one variant per id; 'all' fields
@@ -600,7 +596,7 @@ class ImmichSyncService:
             for tags in tag_variants
         ]
 
-    async def _fetch_random_pool(self, job: SyncJobItem, fetch_count: int) -> list[ImmichAsset]:
+    async def _fetch_random_pool(self, job: SyncJobResponse, fetch_count: int) -> list[ImmichAsset]:
         """Build a candidate pool for a RANDOM job via Immich's /search/random.
 
         Immich intersects every multi-value id filter (AND), so union (OR)
@@ -627,7 +623,7 @@ class ImmichSyncService:
         self.logger.info("Union over %d filter combinations produced %d unique candidates", len(combos), len(pool))
         return pool
 
-    async def _fetch_smart_pool(self, job: SyncJobItem, fetch_count: int) -> list[ImmichAsset]:
+    async def _fetch_smart_pool(self, job: SyncJobResponse, fetch_count: int) -> list[ImmichAsset]:
         """Build a candidate pool for a SMART job via Immich's /search/smart.
 
         Same union trick as :meth:`_fetch_random_pool` when album/person match
@@ -669,7 +665,7 @@ class ImmichSyncService:
     def _filter_assets(
         self,
         assets: list[ImmichAsset],
-        job: SyncJobItem,
+        job: SyncJobResponse,
         device_reqs: DeviceRequirements,
     ) -> list[ImmichAsset]:
         """Filter assets by orientation and dimensions (client-side).

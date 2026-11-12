@@ -12,9 +12,10 @@ import { Button, SelectField, Switch, TextArea, TextField } from '../components/
 import { ScheduleEditor, type ScheduleValue } from '../components/ScheduleEditor'
 import { GridMiniPreview } from '../components/GridMiniPreview'
 import { useNotify } from '../components/Toast'
-import { Badge, EmptyNote, ErrorNote, PageHeader, Spinner } from '../components/ui'
+import { Badge, EmptyNote, ErrorNote, LoadError, PageHeader, Spinner } from '../components/ui'
 import { api, errMessage } from '../lib/api'
-import { formatRelative } from '../lib/format'
+import { formatRelative, isHttpUrl } from '../lib/format'
+import { devicesQuery, gridsQuery, promptPresetsQuery } from '../lib/queries'
 import {
   MOTD_COMPOUND_PARTS,
   MOTD_PART_LABELS,
@@ -29,12 +30,24 @@ const PART_CHOICES = [...MOTD_PARTS, ...MOTD_COMPOUND_PARTS]
 
 export function DisplayJobForm() {
   const { jobId } = useParams<{ jobId: string }>()
-  const { data: jobs, isPending } = useQuery({ queryKey: ['display-jobs'], queryFn: api.listDisplayJobs })
-  const { data: grids } = useQuery({ queryKey: ['grids', 'with-devices'], queryFn: () => api.listGrids(true) })
+  const {
+    data: jobs,
+    isPending,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: ['display-jobs'],
+    queryFn: api.listDisplayJobs,
+    // This observer backs an edit form; the Jobs page keeps its own polling.
+    refetchOnWindowFocus: false,
+  })
+  const { data: grids } = useQuery(gridsQuery)
 
   const job = (jobs ?? []).find((entry) => entry.id === jobId) ?? null
 
   if (isPending) return <Spinner />
+  if (isError) return <LoadError what="display job" error={error} onRetry={() => refetch()} />
   if (!job) return <ErrorNote>Display job not found.</ErrorNote>
 
   return (
@@ -45,7 +58,9 @@ export function DisplayJobForm() {
         </Link>
       </PageHeader>
       <JobActions job={job} />
-      <JobConfig key={job.updated_at} job={job} grids={grids ?? []} />
+      {/* Keyed on the id, not updated_at: "Run now" and saves bump
+          updated_at, and remounting then discarded unsaved edits. */}
+      <JobConfig key={job.id} job={job} grids={grids ?? []} />
       <JobGroups job={job} />
     </div>
   )
@@ -123,8 +138,8 @@ function JobActions({ job }: { job: DisplayJob }) {
 function JobConfig({ job, grids }: { job: DisplayJob; grids: Grid[] }) {
   const notify = useNotify()
   const queryClient = useQueryClient()
-  const { data: presets } = useQuery({ queryKey: ['prompt-presets'], queryFn: api.listPromptPresets })
-  const { data: devices } = useQuery({ queryKey: ['devices'], queryFn: api.listDevices })
+  const { data: presets } = useQuery(promptPresetsQuery)
+  const { data: devices } = useQuery(devicesQuery)
 
   const [name, setName] = useState(job.name)
   const [prompt, setPrompt] = useState(job.content_prompt)
@@ -430,9 +445,13 @@ function GroupPreview({ group }: { group: ImageGroup }) {
       {group.source_url && (
         <span className="ink-small">
           Source:{' '}
-          <a href={group.source_url} target="_blank" rel="noreferrer" style={{ color: 'var(--ink-accent)' }}>
-            {group.source_url}
-          </a>
+          {isHttpUrl(group.source_url) ? (
+            <a href={group.source_url} target="_blank" rel="noreferrer" style={{ color: 'var(--ink-accent)' }}>
+              {group.source_url}
+            </a>
+          ) : (
+            group.source_url
+          )}
         </span>
       )}
       {group.images.length > 0 && (

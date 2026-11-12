@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 
 export type ToastType = 'info' | 'positive' | 'negative' | 'warning'
 
@@ -21,6 +21,19 @@ interface Toast {
 
 type NotifyFn = (message: string, type?: ToastType, options?: NotifyOptions) => void
 
+// Code outside the React tree (the query client's global error handlers in
+// main.tsx) can't call useNotify, so it raises this event instead.
+const NOTIFY_EVENT = 'inky:notify'
+
+interface NotifyEventDetail {
+  message: string
+  type: ToastType
+}
+
+export function notifyFromOutside(message: string, type: ToastType = 'negative'): void {
+  window.dispatchEvent(new CustomEvent<NotifyEventDetail>(NOTIFY_EVENT, { detail: { message, type } }))
+}
+
 const ToastContext = createContext<NotifyFn | null>(null)
 
 export function ToastProvider({ children }: { children: ReactNode }) {
@@ -32,6 +45,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToasts((current) => [...current, { id, message, type, action: options?.action }])
     setTimeout(() => setToasts((current) => current.filter((t) => t.id !== id)), options?.durationMs ?? 4000)
   }, [])
+
+  useEffect(() => {
+    const onNotify = (event: Event) => {
+      const { message, type } = (event as CustomEvent<NotifyEventDetail>).detail
+      notify(message, type)
+    }
+    window.addEventListener(NOTIFY_EVENT, onNotify)
+    return () => window.removeEventListener(NOTIFY_EVENT, onNotify)
+  }, [notify])
 
   const dismiss = (id: number) => setToasts((current) => current.filter((t) => t.id !== id))
 

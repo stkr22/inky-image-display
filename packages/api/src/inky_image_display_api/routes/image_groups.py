@@ -17,7 +17,8 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.schemas import ImageGroupCreate, ImageGroupUpdate
-from inky_image_display_api.services.image_group_service import group_response, set_group_members
+from inky_image_display_api.services.image_deletion import delete_images as remove_images
+from inky_image_display_api.services.image_group_service import group_response, group_responses, set_group_members
 
 router = APIRouter(prefix="/api/image-groups", tags=["image-groups"])
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ async def list_image_groups(request: Request, target_grid_id: UUID | None = None
         if target_grid_id is not None:
             query = query.where(col(ImageGroup.target_grid_id) == target_grid_id)
         result = await session.exec(query)
-        return [await group_response(session, group) for group in result.all()]
+        return await group_responses(session, list(result.all()))
 
 
 @router.post("", status_code=201)
@@ -105,15 +106,11 @@ async def delete_image_group(request: Request, group_id: UUID, delete_images: bo
     """
     async with AsyncSession(request.app.state.engine) as session:
         group = await _get_group_or_404(session, group_id)
-        images = await session.exec(select(Image).where(col(Image.group_id) == group_id))
-        for image in images.all():
-            if delete_images:
-                try:
-                    request.app.state.s3_service.delete_object(image.storage_path)
-                except Exception:
-                    logger.warning("Failed to delete S3 object %s", image.storage_path)
-                await session.delete(image)
-            else:
+        images = list((await session.exec(select(Image).where(col(Image.group_id) == group_id))).all())
+        if delete_images:
+            await remove_images(session, request.app.state.s3_service, images)
+        else:
+            for image in images:
                 image.group_id = None
                 session.add(image)
         await session.delete(group)

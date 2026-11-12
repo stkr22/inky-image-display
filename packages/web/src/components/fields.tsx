@@ -22,7 +22,7 @@ export function Icon({ name, style }: { name: string; style?: CSSProperties }) {
 
 // Small ⓘ next to a field label carrying a native tooltip. Reserved for
 // options whose practical effect isn't obvious from the label alone.
-export function HelpTip({ text }: { text: string }) {
+function HelpTip({ text }: { text: string }) {
   return (
     <span className="ink-help-tip" title={text} aria-label={text} role="note">
       <Icon name="help_outline" />

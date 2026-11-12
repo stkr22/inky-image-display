@@ -2,16 +2,19 @@
 
 import io
 import json
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from inky_image_display_shared.models import Image
+from inky_image_display_shared.time import utcnow
 from PIL import Image as PILImage
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel.ext.asyncio.session import AsyncSession
+
+from .conftest import add_images
 
 
 class TestListImages:
@@ -109,7 +112,7 @@ async def seed_immich_image(async_engine: AsyncEngine) -> Image:
         original_width=1600,
         original_height=1200,
         is_portrait=False,
-        expires_at=datetime.now() - timedelta(days=1),
+        expires_at=utcnow() - timedelta(days=1),
     )
     async with AsyncSession(async_engine) as session:
         session.add(image)
@@ -137,12 +140,12 @@ class TestListImagesFilters:
 
     def test_filter_by_expires_before(self, client: TestClient, seed_immich_image: Image):
         # The seeded image expired one day ago: a now-cutoff matches it...
-        resp = client.get("/api/images", params={"expires_before": datetime.now().isoformat()})
+        resp = client.get("/api/images", params={"expires_before": utcnow().isoformat()})
         assert resp.status_code == 200
         assert len(resp.json()) == 1
 
         # ...but a cutoff before its expiry excludes it.
-        past = (datetime.now() - timedelta(days=2)).isoformat()
+        past = (utcnow() - timedelta(days=2)).isoformat()
         resp = client.get("/api/images", params={"expires_before": past})
         assert resp.json() == []
 
@@ -173,13 +176,20 @@ class TestRegisterImage:
         test_app.state.s3_service.upload_image.assert_not_called()
 
     def test_register_with_expires_at(self, client: TestClient):
-        future = (datetime.now() + timedelta(days=7)).isoformat()
+        # Sync workers send aware UTC; storage is naive UTC, so the instant
+        # must survive the round-trip rather than be read as local time.
         resp = client.post(
             "/api/images/register",
-            json={"storage_path": "immich/y.jpg", "expires_at": future},
+            json={"storage_path": "immich/y.jpg", "expires_at": "2030-01-02T03:04:05+02:00"},
         )
         assert resp.status_code == 201
-        assert resp.json()["expires_at"] is not None
+        expires = datetime.fromisoformat(resp.json()["expires_at"])
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=UTC)
+        assert expires == datetime(2030, 1, 2, 1, 4, 5, tzinfo=UTC)
+
+        fetched = client.get(f"/api/images/{resp.json()['id']}").json()
+        assert fetched["expires_at"] == resp.json()["expires_at"]
 
 
 class TestUpdateImage:
@@ -287,3 +297,23 @@ class TestImageStats:
         resp = client.get("/api/images/stats")
         assert resp.status_code == 200
         assert resp.json() == {"total": 3, "by_source": {"manual": 1, "immich": 2}}
+
+
+class TestImagesTotalCount:
+    """``X-Total-Count`` reports the filtered total, not the page size."""
+
+    async def test_header_reports_filtered_total(self, client: TestClient, async_engine: AsyncEngine) -> None:
+        await add_images(async_engine, 7)
+        response = client.get("/api/images", params={"limit": 3})
+        assert len(response.json()) == 3
+        assert response.headers["X-Total-Count"] == "7"
+
+    async def test_excluded_filter(self, client: TestClient, async_engine: AsyncEngine) -> None:
+        images = await add_images(async_engine, 3)
+        update = client.put(f"/api/images/{images[0].id}", json={"excluded_from_rotation": True})
+        assert update.status_code == 200
+        assert update.json()["excluded_from_rotation"] is True
+
+        excluded = client.get("/api/images", params={"excluded": "true"})
+        assert [img["id"] for img in excluded.json()] == [str(images[0].id)]
+        assert excluded.headers["X-Total-Count"] == "1"

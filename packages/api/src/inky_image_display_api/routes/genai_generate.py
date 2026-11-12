@@ -8,13 +8,13 @@ task so the HTTP request returns immediately with a task id.
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 
 from inky_image_display_api.schemas import GenerationTaskResponse, ImageGenerateRequest, ImageGenerateResponse
 from inky_image_display_api.services.generation_service import generate_and_publish
-from inky_image_display_api.services.generation_tasks import task_registry
 
 router = APIRouter(prefix="/api/genai", tags=["genai"])
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ async def generate_image(
         )
 
     task_id = uuid4()
-    tasks = task_registry(request)
+    tasks = request.app.state.generation_tasks
     await tasks.create(task_id, body.subject)
     background_tasks.add_task(
         generate_and_publish,
@@ -49,26 +49,30 @@ async def generate_image(
         settings,
         request.app.state.s3_service,
         request.app.state.mqtt,
+        gemini_api_key=settings.gemini_api_key.get_secret_value(),
+        tasks=tasks,
+        process_gate=request.app.state.process_gate,
         task_id=task_id,
         subject=body.subject,
         target_device_profile_id=body.target_device_profile_id,
         preset_id=body.preset_id,
         orientation=body.orientation,
         push_immediately=body.push_immediately,
-        tasks=tasks,
     )
     logger.info("Queued generation task %s for subject=%r", task_id, body.subject)
     return ImageGenerateResponse(task_id=task_id, status="queued")
 
 
 @router.get("/tasks")
-async def list_generation_tasks(request: Request, limit: int = 50) -> list[GenerationTaskResponse]:
+async def list_generation_tasks(
+    request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 50
+) -> list[GenerationTaskResponse]:
     """Return recent generation tasks, newest first.
 
     History is persisted (bounded) in the ``generation_tasks`` table, so
     it survives API restarts — visibility, not auditing.
     """
-    tasks = task_registry(request)
+    tasks = request.app.state.generation_tasks
     return [
         GenerationTaskResponse(
             task_id=t.task_id,

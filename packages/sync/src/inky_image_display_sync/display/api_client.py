@@ -16,6 +16,7 @@ from inky_image_display_shared.schemas.responses import (
 from inky_image_display_shared.schemas.responses import (
     DisplayJobClaimSlot as DisplayJobSlotItem,
 )
+from inky_image_display_shared.schemas.responses import ImageGroupResponse
 from pydantic import BaseModel
 
 from inky_image_display_sync.gemini.api_client import GeminiDisplayAPIClient
@@ -29,13 +30,6 @@ class ImageGroupCreatePayload(BaseModel):
     display_job_id: UUID
     description: str | None = None
     source_url: str | None = None
-
-
-class ImageGroupItem(BaseModel):
-    """Image group returned by the API (id is all the worker needs)."""
-
-    id: UUID
-    name: str
 
 
 class DisplayJobAPIClient(GeminiDisplayAPIClient):
@@ -55,10 +49,10 @@ class DisplayJobAPIClient(GeminiDisplayAPIClient):
         )
         return response.content
 
-    async def create_image_group(self, payload: ImageGroupCreatePayload) -> ImageGroupItem:
+    async def create_image_group(self, payload: ImageGroupCreatePayload) -> ImageGroupResponse:
         """Create the group that will hold this run's rendered screens."""
         response = await self._request("POST", "/api/image-groups", json=payload.model_dump(mode="json"))
-        return ImageGroupItem.model_validate(response.json())
+        return ImageGroupResponse.model_validate(response.json())
 
     async def delete_image_group(self, group_id: UUID) -> None:
         """Delete a group and its images (cleanup of a failed run)."""
@@ -70,5 +64,4 @@ __all__ = [
     "DisplayJobClaimItem",
     "DisplayJobSlotItem",
     "ImageGroupCreatePayload",
-    "ImageGroupItem",
 ]

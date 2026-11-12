@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from inky_image_display_shared.models import Device
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlmodel import col
 
 if TYPE_CHECKING:
@@ -49,3 +49,19 @@ def is_dispatch_blocked(device: Device, now: datetime, backoff_seconds: int) -> 
     if device.last_refresh_ok is not False or device.last_error_at is None:
         return False
     return device.last_error_at > now - timedelta(seconds=backoff_seconds)
+
+
+def auto_dispatch_clause(now: datetime, backoff_seconds: int) -> ColumnElement[bool]:
+    """Devices any automatic push (solo rotation, GenAI) may target.
+
+    One predicate for every automatic path so they can't drift: a pinned
+    panel keeps its image until the operator unpins it, and a grid-claimed
+    panel belongs to its grid until released — pushing to either would
+    silently undo an operator decision.
+    """
+    return and_(
+        col(Device.is_online).is_(True),
+        col(Device.is_pinned).is_(False),
+        col(Device.claimed_by_grid_id).is_(None),
+        dispatch_allowed_clause(now, backoff_seconds),
+    )

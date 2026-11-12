@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from inky_image_display_shared.ai import GeminiGenerationError, MotdStory, generate_motd_story
@@ -19,6 +19,19 @@ STORY_FIELDS: dict[str, Any] = {
     "image_subject": "A wooden footbridge over a calm river at sunrise.",
     "source_title": None,
 }
+
+
+_GENAI_CLIENT = "inky_image_display_shared.ai._client.genai.Client"
+
+
+def _gemini_client() -> MagicMock:
+    """genai.Client stand-in: ``async with client.aio`` yields an object whose
+    ``models.generate_content`` is awaitable (the helpers use the async SDK)."""
+    client = MagicMock()
+    client.models.generate_content = AsyncMock()
+    client.aio.__aenter__ = AsyncMock(return_value=client)
+    client.aio.__aexit__ = AsyncMock(return_value=None)
+    return client
 
 
 def _structured_response(parsed: object = None, text: str | None = None) -> MagicMock:
@@ -45,10 +58,10 @@ def _web_chunk(uri: str | None, title: str | None) -> SimpleNamespace:
 @pytest.mark.asyncio
 async def test_knowledge_mode_uses_parsed_story() -> None:
     story = MotdStory(**STORY_FIELDS)
-    client = MagicMock()
+    client = _gemini_client()
     client.models.generate_content.return_value = _structured_response(parsed=story)
 
-    with patch("inky_image_display_shared.ai.gemini_text.genai.Client", return_value=client):
+    with patch(_GENAI_CLIENT, return_value=client):
         result, source_url = await generate_motd_story("key", "themes", grounded=False)
 
     assert result == story
@@ -60,10 +73,10 @@ async def test_knowledge_mode_uses_parsed_story() -> None:
 
 @pytest.mark.asyncio
 async def test_knowledge_mode_falls_back_to_json_text() -> None:
-    client = MagicMock()
+    client = _gemini_client()
     client.models.generate_content.return_value = _structured_response(text=json.dumps(STORY_FIELDS))
 
-    with patch("inky_image_display_shared.ai.gemini_text.genai.Client", return_value=client):
+    with patch(_GENAI_CLIENT, return_value=client):
         result, _ = await generate_motd_story("key", "themes", grounded=False)
 
     assert result.headline == STORY_FIELDS["headline"]
@@ -71,11 +84,11 @@ async def test_knowledge_mode_falls_back_to_json_text() -> None:
 
 @pytest.mark.asyncio
 async def test_unparseable_story_raises() -> None:
-    client = MagicMock()
+    client = _gemini_client()
     client.models.generate_content.return_value = _structured_response(text="not json {")
 
     with (
-        patch("inky_image_display_shared.ai.gemini_text.genai.Client", return_value=client),
+        patch(_GENAI_CLIENT, return_value=client),
         pytest.raises(GeminiGenerationError, match="unparseable"),
     ):
         await generate_motd_story("key", "themes", grounded=False)
@@ -84,11 +97,11 @@ async def test_unparseable_story_raises() -> None:
 @pytest.mark.asyncio
 async def test_blank_required_field_raises() -> None:
     story = MotdStory(**{**STORY_FIELDS, "takeaway": "  "})
-    client = MagicMock()
+    client = _gemini_client()
     client.models.generate_content.return_value = _structured_response(parsed=story)
 
     with (
-        patch("inky_image_display_shared.ai.gemini_text.genai.Client", return_value=client),
+        patch(_GENAI_CLIENT, return_value=client),
         pytest.raises(GeminiGenerationError, match="takeaway"),
     ):
         await generate_motd_story("key", "themes", grounded=False)
@@ -101,10 +114,10 @@ async def test_grounded_mode_extracts_source_from_metadata() -> None:
         [_web_chunk("https://news.example/bridge", "Example News")],
     )
     structured = _structured_response(parsed=MotdStory(**STORY_FIELDS))
-    client = MagicMock()
+    client = _gemini_client()
     client.models.generate_content.side_effect = [research, structured]
 
-    with patch("inky_image_display_shared.ai.gemini_text.genai.Client", return_value=client):
+    with patch(_GENAI_CLIENT, return_value=client):
         result, source_url = await generate_motd_story("key", "themes", grounded=True)
 
     assert source_url == "https://news.example/bridge"
@@ -119,10 +132,10 @@ async def test_grounded_mode_extracts_source_from_metadata() -> None:
 async def test_grounded_mode_without_web_chunks_returns_no_url() -> None:
     research = _grounded_response("A story without sources.", [])
     structured = _structured_response(parsed=MotdStory(**STORY_FIELDS))
-    client = MagicMock()
+    client = _gemini_client()
     client.models.generate_content.side_effect = [research, structured]
 
-    with patch("inky_image_display_shared.ai.gemini_text.genai.Client", return_value=client):
+    with patch(_GENAI_CLIENT, return_value=client):
         result, source_url = await generate_motd_story("key", "themes", grounded=True)
 
     assert source_url is None

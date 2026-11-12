@@ -5,8 +5,8 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { Button, SelectField } from './fields'
-import { api } from '../lib/api'
 import type { Device, DeviceProfile } from '../lib/types'
+import { gridsQuery } from '../lib/queries'
 
 export type LayoutRows = string[][]
 
@@ -41,7 +41,7 @@ export function GridLayoutEditor({
   // Devices already placed in this grid stay selectable (editing its layout).
   excludeGridId?: string
 }) {
-  const { data: grids } = useQuery({ queryKey: ['grids', 'with-devices'], queryFn: () => api.listGrids(true) })
+  const { data: grids } = useQuery(gridsQuery)
   const takenElsewhere = new Set(
     (grids ?? [])
       .filter((g) => g.id !== excludeGridId)

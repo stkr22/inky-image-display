@@ -20,7 +20,7 @@ import html
 import random
 import re
 import time
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # stdlib is safe here: no external entities (XXE), expat caps entity expansion
 from typing import TYPE_CHECKING
 
 import httpx2
@@ -227,6 +227,13 @@ class CalibreClient:
             else None
         )
         self.logger = logger
+        if self._auth is not None and config.base_url.scheme == "http":
+            # Warn rather than refuse: plain-HTTP Calibre on a home LAN is
+            # common, but basic auth then sends the password in clear text.
+            logger.warning(
+                "CALIBRE_BASE_URL is plain http:// but credentials are set; "
+                "the OPDS password is sent unencrypted on every request"
+            )
         self._cache: list[CalibreBook] | None = None
         self._cached_at = 0.0
 
@@ -269,20 +276,12 @@ class CalibreClient:
         self.logger.info("Calibre catalog: %d books", len(books))
         return books
 
-    async def select(
-        self,
-        count: int,
-        book_filter: BookFilter | None = None,
-        seed: int | None = None,
-    ) -> list[CalibreBook]:
-        """Fetch (or reuse) the catalog and sample ``count`` books from it."""
-        return select_books(await self.fetch_catalog(), count, book_filter, seed)
-
     async def fetch_cover(self, book_id: int) -> bytes:
         """Fetch a book's cover image bytes.
 
         The ``thumb_*`` and ``cover_*`` paths are aliases for the full image
         rather than resized variants, so there is nothing cheaper worth asking
-        for; callers downscale before use.
+        for. The bytes are returned as served, at full resolution — shrinking
+        them is the caller's job (see ``calibre.sync_service.downscale_cover``).
         """
         return (await self._get(f"/opds/cover/{book_id}")).content

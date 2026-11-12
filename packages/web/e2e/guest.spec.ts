@@ -4,9 +4,9 @@
 // auth disabled (the default), where guest sessions still restrict access.
 
 import { expect, test, type BrowserContext } from '@playwright/test'
-import { collectProblems } from './helpers'
+import { collectProblems, makeTestJpeg } from './helpers'
 
-test('guest invite link mints a restricted session', async ({ page, browser }) => {
+test('guest invite link mints a restricted session', async ({ page, browser, request }) => {
   const problems = collectProblems(page)
   await page.goto('/settings', { waitUntil: 'networkidle' })
   await page.getByRole('button', { name: 'Create invite link' }).click()
@@ -31,6 +31,41 @@ test('guest invite link mints a restricted session', async ({ page, browser }) =
   await expect(nav.getByRole('link', { name: 'Images' })).toBeVisible()
   await expect(nav.getByRole('link', { name: 'Settings' })).toHaveCount(0)
   await expect(nav.getByRole('link', { name: 'Displays' })).toHaveCount(0)
+
+  // Every guest page must stay inside the API's guest allowlist: any admin
+  // endpoint the UI still calls shows up here as a 403.
+  const guestProblems = collectProblems(guestPage)
+  await guestPage.goto('/genai', { waitUntil: 'networkidle' })
+  await expect(guestPage.getByRole('heading', { name: 'Generate an image' })).toBeVisible()
+  await expect(guestPage.getByRole('button', { name: 'Prompt library' })).toHaveCount(0)
+  await guestPage.goto('/images', { waitUntil: 'networkidle' })
+  await expect(guestPage.getByRole('heading', { name: 'Images' })).toBeVisible()
+  await expect(guestPage.getByRole('button', { name: 'Select' })).toHaveCount(0)
+  await expect(guestPage.getByTitle('Upload image')).toHaveCount(0)
+  // Seed our own image rather than clicking whatever the gallery shows first,
+  // so the detail-page check never depends on (or races) other specs' data.
+  const created = await request.post('/api/images', {
+    multipart: {
+      file: { name: 'e2e-guest.jpg', mimeType: 'image/jpeg', buffer: await makeTestJpeg(page, 640, 400) },
+      metadata: JSON.stringify({ source_name: 'manual', title: `e2e-guest-${Date.now()}` }),
+    },
+  })
+  expect(created.status()).toBe(201)
+  const image = await created.json()
+  try {
+    await guestPage.goto(`/images/${image.id}`, { waitUntil: 'networkidle' })
+    await expect(guestPage.getByRole('button', { name: 'Send to…' })).toBeVisible()
+    await expect(guestPage.getByRole('button', { name: 'Save' })).toHaveCount(0)
+    await expect(guestPage.getByRole('button', { name: 'Delete' })).toHaveCount(0)
+    await guestPage.getByRole('button', { name: 'Send to…' }).click()
+    await guestPage.waitForLoadState('networkidle')
+    await expect(guestPage.getByRole('dialog').getByText('Grids', { exact: true })).toHaveCount(0)
+    await guestPage.keyboard.press('Escape')
+  } finally {
+    await request.delete(`/api/images/${image.id}`)
+  }
+  expect(guestProblems.consoleErrors).toEqual([])
+  expect(guestProblems.badResponses).toEqual([])
 
   // Admin-only routes bounce back to GenAI client-side.
   await guestPage.goto('/settings')

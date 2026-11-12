@@ -7,11 +7,13 @@ import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { imageTitle, mediaUrl, type Device, type Image } from '../lib/types'
 import { Icon } from '../components/fields'
-import { Badge, BentoGrid, Stat, Tile } from '../components/ui'
+import { Badge, BentoGrid, DocumentTitle, Stat, Tile } from '../components/ui'
+import { devicesQuery } from '../lib/queries'
 
 export function Landing() {
   return (
     <>
+      <DocumentTitle title="Home" />
       <Hero />
       <HealthAlerts />
       <BentoGrid>
@@ -28,7 +30,7 @@ export function Landing() {
 // A stuck panel used to hide behind a friendly green dot here — the failure
 // only showed on /displays. Surface it on the page people actually open.
 function HealthAlerts() {
-  const { data: devices } = useQuery({ queryKey: ['devices'], queryFn: api.listDevices })
+  const { data: devices } = useQuery(devicesQuery)
   const failing = (devices ?? []).filter((d) => d.refresh_state === 'failed_retrying' || d.refresh_state === 'failed_stale')
   if (failing.length === 0) return null
   return (
@@ -106,7 +108,7 @@ function JobsTile() {
 }
 
 function DevicesTile() {
-  const { data: devices } = useQuery({ queryKey: ['devices'], queryFn: api.listDevices })
+  const { data: devices } = useQuery(devicesQuery)
   const online = devices?.filter((d) => d.is_online).length ?? 0
   return (
     <Tile span="col-span-8" rowSpan="row-span-2">

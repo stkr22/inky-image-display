@@ -11,6 +11,7 @@ controller restart or a lost success ack must not halt dispatch forever.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
 PAST = datetime(2020, 1, 1, 12, 0, 0)
-# Older than the 900 s backoff configured in mock_settings.
+# Older than the 900 s backoff configured in settings.
 STALE_ERROR_AT = utcnow() - timedelta(seconds=3600)
 
 
@@ -52,10 +53,10 @@ async def _seed_default_preset(engine: AsyncEngine) -> None:
         await session.commit()
 
 
-def _app(async_engine: AsyncEngine, mock_settings, mock_s3_service, mock_mqtt) -> MagicMock:
+def _app(async_engine: AsyncEngine, settings, mock_s3_service, mock_mqtt) -> MagicMock:
     app = MagicMock()
     app.state.engine = async_engine
-    app.state.settings = mock_settings
+    app.state.settings = settings
     app.state.s3_service = mock_s3_service
     app.state.mqtt = mock_mqtt
     return app
@@ -105,33 +106,33 @@ def _landscape_image() -> Image:
 class TestSoloRotationGate:
     @pytest.mark.asyncio
     async def test_errored_device_is_skipped_healthy_one_rotates(
-        self, async_engine, mock_settings, mock_s3_service, mock_mqtt, seed_profile
+        self, async_engine, settings, mock_s3_service, mock_mqtt, seed_profile
     ) -> None:
         healthy = _due_device(seed_profile, "healthy", last_refresh_ok=True)
         errored = _due_device(seed_profile, "errored", last_refresh_ok=False)
         await _add(async_engine, _landscape_image(), healthy, errored)
         mock_mqtt.is_connected = MagicMock(return_value=True)
 
-        await _rotate_due_devices(_app(async_engine, mock_settings, mock_s3_service, mock_mqtt))
+        await _rotate_due_devices(_app(async_engine, settings, mock_s3_service, mock_mqtt))
 
         pushed = {call.args[0] for call in mock_mqtt.send_command.call_args_list}
         assert pushed == {"healthy"}
 
     @pytest.mark.asyncio
     async def test_never_acked_device_stays_eligible(
-        self, async_engine, mock_settings, mock_s3_service, mock_mqtt, seed_profile
+        self, async_engine, settings, mock_s3_service, mock_mqtt, seed_profile
     ) -> None:
         fresh = _due_device(seed_profile, "fresh", last_refresh_ok=None)
         await _add(async_engine, _landscape_image(), fresh)
         mock_mqtt.is_connected = MagicMock(return_value=True)
 
-        await _rotate_due_devices(_app(async_engine, mock_settings, mock_s3_service, mock_mqtt))
+        await _rotate_due_devices(_app(async_engine, settings, mock_s3_service, mock_mqtt))
 
         assert {call.args[0] for call in mock_mqtt.send_command.call_args_list} == {"fresh"}
 
     @pytest.mark.asyncio
     async def test_stale_error_expires_and_device_rotates_again(
-        self, async_engine, mock_settings, mock_s3_service, mock_mqtt, seed_profile
+        self, async_engine, settings, mock_s3_service, mock_mqtt, seed_profile
     ) -> None:
         # The failure flag outlived the controller's in-memory retry (e.g. the
         # device was power-cycled) — after the backoff the gate must let go.
@@ -139,7 +140,7 @@ class TestSoloRotationGate:
         await _add(async_engine, _landscape_image(), stale)
         mock_mqtt.is_connected = MagicMock(return_value=True)
 
-        await _rotate_due_devices(_app(async_engine, mock_settings, mock_s3_service, mock_mqtt))
+        await _rotate_due_devices(_app(async_engine, settings, mock_s3_service, mock_mqtt))
 
         assert {call.args[0] for call in mock_mqtt.send_command.call_args_list} == {"stale"}
 
@@ -147,13 +148,12 @@ class TestSoloRotationGate:
 class TestGenAiGate:
     @pytest.mark.asyncio
     async def test_errored_device_is_not_a_genai_target(
-        self, async_engine, mock_settings, mock_s3_service, mock_mqtt, seed_profile
+        self, async_engine, settings, mock_s3_service, mock_mqtt, seed_profile
     ) -> None:
         errored = _due_device(seed_profile, "errored", last_refresh_ok=False)
         await _add(async_engine, errored)
         await _seed_default_preset(async_engine)
-        mock_settings.gemini_api_key = MagicMock(get_secret_value=MagicMock(return_value="dummy"))
-        mock_settings.default_display_duration = 3600
+        settings.default_display_duration = 3600
         mock_mqtt.is_connected = MagicMock(return_value=True)
         tasks = AsyncMock()
 
@@ -169,7 +169,7 @@ class TestGenAiGate:
         ):
             await generate_and_publish(
                 async_engine,
-                mock_settings,
+                settings,
                 mock_s3_service,
                 mock_mqtt,
                 task_id=uuid4(),
@@ -178,7 +178,9 @@ class TestGenAiGate:
                 preset_id=None,
                 orientation="landscape",
                 push_immediately=True,
+                gemini_api_key="dummy",
                 tasks=tasks,
+                process_gate=asyncio.Semaphore(1),
             )
 
         # Image is still persisted, but the errored device is not pushed to.
@@ -188,13 +190,12 @@ class TestGenAiGate:
 
     @pytest.mark.asyncio
     async def test_stale_error_device_becomes_genai_target_again(
-        self, async_engine, mock_settings, mock_s3_service, mock_mqtt, seed_profile
+        self, async_engine, settings, mock_s3_service, mock_mqtt, seed_profile
     ) -> None:
         stale = _due_device(seed_profile, "stale", last_refresh_ok=False, last_error_at=STALE_ERROR_AT)
         await _add(async_engine, stale)
         await _seed_default_preset(async_engine)
-        mock_settings.gemini_api_key = MagicMock(get_secret_value=MagicMock(return_value="dummy"))
-        mock_settings.default_display_duration = 3600
+        settings.default_display_duration = 3600
         mock_mqtt.is_connected = MagicMock(return_value=True)
         tasks = AsyncMock()
 
@@ -210,7 +211,7 @@ class TestGenAiGate:
         ):
             await generate_and_publish(
                 async_engine,
-                mock_settings,
+                settings,
                 mock_s3_service,
                 mock_mqtt,
                 task_id=uuid4(),
@@ -219,8 +220,53 @@ class TestGenAiGate:
                 preset_id=None,
                 orientation="landscape",
                 push_immediately=True,
+                gemini_api_key="dummy",
                 tasks=tasks,
+                process_gate=asyncio.Semaphore(1),
             )
 
         pushed = {call.args[0] for call in mock_mqtt.send_command.call_args_list}
         assert pushed == {"stale"}
+
+    @pytest.mark.asyncio
+    async def test_pinned_and_grid_claimed_devices_are_not_genai_targets(
+        self, async_engine, settings, mock_s3_service, mock_mqtt, seed_profile
+    ) -> None:
+        """GenAI shares solo rotation's filter: operator holds are never overwritten."""
+        pinned = _due_device(seed_profile, "pinned", last_refresh_ok=True)
+        pinned.is_pinned = True
+        claimed = _due_device(seed_profile, "claimed", last_refresh_ok=True)
+        claimed.claimed_by_grid_id = uuid4()
+        free = _due_device(seed_profile, "free", last_refresh_ok=True)
+        await _add(async_engine, pinned, claimed, free)
+        await _seed_default_preset(async_engine)
+        settings.default_display_duration = 3600
+        mock_mqtt.is_connected = MagicMock(return_value=True)
+
+        with (
+            patch(
+                "inky_image_display_api.services.generation_service.generate_image_bytes",
+                new=AsyncMock(return_value=b"raw"),
+            ),
+            patch(
+                "inky_image_display_api.services.generation_service.ImageProcessor.process_for_display",
+                return_value=b"processed",
+            ),
+        ):
+            await generate_and_publish(
+                async_engine,
+                settings,
+                mock_s3_service,
+                mock_mqtt,
+                task_id=uuid4(),
+                subject="a cat",
+                target_device_profile_id=seed_profile.id,
+                preset_id=None,
+                orientation="landscape",
+                push_immediately=True,
+                gemini_api_key="dummy",
+                tasks=AsyncMock(),
+                process_gate=asyncio.Semaphore(1),
+            )
+
+        assert {call.args[0] for call in mock_mqtt.send_command.call_args_list} == {"free"}

@@ -3,15 +3,18 @@
 // on-demand generation form; "Prompt library" the blocks/presets that
 // image prompts are built from. Display jobs live on the Jobs page.
 
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 import { Link, Navigate, useSearchParams } from 'react-router-dom'
 import { ConfirmDialog } from '../components/Dialog'
 import { Button, Expansion, SelectField, Switch, TextArea, TextField } from '../components/fields'
 import { useNotify } from '../components/Toast'
-import { Badge, EmptyNote } from '../components/ui'
+import { Badge, DocumentTitle, EmptyNote } from '../components/ui'
 import { api, errMessage } from '../lib/api'
+import { useAuth } from '../lib/auth'
 import { formatRelative } from '../lib/format'
+import { deviceProfilesQuery, promptPresetsQuery } from '../lib/queries'
+import { useDefaultChoice } from '../lib/useDefaultChoice'
 import {
   DEFAULT_GEMINI_MODEL,
   PROMPT_BLOCK_KINDS,
@@ -36,15 +39,19 @@ export function GenAI() {
   const requested = searchParams.get('tab')
   // Old deep links pointed at the MOTD/display-jobs tab; those moved to Jobs.
   if (requested === 'motd' || requested === 'jobs') return <Navigate to="/jobs?tab=display" replace />
-  const tab: GenAITab = requested === 'prompts' ? 'prompts' : 'images'
+  // The prompt library is an editor (admin-only writes); guests only generate.
+  const isAdmin = useAuth().role !== 'guest'
+  const tab: GenAITab = requested === 'prompts' && isAdmin ? 'prompts' : 'images'
+  const tabs = isAdmin ? GENAI_TABS : GENAI_TABS.filter((entry) => entry.key === 'images')
 
   return (
     <>
+      <DocumentTitle title={tab === 'prompts' ? 'Prompt library' : 'Generate'} />
       <div
         className="row w-full gap-2 items-center"
         style={{ borderBottom: '1px solid var(--ink-border)', paddingBottom: 8 }}
       >
-        {GENAI_TABS.map((entry) => (
+        {tabs.map((entry) => (
           <Button
             key={entry.key}
             primary={tab === entry.key}
@@ -131,8 +138,8 @@ function RecentGenerations() {
 function GenerateSection() {
   const notify = useNotify()
   const queryClient = useQueryClient()
-  const { data: profiles } = useQuery({ queryKey: ['device-profiles'], queryFn: api.listDeviceProfiles })
-  const { data: presets } = useQuery({ queryKey: ['prompt-presets'], queryFn: api.listPromptPresets })
+  const { data: profiles } = useQuery(deviceProfilesQuery)
+  const { data: presets } = useQuery(promptPresetsQuery)
 
   const [subject, setSubject] = useState('')
   const [profileId, setProfileId] = useState('')
@@ -141,31 +148,32 @@ function GenerateSection() {
   const [pushImmediately, setPushImmediately] = useState(true)
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    if (!profileId && profiles?.length) setProfileId(profiles.find((p) => p.is_default)?.id ?? profiles[0].id)
-  }, [profiles, profileId])
-  useEffect(() => {
-    if (!presetId && presets?.length) setPresetId(presets.find((p) => p.is_default)?.id ?? presets[0].id)
-  }, [presets, presetId])
+  useDefaultChoice(true, profileId, setProfileId, profiles)
+  useDefaultChoice(true, presetId, setPresetId, presets)
 
-  const submit = async () => {
-    if (!subject.trim()) return setError('Subject is required')
-    if (!profileId) return setError('Target device profile is required')
-    try {
-      const result = await api.generateImage({
-        subject: subject.trim(),
-        target_device_profile_id: profileId,
-        preset_id: presetId || null,
-        orientation: portrait ? 'portrait' : 'landscape',
-        push_immediately: pushImmediately,
-      })
+  // A mutation so the button is disabled while the request is in flight —
+  // a double click used to queue (and pay for) two generations.
+  const generate = useMutation({
+    mutationFn: api.generateImage,
+    onSuccess: (result) => {
       notify(`Queued (task ${result.task_id}) — image will appear shortly.`, 'positive')
       setSubject('')
       setError('')
       queryClient.invalidateQueries({ queryKey: ['generation-tasks'] })
-    } catch (err) {
-      setError(`Generation failed: ${errMessage(err)}`)
-    }
+    },
+    onError: (err) => setError(`Generation failed: ${errMessage(err)}`),
+  })
+
+  const submit = () => {
+    if (!subject.trim()) return setError('Subject is required')
+    if (!profileId) return setError('Target device profile is required')
+    generate.mutate({
+      subject: subject.trim(),
+      target_device_profile_id: profileId,
+      preset_id: presetId || null,
+      orientation: portrait ? 'portrait' : 'landscape',
+      push_immediately: pushImmediately,
+    })
   }
 
   return (
@@ -216,8 +224,8 @@ function GenerateSection() {
       <span className="ink-form-error">{error}</span>
 
       <div className="ink-action-bar">
-        <Button primary icon="auto_awesome" onClick={submit}>
-          Generate
+        <Button primary icon="auto_awesome" onClick={submit} disabled={generate.isPending}>
+          {generate.isPending ? 'Queuing…' : 'Generate'}
         </Button>
       </div>
     </section>
@@ -228,7 +236,7 @@ function GenerateSection() {
 
 function PromptLibrarySection() {
   const { data: blocks } = useQuery({ queryKey: ['prompt-blocks'], queryFn: api.listPromptBlocks })
-  const { data: presets } = useQuery({ queryKey: ['prompt-presets'], queryFn: api.listPromptPresets })
+  const { data: presets } = useQuery(promptPresetsQuery)
 
   return (
     <section className="col w-full gap-4">

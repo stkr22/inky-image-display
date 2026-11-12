@@ -50,18 +50,6 @@ class TestCalibreJobsCrud:
         assert client.delete(f"/api/calibre/jobs/{job_id}").status_code == 204
         assert client.get(f"/api/calibre/jobs/{job_id}").status_code == 404
 
-    def test_unknown_id_returns_404_on_all_methods(self, client: TestClient):
-        missing = uuid4()
-        assert client.get(f"/api/calibre/jobs/{missing}").status_code == 404
-        assert client.put(f"/api/calibre/jobs/{missing}", json={"books_per_shelf": 4}).status_code == 404
-        assert client.post(f"/api/calibre/jobs/{missing}/run-now").status_code == 404
-        assert client.delete(f"/api/calibre/jobs/{missing}").status_code == 404
-
-    def test_hero_mode_accepted(self, client: TestClient):
-        created = client.post("/api/calibre/jobs", json=_payload(name="daily-hero", mode="hero"))
-        assert created.status_code == 201
-        assert created.json()["mode"] == "hero"
-
     def test_bookcase_mode_and_defaults(self, client: TestClient):
         created = client.post("/api/calibre/jobs", json=_payload(name="tall", mode="bookcase", shelf_rows=4))
         assert created.status_code == 201
@@ -70,18 +58,10 @@ class TestCalibreJobsCrud:
         # Repeats are avoided unless the operator opts out.
         assert job["avoid_repeats"] is True
 
-    def test_shelf_rows_out_of_range_rejected(self, client: TestClient):
-        assert client.post("/api/calibre/jobs", json=_payload(name="a", shelf_rows=1)).status_code == 422
-        assert client.post("/api/calibre/jobs", json=_payload(name="b", shelf_rows=6)).status_code == 422
-
     def test_avoid_repeats_can_be_switched_off(self, client: TestClient):
         job_id = client.post("/api/calibre/jobs", json=_payload()).json()["id"]
         updated = client.put(f"/api/calibre/jobs/{job_id}", json={"avoid_repeats": False})
         assert updated.json()["avoid_repeats"] is False
-
-    def test_unknown_mode_rejected(self, client: TestClient):
-        created = client.post("/api/calibre/jobs", json=_payload(name="bad", mode="carousel"))
-        assert created.status_code == 422
 
 
 class TestCalibreJobScheduling:

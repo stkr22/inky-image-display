@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 import aiomqtt
@@ -24,6 +25,9 @@ from inky_image_display_shared import heap_profile
 from inky_image_display_shared.schemas import DeviceStatus
 from pydantic import SecretStr  # noqa: TC002 — pydantic-settings resolves at runtime
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from inky_image_display_sync.calibre.client import CalibreClient
+from inky_image_display_sync.calibre.config import CalibreConnectionConfig
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -72,6 +76,28 @@ class WorkerConfig(BaseSettings):
     profile_heap_top: int = 10
 
 
+@dataclass
+class CycleState:
+    """Objects that must outlive a single cycle to be worth having.
+
+    The one-shot commands build everything per run, which is fine for them;
+    the worker would otherwise throw away the Calibre catalog cache every
+    cycle and re-page the whole library each time a bookshelf job is due.
+    """
+
+    calibre: CalibreClient | None = None
+
+    def calibre_client(self) -> CalibreClient:
+        """Return the shared Calibre client, building it on first use.
+
+        Built lazily so a Calibre misconfiguration only fails the Calibre
+        family's cycle, inside its error handling, and never at startup.
+        """
+        if self.calibre is None:
+            self.calibre = CalibreClient(CalibreConnectionConfig(), logger)
+        return self.calibre
+
+
 async def run_worker() -> None:
     """Claim-due cycles on wake, on startup, and on the safety poll.
 
@@ -80,6 +106,7 @@ async def run_worker() -> None:
     mid-cycle coalesce into one follow-up cycle via the event.
     """
     config = WorkerConfig()
+    state = CycleState()
     wake = asyncio.Event()
     wake.set()  # Startup cycle: catch anything armed while we were down.
 
@@ -101,7 +128,7 @@ async def run_worker() -> None:
                 async with asyncio.timeout(config.poll_interval_seconds):
                     await wake.wait()
             wake.clear()
-            await _run_cycle(config)
+            await _run_cycle(config, state)
     finally:
         heap_profile.stop()
         if mqtt_task is not None:
@@ -110,8 +137,9 @@ async def run_worker() -> None:
                 await mqtt_task
 
 
-async def _run_cycle(config: WorkerConfig) -> None:
+async def _run_cycle(config: WorkerConfig, state: CycleState | None = None) -> None:
     """One claim-everything pass; a failing family doesn't block the rest."""
+    state = state or CycleState()
     # Imported lazily: main.py imports this module for the CLI command.
     from inky_image_display_sync.main import (  # noqa: PLC0415 — breaks the import cycle with main
         run_calibre_sync,
@@ -124,7 +152,7 @@ async def _run_cycle(config: WorkerConfig) -> None:
         ("immich", config.enable_immich, lambda: run_immich_sync(dry_run=False)),
         ("gemini", config.enable_gemini, lambda: run_gemini_sync(dry_run=False)),
         ("display", config.enable_display, run_display_sync),
-        ("calibre", config.enable_calibre, lambda: run_calibre_sync(dry_run=False)),
+        ("calibre", config.enable_calibre, lambda: run_calibre_sync(dry_run=False, calibre=state.calibre_client())),
     ]
     for name, enabled, run in families:
         if not enabled:

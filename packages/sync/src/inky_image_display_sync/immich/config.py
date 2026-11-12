@@ -38,33 +38,10 @@ class ImmichConnectionConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="IMMICH_")
 
     base_url: HttpUrl = Field(description="Immich server base URL")
-    api_key: str = Field(description="API key for x-api-key header")
+    # SecretStr keeps the key out of reprs and accidental log lines.
+    api_key: SecretStr = Field(description="API key for x-api-key header")
     timeout_seconds: int = Field(default=30, description="HTTP request timeout")
     verify_ssl: bool = Field(default=True, description="Verify SSL certificates")
-
-
-class S3WriterConfig(BaseSettings):
-    """S3-compatible storage configuration with write access for sync operations.
-
-    Separate from S3Config (reader) to use different credentials.
-
-    Environment variables:
-        S3_WRITER_ENDPOINT: S3 server endpoint
-        S3_WRITER_BUCKET: Target bucket (default: inky-images)
-        S3_WRITER_SECURE: Use HTTPS (default: False)
-        S3_WRITER_ACCESS_KEY: Access key with write permissions
-        S3_WRITER_SECRET_KEY: Secret key with write permissions
-        S3_WRITER_REGION: S3 region (default: us-east-1)
-    """
-
-    model_config = SettingsConfigDict(env_prefix="S3_WRITER_")
-
-    endpoint: str = Field(description="S3 server endpoint")
-    bucket: str = Field(default="inky-images", description="Bucket for image storage")
-    secure: bool = Field(default=False, description="Use HTTPS for S3 connection")
-    access_key: str = Field(description="Access key with write permissions")
-    secret_key: str = Field(description="Secret key with write permissions")
-    region: str | None = Field(default=None, description="S3 region (defaults to minio-py built-in)")
 
 
 class ImmichSyncConfig(BaseSettings):

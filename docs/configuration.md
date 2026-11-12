@@ -43,6 +43,7 @@ All variables are prefixed with `API_`.
 | `API_IMMICH_BASE_URL` | No | — | Immich base URL for the read-only browse proxy (`GET /api/immich/albums`, `/people`, `/tags`) that powers name-based sync-job filter pickers in the UI. Leave unset to disable (returns 503; the UI falls back to raw-ID inputs). |
 | `API_IMMICH_API_KEY` | No | — | Immich API key for the browse proxy. Use the same values the sync service is configured with. Immich API keys carry granular permissions: the proxy needs `album.read`, `person.read` and `tag.read` (or "All"). A key missing one of these makes only that picker fail — the UI then shows a lookup error on the affected field and falls back to raw-ID input. |
 | `API_IMMICH_TIMEOUT_SECONDS` | No | `20.0` | Timeout for Immich browse-proxy requests (seconds). |
+| `API_MAX_UPLOAD_BYTES` | No | `52428800` (50 MB) | Largest file accepted by `POST /api/images` (manual upload); bigger uploads get `413`. The upload is held in memory and decoded, so this bounds a single request's footprint. |
 | `API_MEDIA_CACHE_MAX_AGE` | No | `86400` | `Cache-Control: max-age` for `/media` responses (originals and thumbnails). |
 | `API_MEDIA_THUMBNAIL_CONCURRENCY` | No | `4` | How many `/media?w=` thumbnails may be generated at once. Each in-flight generation holds a decoded raster, so this is a memory ceiling, not a latency knob — excess requests queue rather than pile up. Raise the container memory limit before raising this. |
 | `API_NOTIFY_URL` | No | — | Push-notification endpoint for refresh-health transitions (a panel entering/leaving the failed state). The URL is POSTed a plain-text body with a `Title` header — the [ntfy.sh](https://ntfy.sh) convention (e.g. `https://ntfy.sh/my-inky-topic`), which most generic webhook receivers also accept. Best-effort: delivery failures are logged, never block ack processing. Unset disables pushes. |
@@ -185,11 +186,9 @@ the job's `last_run_at`.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `IMMICH_STORAGE_PREFIX` | No | `immich` | S3 path prefix for synced images |
-| `IMMICH_SKIP_EXISTING` | No | `true` | Skip images already in the database |
+| `IMMICH_STORAGE_PREFIX` | No | `immich` | S3 path prefix for synced images (objects are stored as `<prefix>/<asset_id>-<width>x<height>.jpg`) |
+| `IMMICH_SKIP_EXISTING` | No | `true` | Skip assets already synced at the job's target size (the same asset is synced separately for each panel size) |
 | `IMMICH_RETENTION_DAYS` | No | `7` | Days before Immich images expire (`0` = never) |
-| `IMMICH_TARGET_WIDTH` | No | — | Resize images to this width before storing |
-| `IMMICH_TARGET_HEIGHT` | No | — | Resize images to this height before storing |
 
 ### S3 write access
 
@@ -211,6 +210,8 @@ Required only when running the `gemini` subcommand.
 | `GEMINI_API_KEY` | Yes | — | Google Generative AI key. The image model id is read from each preset's `model_name` column (default `gemini-2.5-flash-image`) — change it via the UI or `PUT /api/genai/presets/{id}`. Text generation uses each display job's `text_model_name` (default `gemini-3.6-flash`); note that `gemini-2.5-flash` is refused for API keys issued after its retirement, so migration 0029 repoints jobs still on it. |
 | `GEMINI_SYNC_STORAGE_PREFIX` | No | `gemini` | S3 path prefix for generated images |
 
+All Gemini calls (sync worker and API) pin the Gemini Developer API to `v1beta`, the version image output, response schemas and Search grounding were verified against, and abort any request after 120 s. The pin is set in code (`inky_image_display_shared.ai._client`), so the SDK's `GOOGLE_GENAI_API_VERSION` environment variable has no effect.
+
 ### Calibre bookshelf source
 
 Required only when running the `calibre` subcommand.
@@ -230,7 +231,9 @@ to another host. A 401/403 fails the job with "Calibre OPDS rejected the
 credentials" rather than reading as an empty library. Use a local account with
 download permission only; OIDC users have no password to give. Without these
 variables requests stay anonymous. Basic auth is cleartext, so prefer an
-in-cluster `http://` URL or `https://`.
+in-cluster `http://` URL or `https://`; the worker logs a warning at startup
+when credentials are combined with an `http://` URL (it does not refuse, since
+plain HTTP on a trusted LAN is a common setup).
 
 Only standard Atom/OPDS entry fields are read (title, authors, publisher, language,
 categories, summary, cover link), so any Calibre OPDS server works. Series and

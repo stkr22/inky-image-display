@@ -10,6 +10,7 @@ export function SignIn() {
   const { signIn } = useAuth()
   return (
     <main className="ink-page" style={{ display: 'grid', placeItems: 'center', minHeight: '80vh' }}>
+      <title>Sign in · Inky</title>
       <div className="ink-card" style={{ maxWidth: 360, padding: 32, textAlign: 'center' }}>
         <div className="row justify-center items-center" style={{ gap: 8, marginBottom: 8 }}>
           <span className="ink-nav-brand-dot" />

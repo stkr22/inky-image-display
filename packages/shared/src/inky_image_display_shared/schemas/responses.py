@@ -181,16 +181,16 @@ class SyncJobResponse(BaseModel):
     city: str | None
     state: str | None
     country: str | None
-    taken_after: datetime | None
-    taken_before: datetime | None
+    taken_after: UtcDatetime | None
+    taken_before: UtcDatetime | None
     rating: int | None
     schedule_cron: str | None = None
     schedule_timezone: str = "UTC"
     next_run_at: UtcDatetime | None = None
     last_run_at: UtcDatetime | None = None
     run_requested_at: UtcDatetime | None = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
 
 
 class SyncJobRunResponse(BaseModel):
@@ -229,8 +229,8 @@ class PromptBlockResponse(BaseModel):
     name: str
     text: str
     is_default: bool = False
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
 
 
 class PromptPresetResponse(BaseModel):
@@ -247,8 +247,8 @@ class PromptPresetResponse(BaseModel):
     background_block_id: UUID
     model_name: str = "gemini-3.1-flash-image"
     is_default: bool = False
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
 
 
 # --- Gemini sync jobs ---
@@ -273,8 +273,8 @@ class GeminiSyncJobResponse(BaseModel):
     next_run_at: UtcDatetime | None = None
     last_run_at: UtcDatetime | None = None
     run_requested_at: UtcDatetime | None = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
 
 
 class CalibreSyncJobResponse(BaseModel):
@@ -303,8 +303,8 @@ class CalibreSyncJobResponse(BaseModel):
     next_run_at: UtcDatetime | None = None
     last_run_at: UtcDatetime | None = None
     run_requested_at: UtcDatetime | None = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
 
 
 class ImageBookResponse(BaseModel):

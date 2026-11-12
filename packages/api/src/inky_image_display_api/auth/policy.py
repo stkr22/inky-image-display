@@ -28,10 +28,14 @@ _GUEST_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("GET", re.compile(r"^/api/images/stats$")),
     ("GET", re.compile(r"^/api/images/[0-9a-fA-F-]+$")),
     ("GET", re.compile(r"^/api/images/[0-9a-fA-F-]+/eink-preview$")),
+    # ImageDetail lists the books an image shows; read-only metadata.
+    ("GET", re.compile(r"^/api/images/[0-9a-fA-F-]+/books$")),
     ("POST", re.compile(r"^/api/genai/generate$")),
     ("GET", re.compile(r"^/api/genai/tasks$")),
     ("GET", re.compile(r"^/api/genai/blocks$")),
     ("GET", re.compile(r"^/api/genai/presets$")),
+    # GenAI picks the target panel size from the profile list.
+    ("GET", re.compile(r"^/api/device-profiles$")),
     ("GET", re.compile(r"^/api/devices$")),
     ("POST", re.compile(r"^/api/devices/[^/]+/(display|next)$")),
 )
@@ -75,6 +79,12 @@ def check_access(principal: Principal, method: str, path: str, auth: AuthRuntime
     guest sessions still restrict whoever holds a guest cookie.
     """
     if _is_public(path) or principal.kind == "admin":
+        return None
+    # Token scoping only narrows access relative to the 401 an anonymous
+    # caller gets with auth on. In trusted-LAN mode anonymous callers have
+    # full access, so scoping a valid token would make it worth less than
+    # sending none at all.
+    if principal.kind in ("sync", "device") and not auth.enabled:
         return None
     if principal.kind == "sync":
         is_api = path == "/api" or path.startswith("/api/")

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from inky_image_display_shared.models import Image
 from inky_image_display_shared.schemas.responses import ImageGroupResponse, ImageResponse
 from sqlmodel import col, select
-
-from inky_image_display_api.services.queue_service import group_images
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -21,9 +20,30 @@ if TYPE_CHECKING:
 
 async def group_response(session: AsyncSession, group: ImageGroup) -> ImageGroupResponse:
     """Serialize a group with its member images in frame order."""
-    response = ImageGroupResponse.model_validate(group)
-    response.images = [ImageResponse.model_validate(image) for image in await group_images(session, group.id)]
-    return response
+    return (await group_responses(session, [group]))[0]
+
+
+async def group_responses(session: AsyncSession, groups: list[ImageGroup]) -> list[ImageGroupResponse]:
+    """Serialize many groups with one image query instead of one per group.
+
+    Ordering matches :func:`queue_service.group_images` (frame order).
+    """
+    by_group: dict[UUID, list[Image]] = defaultdict(list)
+    if groups:
+        result = await session.exec(
+            select(Image)
+            .where(col(Image.group_id).in_([g.id for g in groups]))
+            .order_by(col(Image.queue_position), col(Image.created_at))
+        )
+        for image in result.all():
+            if image.group_id is not None:
+                by_group[image.group_id].append(image)
+    responses = []
+    for group in groups:
+        response = ImageGroupResponse.model_validate(group)
+        response.images = [ImageResponse.model_validate(image) for image in by_group[group.id]]
+        responses.append(response)
+    return responses
 
 
 async def set_group_members(session: AsyncSession, group_id: UUID, members: list[GroupMemberAssignment]) -> None:

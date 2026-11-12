@@ -14,14 +14,13 @@ against them. The transcription prompt insists on copying misspellings verbatim
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 
-from google import genai
 from google.genai import types
 from pydantic import BaseModel, ValidationError
 
+from inky_image_display_shared.ai._client import open_async_client
 from inky_image_display_shared.ai.gemini import GeminiGenerationError
 
 # Vision-capable text model: transcription is far cheaper than generation and
@@ -83,25 +82,6 @@ def spines_match(expected: list[tuple[str, str]], actual: list[SpineReading]) ->
     )
 
 
-def _transcribe_sync(api_key: str, image: bytes, model: str) -> list[SpineReading]:
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model=model,
-        contents=[types.Part.from_bytes(data=image, mime_type="image/jpeg"), _TRANSCRIBE_PROMPT],
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=ShelfReading,
-        ),
-    )
-    parsed = response.parsed
-    if isinstance(parsed, ShelfReading):
-        return parsed.spines
-    try:
-        return ShelfReading.model_validate(json.loads(response.text or "")).spines
-    except (json.JSONDecodeError, ValidationError) as exc:
-        raise GeminiGenerationError(f"Gemini returned an unreadable transcription: {exc}") from exc
-
-
 async def transcribe_spines(
     api_key: str,
     image: bytes,
@@ -109,4 +89,19 @@ async def transcribe_spines(
     model: str = DEFAULT_VISION_MODEL,
 ) -> list[SpineReading]:
     """Transcribe every book spine visible in ``image``, top shelf first, left to right."""
-    return await asyncio.to_thread(_transcribe_sync, api_key, image, model)
+    async with open_async_client(api_key) as client:
+        response = await client.models.generate_content(
+            model=model,
+            contents=[types.Part.from_bytes(data=image, mime_type="image/jpeg"), _TRANSCRIBE_PROMPT],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=ShelfReading,
+            ),
+        )
+    parsed = response.parsed
+    if isinstance(parsed, ShelfReading):
+        return parsed.spines
+    try:
+        return ShelfReading.model_validate(json.loads(response.text or "")).spines
+    except (json.JSONDecodeError, ValidationError) as exc:
+        raise GeminiGenerationError(f"Gemini returned an unreadable transcription: {exc}") from exc

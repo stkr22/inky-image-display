@@ -1,7 +1,7 @@
-"""Due/claim scheduling shared by the Immich and Gemini sync-job routes.
+"""Due/claim scheduling shared by every worker job type.
 
-Both job tables carry the same scheduling columns, so the due predicate and
-the claim hand-out live here once instead of per twin. ``begin_runs`` is
+Immich, Gemini, Calibre and display jobs carry the same scheduling columns,
+so the due predicate and the claim hand-out live here once. ``begin_runs`` is
 shared with the display-job claim too: every claim records a ``running``
 run row so the UI can tell "in progress" from "waiting for a worker".
 """
@@ -11,10 +11,10 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from cronsim import CronSim, CronSimError
-from inky_image_display_shared.models import CalibreSyncJob, GeminiSyncJob, ImmichSyncJob, SyncJobRun
+from inky_image_display_shared.models import CalibreSyncJob, DisplayJob, GeminiSyncJob, ImmichSyncJob, SyncJobRun
 from inky_image_display_shared.time import as_utc_aware
 from sqlalchemy import ColumnElement
-from sqlmodel import col, or_, select
+from sqlmodel import and_, col, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 # A running row older than this whose worker never reported is abandoned
@@ -50,7 +50,7 @@ def next_cron_run(expr: str, timezone: str, now: datetime) -> datetime:
     return next(CronSim(expr, local_now)).astimezone(UTC).replace(tzinfo=None)
 
 
-def due_clause[JobT: (ImmichSyncJob, GeminiSyncJob, CalibreSyncJob)](
+def due_clause[JobT: (ImmichSyncJob, GeminiSyncJob, CalibreSyncJob, DisplayJob)](
     model: type[JobT], now: datetime
 ) -> ColumnElement[bool]:
     """Jobs the worker should run: Run-now flagged, or on-schedule and due.
@@ -64,32 +64,32 @@ def due_clause[JobT: (ImmichSyncJob, GeminiSyncJob, CalibreSyncJob)](
     )
 
 
-async def claim_due_jobs[JobT: (ImmichSyncJob, GeminiSyncJob, CalibreSyncJob)](
-    session: AsyncSession, model: type[JobT], now: datetime
+async def claim_due_jobs[JobT: (ImmichSyncJob, GeminiSyncJob, CalibreSyncJob, DisplayJob)](
+    session: AsyncSession, model: type[JobT], now: datetime, *, extra: ColumnElement[bool] | None = None
 ) -> list[JobT]:
-    """Hand out due jobs and advance their schedules.
+    """Hand out due jobs and advance their schedules; does not commit.
 
     Advancing ``next_run_at`` at hand-out doubles as a lease: an overlapping
     worker invocation won't be given the same interval-due job twice. Only
     schedule-due jobs advance — a Run-now claim leaves the fixed cadence
     untouched. The Run-now flag is deliberately NOT cleared here — the
     posted run report clears it, so a worker that dies mid-run leaves the
-    request armed.
+    request armed. ``extra`` narrows the due set (display jobs also need a
+    target grid). The caller commits via :func:`begin_runs`, so the lease
+    and the ``running`` rows land atomically.
     """
-    result = await session.exec(select(model).where(due_clause(model, now)))
+    clause = due_clause(model, now) if extra is None else and_(due_clause(model, now), extra)
+    result = await session.exec(select(model).where(clause))
     jobs = list(result.all())
     for job in jobs:
         if job.schedule_cron is not None and job.next_run_at is not None and job.next_run_at <= now:
             job.next_run_at = next_cron_run(job.schedule_cron, job.schedule_timezone, now)
             session.add(job)
-    await session.commit()
-    for job in jobs:
-        await session.refresh(job)
     return jobs
 
 
 async def begin_runs(session: AsyncSession, job_type: str, jobs: list[tuple[UUID, str]], now: datetime) -> None:
-    """Record a ``running`` run row per claimed job; commits.
+    """Record a ``running`` run row per claimed job; commits (claim included).
 
     ``jobs`` is ``(job_id, job_name)`` pairs. Stale running rows from a
     worker that died before reporting are closed as errors here — claim

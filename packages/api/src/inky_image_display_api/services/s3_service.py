@@ -6,12 +6,31 @@ from collections.abc import Iterator
 from typing import Any
 
 from minio import Minio
+from minio.error import S3Error
 
 from inky_image_display_api.config import Settings
 
 logger = logging.getLogger(__name__)
 
 _STREAM_CHUNK = 32 * 1024
+_MISSING_CODES = frozenset({"NoSuchKey", "NoSuchObject"})
+
+
+def stat_or_none(s3: "S3Service", key: str) -> Any:
+    """Stat ``key``; ``None`` only when the object genuinely does not exist.
+
+    Every derived-object cache (thumbnails, previews, panel crops) asks
+    "is it there?" before rendering. Treating *any* error as a miss turns
+    an S3 outage into a burst of full-size decodes that can't even be
+    uploaded, so only a not-found answer counts as a miss and anything
+    else propagates as ``S3Error``.
+    """
+    try:
+        return s3.stat_object(key)
+    except S3Error as exc:
+        if exc.code in _MISSING_CODES:
+            return None
+        raise
 
 
 class S3Service:
@@ -32,12 +51,6 @@ class S3Service:
             region=settings.s3_region or "",
         )
         self._bucket = settings.s3_bucket
-
-    def ensure_bucket_exists(self) -> None:
-        """Create the configured bucket if it does not already exist."""
-        if not self._client.bucket_exists(self._bucket):
-            self._client.make_bucket(self._bucket)
-            logger.info("Created S3 bucket: %s", self._bucket)
 
     def upload_image(self, storage_path: str, data: bytes, content_type: str = "image/jpeg") -> None:
         """Upload image bytes to S3.
@@ -66,6 +79,14 @@ class S3Service:
         """
         self._client.remove_object(self._bucket, storage_path)
         logger.info("Deleted %s from bucket %s", storage_path, self._bucket)
+
+    def list_keys(self, prefix: str) -> list[str]:
+        """Return every object key under ``prefix`` (recursive)."""
+        return [
+            obj.object_name
+            for obj in self._client.list_objects(self._bucket, prefix=prefix, recursive=True)
+            if obj.object_name is not None
+        ]
 
     def stat_object(self, storage_path: str) -> Any:
         """Stat an object (raises ``minio.error.S3Error`` when missing).

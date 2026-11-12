@@ -1,4 +1,4 @@
-"""Device display state model for Inky displays."""
+"""Device model for Inky displays."""
 
 from uuid import UUID, uuid4
 
@@ -8,36 +8,8 @@ from sqlmodel import Field, SQLModel
 from inky_image_display_shared.time import utcnow
 
 
-class DeviceDisplayState(SQLModel, table=True):
-    """Legacy display state for a device.
-
-    Used by the skill package. New services should use the ``Device`` model
-    instead.
-
-    Attributes:
-        global_device_id: Primary key (UUID, previously FK to global_devices)
-        is_online: Whether device is currently reachable
-        current_image_id: Currently displayed image (nullable)
-        displayed_since: When current image was displayed
-        scheduled_next_at: When to show next image
-
-    """
-
-    __tablename__ = "device_display_states"
-
-    global_device_id: UUID = Field(primary_key=True)
-    is_online: bool = Field(default=True, description="Whether device is currently reachable")
-    current_image_id: UUID | None = Field(default=None, foreign_key="images.id")
-    displayed_since: NaiveDatetime | None = Field(default=None, description="When current image was displayed")
-    scheduled_next_at: NaiveDatetime = Field(default_factory=utcnow, description="Scheduled time for next image")
-
-
 class Device(SQLModel, table=True):
     """API-managed device record.
-
-    Replaces the combination of GlobalDevice + DeviceDisplayState for the API
-    service. The skill continues to use DeviceDisplayState + GlobalDevice
-    unchanged.
 
     Attributes:
         id: Unique identifier
