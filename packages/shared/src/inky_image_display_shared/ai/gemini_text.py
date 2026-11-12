@@ -14,14 +14,17 @@ Produces one structured positive story per call. Two modes:
 
 from __future__ import annotations
 
-import asyncio
 import json
+from typing import TYPE_CHECKING
 
-from google import genai
 from google.genai import types
 from pydantic import BaseModel, ValidationError
 
+from inky_image_display_shared.ai._client import open_async_client
 from inky_image_display_shared.ai.gemini import GeminiGenerationError
+
+if TYPE_CHECKING:
+    from google.genai.client import AsyncClient
 
 # gemini-2.5-flash is refused for API keys issued after its retirement
 # ("no longer available to new users"), so a fresh deployment could not
@@ -120,8 +123,8 @@ def _parse_story(response: types.GenerateContentResponse) -> MotdStory:
     return story
 
 
-def _call_structured(client: genai.Client, model: str, prompt: str) -> MotdStory:
-    response = client.models.generate_content(
+async def _call_structured(client: AsyncClient, model: str, prompt: str) -> MotdStory:
+    response = await client.models.generate_content(
         model=model,
         contents=prompt,
         config=types.GenerateContentConfig(
@@ -132,20 +135,22 @@ def _call_structured(client: genai.Client, model: str, prompt: str) -> MotdStory
     return _parse_story(response)
 
 
-def _generate_sync(api_key: str, theme_prompt: str, *, grounded: bool, model: str) -> tuple[MotdStory, str | None]:
-    client = genai.Client(api_key=api_key)
-
+async def _generate(
+    client: AsyncClient, theme_prompt: str, *, grounded: bool, model: str
+) -> tuple[MotdStory, str | None]:
     if not grounded:
-        story = _call_structured(client, model, theme_prompt + "\n\n" + _KNOWLEDGE_SUFFIX + _STRUCTURE_INSTRUCTIONS)
+        story = await _call_structured(
+            client, model, theme_prompt + "\n\n" + _KNOWLEDGE_SUFFIX + _STRUCTURE_INSTRUCTIONS
+        )
         return story, None
 
-    research = client.models.generate_content(
+    research = await client.models.generate_content(
         model=model,
         contents=theme_prompt + "\n\n" + _GROUNDED_RESEARCH_SUFFIX,
         config=types.GenerateContentConfig(tools=[types.Tool(google_search=types.GoogleSearch())]),
     )
     source_url, source_title = _first_grounding_source(research)
-    story = _call_structured(
+    story = await _call_structured(
         client,
         model,
         "Extract the required fields from this story summary.\n\n"
@@ -169,6 +174,8 @@ async def generate_motd_story(
 
     Returns the story plus the grounded source URL (``None`` in knowledge
     mode or when grounding surfaced no web source — callers then skip the
-    QR part). The SDK is synchronous, so the call runs in a worker thread.
+    QR part). Both grounded steps share one async client so the connection
+    is reused and closed once, and cancellation aborts whichever is in flight.
     """
-    return await asyncio.to_thread(_generate_sync, api_key, theme_prompt, grounded=grounded, model=model)
+    async with open_async_client(api_key) as client:
+        return await _generate(client, theme_prompt, grounded=grounded, model=model)

@@ -14,6 +14,9 @@ since sqlmodel 0.0.47 a bare ``datetime`` maps to a timezone-aware
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Annotated
+
+from pydantic import AfterValidator
 
 
 def utcnow() -> datetime:
@@ -35,3 +38,19 @@ def as_utc_aware(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def to_naive_utc(value: datetime) -> datetime:
+    """Shift an aware datetime to UTC and drop tzinfo; leave naive ones alone.
+
+    Inbound request fields go through this so an offset sent by a client is
+    honoured rather than silently discarded when SQLite stores the value.
+    Naive inputs are assumed to already be UTC, matching stored columns.
+    """
+    if value.tzinfo is not None:
+        return value.astimezone(UTC).replace(tzinfo=None)
+    return value
+
+
+# Request-body type for datetimes that end up in naive-UTC columns.
+NaiveUtc = Annotated[datetime, AfterValidator(to_naive_utc)]

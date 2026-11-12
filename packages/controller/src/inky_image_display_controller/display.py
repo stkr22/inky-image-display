@@ -236,7 +236,7 @@ class InkyDisplay:
 
         """
         async with self._lock:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             try:
                 await loop.run_in_executor(
                     self._executor,

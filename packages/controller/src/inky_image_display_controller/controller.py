@@ -25,6 +25,16 @@ from inky_image_display_controller.s3_client import S3ImageClient
 logger = logging.getLogger(__name__)
 
 
+class _ShutdownRequested(Exception):  # noqa: N818 — a signal, not an error condition
+    """Raised by the shutdown monitor to tear down the task group.
+
+    A TaskGroup only cancels its siblings when a child *fails*; a child that
+    raises ``CancelledError`` merely counts as cancelled, which left the MQTT
+    loop running forever after SIGTERM. A real exception makes the group
+    cancel ``MQTTClient.run()`` so cleanup and the offline publish happen.
+    """
+
+
 class DisplayController:
     """Main controller orchestrating display operations.
 
@@ -84,7 +94,7 @@ class DisplayController:
                 except TimeoutError:
                     pass
                 backoff = min(backoff * 2, max_backoff)
-        raise asyncio.CancelledError("Shutdown requested during registration")
+        raise _ShutdownRequested
 
     async def run(self) -> None:
         """Register, then start MQTT and shutdown monitoring tasks."""
@@ -98,10 +108,11 @@ class DisplayController:
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(self._mqtt.run(), name="mqtt")
                 tg.create_task(self._shutdown_monitor(), name="shutdown_monitor")
+        except* _ShutdownRequested:
+            logger.info("Shutdown requested; stopping tasks")
         except* Exception as eg:
             for exc in eg.exceptions:
-                if not isinstance(exc, asyncio.CancelledError):
-                    logger.exception("Task failed: %s", exc)
+                logger.error("Task failed: %s", exc, exc_info=exc)
         finally:
             await self._cleanup()
 
@@ -112,7 +123,12 @@ class DisplayController:
 
     async def _shutdown_monitor(self) -> None:
         await self._shutdown_event.wait()
-        raise asyncio.CancelledError("Shutdown requested")
+        # Announce ``offline`` while the connection is still up: once the
+        # TaskGroup cancels MQTTClient.run() the aiomqtt context has exited and
+        # a publish from _cleanup() would go nowhere.
+        if self._mqtt is not None:
+            await self._mqtt.disconnect()
+        raise _ShutdownRequested
 
     async def _cleanup(self) -> None:
         logger.info("Cleaning up resources...")
@@ -135,7 +151,7 @@ class DisplayController:
         self._s3.configure(
             endpoint=response.s3_endpoint,
             access_key=response.s3_access_key,
-            secret_key=response.s3_secret_key,
+            secret_key=response.s3_secret_key.get_secret_value(),
             bucket=response.s3_bucket,
             secure=response.s3_secure,
             region=response.s3_region,
@@ -146,7 +162,7 @@ class DisplayController:
             host=response.mqtt_host,
             port=response.mqtt_port,
             username=response.mqtt_username,
-            password=response.mqtt_password,
+            password=response.mqtt_password.get_secret_value() if response.mqtt_password is not None else None,
             tls=response.mqtt_tls,
             transport=response.mqtt_transport,
             websocket_path=response.mqtt_websocket_path,

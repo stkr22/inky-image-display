@@ -2,7 +2,7 @@
 
 from .app_setting import AppSetting
 from .calibre_sync_job import MODE_BOOKCASE, MODE_HERO, MODE_SHELF, CalibreSyncJob
-from .device import Device, DeviceDisplayState
+from .device import Device
 from .device_profile import DeviceProfile
 from .display_job import DisplayJob, DisplayJobSlot
 from .gemini_sync_job import GeminiSyncJob
@@ -23,7 +23,6 @@ __all__ = [
     "AppSetting",
     "CalibreSyncJob",
     "Device",
-    "DeviceDisplayState",
     "DeviceProfile",
     "DisplayJob",
     "DisplayJobSlot",
