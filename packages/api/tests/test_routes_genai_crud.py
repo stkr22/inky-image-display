@@ -1,4 +1,4 @@
-"""Tests for the genai CRUD routes (prompt blocks + Gemini sync jobs).
+"""Tests for the genai CRUD routes (prompt blocks, Gemini and Calibre sync jobs).
 
 One lifecycle round-trip per resource instead of a test per endpoint: the
 sync service and UI drive these exact sequences, and a round-trip catches
@@ -8,6 +8,7 @@ fields, the JSON ``subjects`` column not surviving persistence).
 
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -36,12 +37,6 @@ class TestPromptBlocksCrud:
 
         assert client.delete(f"/api/genai/blocks/{block_id}").status_code == 204
         assert client.get(f"/api/genai/blocks/{block_id}").status_code == 404
-
-    def test_unknown_id_returns_404_on_all_methods(self, client: TestClient):
-        missing = uuid4()
-        assert client.get(f"/api/genai/blocks/{missing}").status_code == 404
-        assert client.put(f"/api/genai/blocks/{missing}", json={"text": "x"}).status_code == 404
-        assert client.delete(f"/api/genai/blocks/{missing}").status_code == 404
 
 
 class TestGeminiSyncJobsCrud:
@@ -85,8 +80,23 @@ class TestGeminiSyncJobsCrud:
         assert client.delete(f"/api/genai/jobs/{job_id}").status_code == 204
         assert client.get(f"/api/genai/jobs/{job_id}").status_code == 404
 
-    def test_unknown_id_returns_404_on_all_methods(self, client: TestClient):
-        missing = uuid4()
-        assert client.get(f"/api/genai/jobs/{missing}").status_code == 404
-        assert client.put(f"/api/genai/jobs/{missing}", json={"name": "x"}).status_code == 404
-        assert client.delete(f"/api/genai/jobs/{missing}").status_code == 404
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("GET", "/api/genai/blocks/{id}", None),
+        ("PUT", "/api/genai/blocks/{id}", {"text": "x"}),
+        ("DELETE", "/api/genai/blocks/{id}", None),
+        ("GET", "/api/genai/jobs/{id}", None),
+        ("PUT", "/api/genai/jobs/{id}", {"name": "x"}),
+        ("DELETE", "/api/genai/jobs/{id}", None),
+        ("GET", "/api/calibre/jobs/{id}", None),
+        ("PUT", "/api/calibre/jobs/{id}", {"books_per_shelf": 4}),
+        ("POST", "/api/calibre/jobs/{id}/run-now", None),
+        ("DELETE", "/api/calibre/jobs/{id}", None),
+    ],
+)
+def test_unknown_id_is_404(client: TestClient, method: str, path: str, body: dict | None):
+    """A stale id from an open UI tab must be a 404, not a 500 or a silent no-op."""
+    response = client.request(method, path.format(id=uuid4()), json=body)
+    assert response.status_code == 404

@@ -1,12 +1,16 @@
 """Tests for the API-side MQTT service."""
 
+import asyncio
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import aiomqtt
 import pytest
+from inky_image_display_api import mqtt as mqtt_module
 from inky_image_display_api.config import Settings
-from inky_image_display_api.mqtt import MQTTService, upsert_device
+from inky_image_display_api.mqtt import MQTTService, _record_ack
+from inky_image_display_api.services.device_registry import upsert_device
 from inky_image_display_shared.models import Device
 from inky_image_display_shared.schemas import (
     DeviceAcknowledge,
@@ -17,25 +21,6 @@ from inky_image_display_shared.schemas import (
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
-
-
-def _make_settings() -> Settings:
-    """Build a fully-populated Settings instance with MQTT defaults."""
-    return Settings(
-        database_path="/tmp/unused.db",
-        s3_endpoint="s3.test.local:9000",
-        s3_writer_access_key="w",
-        s3_writer_secret_key="w",
-        s3_reader_access_key="r",
-        s3_reader_secret_key="r",
-        mqtt_host="broker.test",
-        device_mqtt_host="broker.public.test",
-    )
-
-
-@pytest.fixture
-def settings() -> Settings:
-    return _make_settings()
 
 
 @pytest.fixture
@@ -161,6 +146,27 @@ async def test_failed_ack_persists_error_then_success_clears_it(
 
 
 @pytest.mark.asyncio
+async def test_refresh_health_transitions_notify_once(
+    settings: Settings, async_engine: AsyncEngine, seeded_device: Device, monkeypatch: pytest.MonkeyPatch
+):
+    """Only entering or leaving the failed state pushes; repeats stay quiet."""
+    sent: list[str] = []
+    monkeypatch.setattr(
+        "inky_image_display_api.mqtt.notify_in_background",
+        lambda _settings, title, _message: sent.append(title),
+    )
+    settings.notify_url = "https://ntfy.example/inky"
+
+    device_id = seeded_device.device_id
+    for success, error in [(False, "stuck"), (False, "stuck"), (True, None), (True, None)]:
+        await _record_ack(async_engine, device_id, success=success, error=error, settings=settings)
+
+    assert len(sent) == 2
+    assert "refresh failed" in sent[0]
+    assert "recovered" in sent[1]
+
+
+@pytest.mark.asyncio
 async def test_reregistration_clears_stale_refresh_error(
     async_engine: AsyncEngine, seeded_device: Device, seed_profile
 ):
@@ -217,3 +223,77 @@ async def test_send_command_unknown_device_raises(settings: Settings, async_engi
     service._client = MagicMock()
     with pytest.raises(KeyError):
         await service.send_command("dev-unknown", DisplayCommand(action="clear"))
+
+
+class _FlakyBroker:
+    """Stands in for ``aiomqtt.Client``: scripted outcome per connection attempt.
+
+    Each script entry is either an exception raised on connect, or
+    ``"connect-then-drop"`` — connect, then lose the connection while
+    reading messages.
+    """
+
+    def __init__(self, script: list[BaseException | str]) -> None:
+        self.script = script
+        self.subscriptions: list[str] = []
+
+    def __call__(self, **_kwargs: object) -> "_FlakyBroker":
+        return self
+
+    async def __aenter__(self) -> "_FlakyBroker":
+        step = self.script.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
+
+    async def subscribe(self, topic: str, qos: int) -> None:
+        self.subscriptions.append(topic)
+
+    @property
+    def messages(self) -> "_FlakyBroker":
+        return self
+
+    def __aiter__(self) -> "_FlakyBroker":
+        return self
+
+    async def __anext__(self) -> MagicMock:
+        raise aiomqtt.MqttError("connection dropped")
+
+
+@pytest.mark.asyncio
+async def test_run_reconnects_with_backoff_and_resubscribes(
+    settings: Settings, async_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+):
+    broker = _FlakyBroker(
+        [
+            aiomqtt.MqttError("refused"),
+            aiomqtt.MqttError("refused"),
+            "connect-then-drop",
+            asyncio.CancelledError(),  # ends the otherwise endless loop
+        ]
+    )
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(mqtt_module.aiomqtt, "Client", broker)
+    monkeypatch.setattr(mqtt_module.asyncio, "sleep", fake_sleep)
+    service = MQTTService(settings, async_engine)
+    service._online.add("stale-device")
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.run()
+
+    # Doubling while the broker refuses; reset after a successful connect.
+    assert sleeps == [5, 10, 5]
+    assert broker.subscriptions == [
+        "inky/devices/+/status",
+        "inky/devices/+/ack",
+        mqtt_module.WORKER_STATUS_TOPIC,
+    ]
+    # A lost connection forgets presence; retained statuses re-announce it.
+    assert not service.is_connected("stale-device")

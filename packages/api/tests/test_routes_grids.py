@@ -1,6 +1,6 @@
 """Tests for grid REST endpoints (tile-layout based)."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from io import BytesIO
 from unittest.mock import MagicMock
 from uuid import uuid4
@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from inky_image_display_shared.models import Device, DeviceProfile, Image
+from inky_image_display_shared.time import utcnow
 from PIL import Image as PILImage
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -29,7 +30,7 @@ async def second_device(async_engine, seed_profile: DeviceProfile) -> Device:
         device_profile_id=seed_profile.id,
         display_orientation="landscape",
         is_online=True,
-        last_seen=datetime.now(),
+        last_seen=utcnow(),
     )
     async with AsyncSession(async_engine) as session:
         session.add(device)
@@ -229,3 +230,85 @@ class TestImageRouterTargetGrid:
         resp = client.get("/api/images", params={"target_grid_id": grid_id})
         assert resp.status_code == 200
         assert len(resp.json()) == 1
+
+
+class TestGridDisplayPaths:
+    """Manual push and deletion share the queue's push/release code."""
+
+    async def test_manual_display_refuses_panel_held_by_another_grid(
+        self, client: TestClient, async_engine, seed_device: Device, seed_image: Image, mock_s3_service: MagicMock
+    ) -> None:
+        grid_id = client.post("/api/grids", json={"name": "g", "rows": [[str(seed_device.id)]]}).json()["id"]
+        async with AsyncSession(async_engine) as session:
+            device = await session.get(Device, seed_device.id)
+            assert device is not None
+            device.claimed_by_grid_id = uuid4()
+            session.add(device)
+            await session.commit()
+
+        response = client.post(f"/api/grids/{grid_id}/display", json={"image_id": str(seed_image.id)})
+
+        assert response.status_code == 409
+        mock_s3_service.get_object_bytes.assert_not_called()
+
+    async def test_delete_grid_makes_panels_due_like_a_release(  # noqa: PLR0913, PLR0917
+        self,
+        client: TestClient,
+        async_engine,
+        seed_device: Device,
+        seed_image: Image,
+        mock_s3_service: MagicMock,
+        mock_mqtt: MagicMock,
+    ) -> None:
+        mock_s3_service.get_object_bytes.return_value = _make_jpeg_bytes()
+        mock_mqtt.is_connected.return_value = True
+        grid_id = client.post("/api/grids", json={"name": "g", "rows": [[str(seed_device.id)]]}).json()["id"]
+        assert client.post(f"/api/grids/{grid_id}/display", json={"image_id": str(seed_image.id)}).status_code == 200
+
+        assert client.delete(f"/api/grids/{grid_id}").status_code == 204
+
+        async with AsyncSession(async_engine) as session:
+            device = await session.get(Device, seed_device.id)
+        assert device is not None
+        assert device.claimed_by_grid_id is None
+        assert device.scheduled_next_at is not None
+        assert device.scheduled_next_at <= datetime.now(UTC).replace(tzinfo=None)
+
+    def test_cached_crops_skip_decode_and_upload(
+        self,
+        client: TestClient,
+        seed_device: Device,
+        second_device: Device,
+        seed_image: Image,
+        mock_s3_service: MagicMock,
+    ) -> None:
+        mock_s3_service.get_object_bytes.return_value = _make_jpeg_bytes()
+        rows = [[str(seed_device.id), str(second_device.id)]]
+        grid_id = client.post("/api/grids", json={"name": "g", "rows": rows}).json()["id"]
+
+        # First display: both crops missing -> one source download, two uploads.
+        assert client.post(f"/api/grids/{grid_id}/display", json={"image_id": str(seed_image.id)}).status_code == 200
+        assert mock_s3_service.get_object_bytes.call_count == 1
+        assert mock_s3_service.upload_image.call_count == 2
+
+        # Replay: crops exist -> no download, no re-render.
+        mock_s3_service.stat_object.side_effect = None
+        mock_s3_service.stat_object.return_value = MagicMock()
+        assert client.post(f"/api/grids/{grid_id}/display", json={"image_id": str(seed_image.id)}).status_code == 200
+        assert mock_s3_service.get_object_bytes.call_count == 1
+        assert mock_s3_service.upload_image.call_count == 2
+
+    def test_layout_change_produces_a_new_crop_key(
+        self, client: TestClient, seed_device: Device, second_device: Device, seed_image: Image, mock_s3_service
+    ) -> None:
+        mock_s3_service.get_object_bytes.return_value = _make_jpeg_bytes()
+        grid_id = client.post("/api/grids", json={"name": "g", "rows": [[str(seed_device.id)]]}).json()["id"]
+        client.post(f"/api/grids/{grid_id}/display", json={"image_id": str(seed_image.id)})
+        first = mock_s3_service.upload_image.call_args.args[0]
+
+        client.put(f"/api/grids/{grid_id}", json={"rows": [[str(seed_device.id), str(second_device.id)]]})
+        client.post(f"/api/grids/{grid_id}/display", json={"image_id": str(seed_image.id)})
+        keys = {call.args[0] for call in mock_s3_service.upload_image.call_args_list}
+
+        assert first in keys
+        assert len({k for k in keys if f"/{seed_device.id}-" in k}) == 2

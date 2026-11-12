@@ -180,6 +180,10 @@ class TestAccessPolicy:
             ("POST", "/api/genai/generate", True),
             ("GET", "/api/genai/tasks", True),
             ("GET", "/api/devices", True),
+            ("GET", "/api/device-profiles", True),
+            ("PUT", "/api/device-profiles/0a1b2c3d-0000-0000-0000-000000000000", False),
+            ("GET", "/api/images/0a1b2c3d-0000-0000-0000-000000000000/books", True),
+            ("POST", "/api/images/0a1b2c3d-0000-0000-0000-000000000000/books", False),
             ("POST", "/api/devices/kitchen/display", True),
             ("POST", "/api/devices/kitchen/next", True),
             ("DELETE", "/api/images/0a1b2c3d-0000-0000-0000-000000000000", False),
@@ -337,3 +341,65 @@ class TestMachineTokens:
             resp = client.post("/api/devices/register", json=registration.model_dump(mode="json"), headers=headers)
             assert resp.status_code == 200
             assert client.get("/api/images", headers=headers).status_code == 403
+
+
+class TestTokensWhileAuthDisabled:
+    """docs/auth.md: with auth disabled, x-api-key is ignored (trusted-LAN mode)."""
+
+    @pytest.fixture
+    def lan(self) -> AuthRuntime:
+        return make_runtime(enabled=False, sync_token="sync-key", device_token="device-key")
+
+    @pytest.mark.parametrize("key", [None, "wrong", "sync-key", "device-key"])
+    def test_registration_always_allowed(self, lan: AuthRuntime, key: str | None):
+        principal = resolve_principal({}, key, lan)
+        assert check_access(principal, "POST", "/api/devices/register", lan) is None
+
+    def test_unknown_key_falls_back_to_open_access(self, lan: AuthRuntime):
+        principal = resolve_principal({}, "wrong", lan)
+        assert check_access(principal, "GET", "/api/images", lan) is None
+        assert check_access(principal, "GET", "/media/x.jpg", lan) is None
+
+    @pytest.mark.parametrize(("key", "path"), [("device-key", "/api/images"), ("sync-key", "/media/x.jpg")])
+    def test_valid_token_is_not_narrower_than_anonymous(self, lan: AuthRuntime, key: str, path: str):
+        principal = resolve_principal({}, key, lan)
+        assert check_access(principal, "GET", path, lan) is None
+
+
+class TestSessionLifetimes:
+    def _redeem(self, test_app: FastAPI) -> TestClient:
+        guest = TestClient(test_app)
+        token = create_guest_invite(SECRET)
+        assert guest.get(f"/auth/guest?token={token}", follow_redirects=False).status_code == 303
+        return guest
+
+    def test_invite_is_multi_use_until_it_expires(self, test_app: FastAPI):
+        test_app.state.auth = make_runtime()
+        token = create_guest_invite(SECRET)
+        for _ in range(2):
+            guest = TestClient(test_app)
+            assert guest.get(f"/auth/guest?token={token}", follow_redirects=False).status_code == 303
+            assert guest.get("/api/auth/me").json()["role"] == "guest"
+
+        # Same token once its age passes the invite TTL.
+        test_app.state.auth = make_runtime(guest_invite_ttl_seconds=-1)
+        late = TestClient(test_app)
+        assert late.get(f"/auth/guest?token={token}", follow_redirects=False).status_code == 403
+        assert SESSION_COOKIE not in late.cookies
+
+    def test_guest_session_carries_the_guest_ttl(self, test_app: FastAPI):
+        test_app.state.auth = make_runtime(guest_session_ttl_seconds=1800, admin_session_ttl_seconds=3600)
+        before = time.time()
+        guest = self._redeem(test_app)
+        session = load_session(SECRET, guest.cookies[SESSION_COOKIE], 3600)
+        assert before + 1800 <= session["exp"] <= time.time() + 1800
+
+    def test_guest_expires_before_admin_with_same_cookie_age(self, test_app: FastAPI, client: TestClient):
+        # A guest TTL that has already run out, while the admin TTL (the
+        # cookie signature bound) still has an hour left.
+        test_app.state.auth = make_runtime(guest_session_ttl_seconds=-5, admin_session_ttl_seconds=3600)
+        guest = self._redeem(test_app)
+        assert guest.get("/api/images").status_code == 401
+
+        client.cookies.set(SESSION_COOKIE, admin_cookie())
+        assert client.get("/api/images").status_code == 200

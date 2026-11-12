@@ -132,10 +132,12 @@ async def delete_grid(request: Request, grid_id: UUID) -> None:
     """Delete a grid; cascades to ``grid_devices`` and releases claims."""
     async with AsyncSession(request.app.state.engine) as session:
         grid = await grid_service.get_grid_or_404(session, grid_id)
-        # Clear claims and decouple images from the grid pool before deletion.
-        # `release_grid` commits and expires `grid`; refresh so later attribute
-        # access and `session.delete(grid)` don't trigger an async lazy-load.
-        await grid_service.release_grid(session, grid)
+        # Hand the panels back exactly like an operator release (due for
+        # solo rotation now) and decouple images from the grid pool before
+        # deletion. `release_queue` commits and expires `grid`; refresh so
+        # later attribute access and `session.delete(grid)` don't trigger an
+        # async lazy-load.
+        await queue_service.release_queue(session, grid)
         await session.refresh(grid)
         targeted = await session.exec(select(Image).where(col(Image.target_grid_id) == grid_id))
         for image in targeted.all():
@@ -165,15 +167,7 @@ async def display_image_on_grid(
         if image.target_grid_id is not None and image.target_grid_id != grid.id:
             raise HTTPException(status_code=400, detail="Image targets a different grid")
 
-        grid.current_group_id = None
-        crop_paths = await grid_service.render_and_upload(session, grid, image, request.app.state.s3_service)
-        await grid_service.claim_devices_and_push(
-            session,
-            grid,
-            image,
-            crop_paths,
-            request.app.state.mqtt,
-        )
+        await queue_service.show_image(request.app, session, grid, image)
         return {"status": "ok"}
 
 

@@ -8,8 +8,10 @@ an MQTT display command so the picture shows up without polling.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
@@ -24,7 +26,7 @@ from inky_image_display_api.services.image_service import (
     build_display_command,
     update_display_state,
 )
-from inky_image_display_api.services.refresh_health import is_dispatch_blocked
+from inky_image_display_api.services.refresh_health import auto_dispatch_clause
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -93,146 +95,181 @@ async def _resolve_profile(session: AsyncSession, profile_id: UUID | None) -> De
     return result.first()
 
 
-async def generate_and_publish(  # noqa: PLR0912, PLR0913, PLR0915
+def _process_and_upload(
+    s3_service: S3Service,
+    raw_bytes: bytes,
+    width: int,
+    height: int,
+    storage_path: str,
+) -> bool:
+    """Resize the generated image to the panel and upload it; False if undecodable.
+
+    Pillow and the MinIO SDK both block, so this runs in a worker thread as
+    one unit — and under the process gate, because a full-size decode is
+    the memory-heavy step the gate exists to bound.
+    """
+    jpeg_bytes = ImageProcessor.process_for_display(raw_bytes, width, height, upscale=True)
+    if jpeg_bytes is None:
+        return False
+    s3_service.upload_image(storage_path, jpeg_bytes, "image/jpeg")
+    return True
+
+
+async def generate_and_publish(  # noqa: PLR0913
     engine: AsyncEngine,
     settings: Settings,
     s3_service: S3Service,
     mqtt: MQTTService,
     *,
+    gemini_api_key: str,
+    tasks: GenerationTaskStore,
+    process_gate: asyncio.Semaphore,
     task_id: UUID,
     subject: str,
     target_device_profile_id: UUID | None,
     preset_id: UUID | None,
     orientation: str,
     push_immediately: bool,
-    tasks: GenerationTaskStore | None = None,
 ) -> None:
     """Run a single on-demand generation request end to end.
 
     Errors are logged but not re-raised — this runs as a fire-and-forget
     background task and crashing here would not surface to the client.
-    Outcomes are additionally recorded in the ``tasks`` registry so
-    ``GET /api/genai/tasks`` can report them.
+    Outcomes are recorded in ``tasks`` so ``GET /api/genai/tasks`` can
+    report them. The key is passed in (not read from settings) because the
+    route has already refused the request when none is configured.
     """
-    if settings.gemini_api_key is None:
-        logger.error("Generation task %s aborted: GEMINI_API_KEY is not configured", task_id)
-        if tasks is not None:
-            await tasks.mark_failed(task_id, "GEMINI_API_KEY is not configured")
-        return
-
-    is_portrait = orientation == "portrait"
-    if tasks is not None:
-        await tasks.mark_running(task_id)
-
     try:
-        async with AsyncSession(engine) as session:
-            profile = await _resolve_profile(session, target_device_profile_id)
-            if profile is None:
-                logger.error("Generation task %s: no device profile available", task_id)
-                if tasks is not None:
-                    await tasks.mark_failed(task_id, "No device profile available")
-                return
-            profile_id = profile.id
-
-            preset, blocks = await resolve_preset(session, preset_id)
-            rendered = build_rendered_prompt(preset, blocks, is_portrait)
-            model_name = preset.model_name
-
-            # Profile.width/height are panel-native (landscape); swap for portrait
-            # so the generated image matches the requested orientation.
-            if is_portrait:
-                target_width, target_height = profile.height, profile.width
-            else:
-                target_width, target_height = profile.width, profile.height
-
-        logger.info("Generation task %s: calling Gemini model=%s for subject=%r", task_id, model_name, subject)
-        raw_bytes = await generate_image_bytes(
-            settings.gemini_api_key.get_secret_value(),
-            rendered,
-            subject,
-            model=model_name,
+        await tasks.mark_running(task_id)
+        outcome = await _generate(
+            engine,
+            settings,
+            s3_service,
+            mqtt,
+            gemini_api_key=gemini_api_key,
+            process_gate=process_gate,
+            task_id=task_id,
+            subject=subject,
+            target_device_profile_id=target_device_profile_id,
+            preset_id=preset_id,
+            orientation=orientation,
+            push_immediately=push_immediately,
         )
-        # Resize to the panel's exact dimensions using the same pipeline that
-        # backs POST /api/images/process. Direct call here is fine — we're
-        # already inside the API process.
-        jpeg_bytes = ImageProcessor.process_for_display(raw_bytes, target_width, target_height, upscale=True)
-        if jpeg_bytes is None:
-            logger.error("Generation task %s: ImageProcessor returned None for generated image", task_id)
-            if tasks is not None:
-                await tasks.mark_failed(task_id, "Image processing failed")
-            return
-
-        image_uuid = uuid4()
-        storage_path = f"gemini/{image_uuid}.jpg"
-        s3_service.upload_image(storage_path, jpeg_bytes, "image/jpeg")
-
-        async with AsyncSession(engine) as session:
-            image = Image(
-                id=image_uuid,
-                source_name="gemini",
-                source_id=str(task_id),
-                storage_path=storage_path,
-                title=subject,
-                description=f"AI-generated: {subject}",
-                tags="gemini,ai",
-                original_width=target_width,
-                original_height=target_height,
-                is_portrait=is_portrait,
-                expires_at=None,
-            )
-            session.add(image)
-            await session.commit()
-            await session.refresh(image)
-            image_pk = image.id
-
-            if not push_immediately:
-                logger.info("Generation task %s: image %s registered, push skipped", task_id, image_pk)
-                if tasks is not None:
-                    await tasks.mark_completed(task_id, image_id=image_pk, detail="Image registered; push skipped")
-                return
-
-            # Dispatch to a random *online* device that matches profile + orientation.
-            cand_result = await session.exec(
-                select(Device).where(
-                    col(Device.device_profile_id) == profile_id,
-                    col(Device.display_orientation) == orientation,
-                )
-            )
-            # Skip devices with a *recent* failed refresh — a stuck panel can't
-            # show the generated image, and its controller is already retrying
-            # the image it got stuck on. The gate expires (see refresh_health)
-            # so a failure flag orphaned by a controller restart doesn't
-            # exclude the device forever; never-acked devices stay eligible.
-            now = utcnow()
-            backoff = settings.refresh_error_backoff_seconds
-            candidates = [
-                d
-                for d in cand_result.all()
-                if mqtt.is_connected(d.device_id) and not is_dispatch_blocked(d, now, backoff)
-            ]
-            if not candidates:
-                logger.info(
-                    "Generation task %s: image %s persisted but no online device matches profile %s + %s",
-                    task_id,
-                    image_pk,
-                    profile_id,
-                    orientation,
-                )
-                if tasks is not None:
-                    await tasks.mark_completed(
-                        task_id, image_id=image_pk, detail="Image registered; no matching online device to push to"
-                    )
-                return
-
-            device = random.choice(candidates)
-            device_mqtt_id = device.device_id
-            command = build_display_command(image)
-            await mqtt.send_command(device_mqtt_id, command)
-            await update_display_state(session, device, image, settings)
-            logger.info("Generation task %s: pushed image %s to %s", task_id, image_pk, device_mqtt_id)
-            if tasks is not None:
-                await tasks.mark_completed(task_id, image_id=image_pk, detail=f"Pushed to {device_mqtt_id}")
     except Exception as exc:
         logger.exception("Generation task %s failed", task_id)
-        if tasks is not None:
-            await tasks.mark_failed(task_id, str(exc) or exc.__class__.__name__)
+        await tasks.mark_failed(task_id, str(exc) or exc.__class__.__name__)
+        return
+    if isinstance(outcome, _Failed):
+        logger.error("Generation task %s: %s", task_id, outcome.reason)
+        await tasks.mark_failed(task_id, outcome.reason)
+    else:
+        await tasks.mark_completed(task_id, image_id=outcome.image_id, detail=outcome.detail)
+
+
+@dataclass(frozen=True)
+class _Failed:
+    reason: str
+
+
+@dataclass(frozen=True)
+class _Completed:
+    image_id: UUID
+    detail: str
+
+
+async def _generate(  # noqa: PLR0913
+    engine: AsyncEngine,
+    settings: Settings,
+    s3_service: S3Service,
+    mqtt: MQTTService,
+    *,
+    gemini_api_key: str,
+    process_gate: asyncio.Semaphore,
+    task_id: UUID,
+    subject: str,
+    target_device_profile_id: UUID | None,
+    preset_id: UUID | None,
+    orientation: str,
+    push_immediately: bool,
+) -> _Failed | _Completed:
+    is_portrait = orientation == "portrait"
+    async with AsyncSession(engine) as session:
+        profile = await _resolve_profile(session, target_device_profile_id)
+        if profile is None:
+            return _Failed("No device profile available")
+        profile_id = profile.id
+
+        preset, blocks = await resolve_preset(session, preset_id)
+        rendered = build_rendered_prompt(preset, blocks, is_portrait)
+        model_name = preset.model_name
+
+        # Profile.width/height are panel-native (landscape); swap for portrait
+        # so the generated image matches the requested orientation.
+        if is_portrait:
+            target_width, target_height = profile.height, profile.width
+        else:
+            target_width, target_height = profile.width, profile.height
+
+    logger.info("Generation task %s: calling Gemini model=%s for subject=%r", task_id, model_name, subject)
+    raw_bytes = await generate_image_bytes(gemini_api_key, rendered, subject, model=model_name)
+
+    image_uuid = uuid4()
+    storage_path = f"gemini/{image_uuid}.jpg"
+    async with process_gate:
+        stored = await asyncio.to_thread(
+            _process_and_upload, s3_service, raw_bytes, target_width, target_height, storage_path
+        )
+    if not stored:
+        return _Failed("Image processing failed")
+
+    async with AsyncSession(engine) as session:
+        image = Image(
+            id=image_uuid,
+            source_name="gemini",
+            source_id=str(task_id),
+            storage_path=storage_path,
+            title=subject,
+            description=f"AI-generated: {subject}",
+            tags="gemini,ai",
+            original_width=target_width,
+            original_height=target_height,
+            is_portrait=is_portrait,
+            expires_at=None,
+        )
+        session.add(image)
+        await session.commit()
+        await session.refresh(image)
+        image_pk = image.id
+
+        if not push_immediately:
+            logger.info("Generation task %s: image %s registered, push skipped", task_id, image_pk)
+            return _Completed(image_pk, "Image registered; push skipped")
+
+        # Same eligibility as solo rotation: a pinned or grid-claimed panel
+        # must not be overwritten, and a recently stuck one can't show it.
+        now = utcnow()
+        cand_result = await session.exec(
+            select(Device).where(
+                col(Device.device_profile_id) == profile_id,
+                col(Device.display_orientation) == orientation,
+                auto_dispatch_clause(now, settings.refresh_error_backoff_seconds),
+            )
+        )
+        candidates = [d for d in cand_result.all() if mqtt.is_connected(d.device_id)]
+        if not candidates:
+            logger.info(
+                "Generation task %s: image %s persisted but no online device matches profile %s + %s",
+                task_id,
+                image_pk,
+                profile_id,
+                orientation,
+            )
+            return _Completed(image_pk, "Image registered; no matching online device to push to")
+
+        device = random.choice(candidates)
+        device_mqtt_id = device.device_id
+        command = build_display_command(image)
+        await mqtt.send_command(device_mqtt_id, command)
+        await update_display_state(session, device, image, settings)
+        logger.info("Generation task %s: pushed image %s to %s", task_id, image_pk, device_mqtt_id)
+        return _Completed(image_pk, f"Pushed to {device_mqtt_id}")

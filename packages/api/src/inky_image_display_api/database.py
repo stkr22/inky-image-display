@@ -1,25 +1,11 @@
-"""Async database engine, table initialisation, and Alembic migrations."""
+"""Async database engine and schema migrations."""
 
 import logging
 from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from inky_image_display_shared.models import (
-    Device,
-    DisplayJob,
-    DisplayJobSlot,
-    GeminiSyncJob,
-    GenerationTask,
-    Grid,
-    GridDevice,
-    Image,
-    ImageGroup,
-    ImmichSyncJob,
-    PromptBlock,
-    PromptPreset,
-    SyncJobRun,
-)
+from sqlalchemy import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from inky_image_display_api.config import Settings
@@ -46,55 +32,28 @@ def create_engine(settings: Settings) -> AsyncEngine:
 async def create_tables(engine: AsyncEngine) -> None:
     """Ensure the application schema is present and up-to-date.
 
-    For fresh databases: creates all tables from the current SQLModel
-    metadata, so startup works without an existing schema.
-
-    For any database: runs Alembic migrations to ``head`` so column-level
-    changes (which ``create_all`` cannot apply to existing tables) are
-    picked up. Migrations are written to be idempotent on fresh DBs.
+    Everything — including the create_all bootstrap of base tables that no
+    migration creates — happens inside the Alembic run (see
+    ``_migrations/env.py``), so the app's startup and a bare
+    ``alembic upgrade head`` build the exact same schema.
 
     Args:
         engine: Async database engine.
 
     """
-    async with engine.begin() as conn:
-        tables = [
-            Image.__table__,  # ty: ignore[missing-attribute]
-            Grid.__table__,  # ty: ignore[missing-attribute]
-            PromptBlock.__table__,  # ty: ignore[missing-attribute]
-            PromptPreset.__table__,  # ty: ignore[missing-attribute]
-            Device.__table__,  # ty: ignore[missing-attribute]
-            GridDevice.__table__,  # ty: ignore[missing-attribute]
-            ImmichSyncJob.__table__,  # ty: ignore[missing-attribute]
-            GeminiSyncJob.__table__,  # ty: ignore[missing-attribute]
-            # display_jobs precedes image_groups: the group FK references
-            # it, and referenced tables must exist at DDL time.
-            DisplayJob.__table__,  # ty: ignore[missing-attribute]
-            DisplayJobSlot.__table__,  # ty: ignore[missing-attribute]
-            ImageGroup.__table__,  # ty: ignore[missing-attribute]
-            SyncJobRun.__table__,  # ty: ignore[missing-attribute]
-            GenerationTask.__table__,  # ty: ignore[missing-attribute]
-        ]
-        for table in tables:
-            await conn.run_sync(table.create, checkfirst=True)
-
-    await _run_alembic_upgrade(engine)
-
-
-async def _run_alembic_upgrade(engine: AsyncEngine) -> None:
-    """Apply Alembic migrations up to ``head`` using the engine's URL."""
     if not _MIGRATIONS_DIR.exists():
         logger.warning("Migrations dir not found at %s — skipping migrations", _MIGRATIONS_DIR)
         return
 
     cfg = Config()
     cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
-    # Alembic runs synchronously; rewrite the async URL to its sync equivalent.
-    sync_url = str(engine.url).replace("+aiosqlite", "").replace("+asyncpg", "")
-    cfg.set_main_option("sqlalchemy.url", sync_url)
 
-    def _upgrade() -> None:
+    def _upgrade(connection: Connection) -> None:
+        # Handing Alembic our connection (instead of a URL) keeps it on the
+        # app's engine and transaction; env.py must not open its own engine,
+        # or an ambient API_DATABASE_PATH could migrate a different file.
+        cfg.attributes["connection"] = connection
         command.upgrade(cfg, "head")
 
     async with engine.begin() as conn:
-        await conn.run_sync(lambda _sync_conn: _upgrade())
+        await conn.run_sync(_upgrade)

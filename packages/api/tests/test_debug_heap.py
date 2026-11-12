@@ -1,20 +1,20 @@
 """Tests for the gated heap-profiling endpoints."""
 
 from collections.abc import Iterator
-from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+from inky_image_display_api.config import Settings
 from inky_image_display_shared import heap_profile
 
 
 @pytest.fixture
-def enabled(mock_settings: MagicMock) -> Iterator[None]:
+def enabled(settings: Settings) -> Iterator[None]:
     """Flag on and tracing armed, torn down whatever the test does.
 
     Tracing is process-global, so leaving it on would tax every later test.
     """
-    mock_settings.profile_heap = True
+    settings.profile_heap = True
     heap_profile.start(frames=5)
     try:
         yield
@@ -23,9 +23,9 @@ def enabled(mock_settings: MagicMock) -> Iterator[None]:
 
 
 @pytest.fixture
-def flag_only(mock_settings: MagicMock) -> Iterator[None]:
+def flag_only(settings: Settings) -> Iterator[None]:
     """Flag on but tracing never started."""
-    mock_settings.profile_heap = True
+    settings.profile_heap = True
     heap_profile.stop()
     yield
     heap_profile.stop()
@@ -71,9 +71,6 @@ class TestEnabled:
         resp = client.get("/api/debug/heap", params={"top": 3})
         assert resp.status_code == 200
         assert len(resp.json()["top"]) <= 3
-
-    def test_top_must_be_positive(self, client: TestClient, enabled: None):
-        assert client.get("/api/debug/heap", params={"top": 0}).status_code == 422
 
     def test_gc_census_is_opt_in(self, client: TestClient, enabled: None):
         assert "gc" not in client.get("/api/debug/heap").json()

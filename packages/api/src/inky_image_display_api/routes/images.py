@@ -1,16 +1,19 @@
 """REST endpoints for image management."""
 
-import json
+import asyncio
 import logging
 from datetime import datetime
 from io import BytesIO
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Form, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi.encoders import jsonable_encoder
 from inky_image_display_shared.models import Image, ImageBook
 from PIL import Image as PILImage
-from sqlmodel import col, delete, func, or_, select
+from PIL import UnidentifiedImageError
+from pydantic import ValidationError
+from sqlmodel import col, func, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.schemas import (
@@ -21,6 +24,7 @@ from inky_image_display_api.schemas import (
     ImageStatsResponse,
     ImageUpdate,
 )
+from inky_image_display_api.services.image_deletion import delete_image as delete_image_and_derived
 
 router = APIRouter(prefix="/api/images", tags=["images"])
 logger = logging.getLogger(__name__)
@@ -43,8 +47,8 @@ async def list_images(  # noqa: PLR0912, PLR0917 — one branch/arg per optional
     in_group: bool | None = None,
     excluded: bool | None = None,
     search: str | None = None,
-    limit: int = 100,
-    offset: int = 0,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[Image]:
     """List images with optional filters.
 
@@ -60,7 +64,7 @@ async def list_images(  # noqa: PLR0912, PLR0917 — one branch/arg per optional
         sync_job_name: Filter by the sync job that created the image.
         is_portrait: Filter by orientation.
         source_url: Filter by exact source URL.
-        source_url_prefix: Filter by source URL prefix (LIKE match).
+        source_url_prefix: Filter by literal source URL prefix.
         expires_before: Return only images expiring before this datetime.
         target_grid_id: Filter to images assigned to a specific grid's pool.
         solo_only: Return only images without a ``target_grid_id`` (the solo pool).
@@ -85,7 +89,10 @@ async def list_images(  # noqa: PLR0912, PLR0917 — one branch/arg per optional
         if source_url is not None:
             conditions.append(Image.source_url == source_url)
         if source_url_prefix is not None:
-            conditions.append(col(Image.source_url).like(f"{source_url_prefix}%"))
+            # Escape LIKE wildcards: a URL containing "_" or "%" must match
+            # literally, not as a pattern over other sources' URLs.
+            escaped = source_url_prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            conditions.append(col(Image.source_url).like(f"{escaped}%", escape="\\"))
         if expires_before is not None:
             conditions.append(col(Image.expires_at).isnot(None))
             conditions.append(col(Image.expires_at) < expires_before)
@@ -112,7 +119,12 @@ async def list_images(  # noqa: PLR0912, PLR0917 — one branch/arg per optional
         total_result = await session.exec(select(func.count()).select_from(Image).where(*conditions))
         response.headers["X-Total-Count"] = str(total_result.one())
 
-        query = select(Image).where(*conditions).offset(offset).limit(limit)
+        # Offset pagination needs a total order, or pages can repeat/skip
+        # rows; oldest-first matches the insertion order clients got before,
+        # and the id tiebreaker settles equal timestamps.
+        query = (
+            select(Image).where(*conditions).order_by(col(Image.created_at), col(Image.id)).offset(offset).limit(limit)
+        )
         result = await session.exec(query)
         return list(result.all())
 
@@ -204,22 +216,44 @@ async def upload_image(
     The ``metadata`` form field should contain a JSON string matching
     the ``ImageCreate`` schema.
     """
-    parsed = ImageCreate.model_validate(json.loads(metadata))
-    data = await file.read()
+    try:
+        parsed = ImageCreate.model_validate_json(metadata)
+    except ValidationError as exc:
+        # Raised for malformed JSON too; a client error, never a 500.
+        raise HTTPException(status_code=422, detail=jsonable_encoder(exc.errors(include_url=False))) from exc
+
+    max_bytes = request.app.state.settings.max_upload_bytes
+    if file.size is not None and file.size > max_bytes:
+        raise HTTPException(status_code=413, detail=f"Upload exceeds {max_bytes} bytes")
+    # Read one byte past the cap so a body without a declared size is still
+    # bounded in memory.
+    data = await file.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=413, detail=f"Upload exceeds {max_bytes} bytes")
 
     image_uuid = uuid4()
     storage_path = f"{parsed.source_name}/{image_uuid}.jpg"
-
-    # Determine dimensions from the uploaded image; the orientation flag
-    # reflects the intended target device and may be overridden by metadata.
-    pil_image = PILImage.open(BytesIO(data))
-    width, height = pil_image.size
-    is_portrait = parsed.is_portrait if parsed.is_portrait is not None else height > width
-
-    # Upload to S3
-    s3 = request.app.state.s3_service
     content_type = file.content_type or "image/jpeg"
-    s3.upload_image(storage_path, data, content_type)
+    s3 = request.app.state.s3_service
+
+    def _inspect_and_store() -> tuple[int, int] | None:
+        # Header-only open: size is known without decoding the raster.
+        try:
+            with PILImage.open(BytesIO(data)) as pil_image:
+                size = pil_image.size
+        except (UnidentifiedImageError, OSError):
+            return None
+        s3.upload_image(storage_path, data, content_type)
+        return size
+
+    # Pillow and the MinIO SDK block; keep both off the event loop.
+    size = await asyncio.to_thread(_inspect_and_store)
+    if size is None:
+        raise HTTPException(status_code=422, detail="File is not a decodable image")
+    width, height = size
+    # The orientation flag reflects the intended target device and may be
+    # overridden by metadata.
+    is_portrait = parsed.is_portrait if parsed.is_portrait is not None else height > width
 
     # Persist metadata
     image = Image(
@@ -278,14 +312,5 @@ async def delete_image(request: Request, image_id: UUID) -> None:
         if image is None:
             raise HTTPException(status_code=404, detail="Image not found")
 
-        # Remove from S3
-        try:
-            request.app.state.s3_service.delete_object(image.storage_path)
-        except Exception:
-            logger.warning("Failed to delete S3 object %s", image.storage_path)
-
-        # SQLite does not enforce ON DELETE CASCADE unless asked to, so the
-        # book links are removed explicitly rather than left as orphans.
-        await session.exec(delete(ImageBook).where(col(ImageBook.image_id) == image_id))
-        await session.delete(image)
+        await delete_image_and_derived(session, request.app.state.s3_service, image)
         await session.commit()

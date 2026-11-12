@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from inky_image_display_api.services.eink_preview import render_eink_preview
+from minio.error import S3Error
 from PIL import Image as PILImage
 
 
@@ -71,3 +72,26 @@ class TestEinkPreviewEndpoints:
 
     def test_unknown_image_is_404(self, client: TestClient) -> None:
         assert client.get(f"/api/images/{uuid4()}/eink-preview").status_code == 404
+
+    def test_storage_outage_is_502_not_a_rerender(
+        self, client: TestClient, seed_image, mock_s3_service: MagicMock
+    ) -> None:
+        """Only a real not-found is a cache miss; an outage must not trigger a full decode."""
+        mock_s3_service.stat_object = MagicMock(
+            side_effect=S3Error(
+                code="InternalError", message="down", resource="/", request_id="r", host_id="h", response=MagicMock()
+            )
+        )
+        response = client.get(f"/api/images/{seed_image.id}/eink-preview")
+        assert response.status_code == 502
+        mock_s3_service.get_object_bytes.assert_not_called()
+
+    def test_cached_preview_is_served_without_rendering(
+        self, client: TestClient, seed_image, mock_s3_service: MagicMock
+    ) -> None:
+        mock_s3_service.stat_object = MagicMock(return_value=MagicMock())
+        mock_s3_service.get_object_bytes = MagicMock(return_value=b"cached-png")
+        response = client.get(f"/api/images/{seed_image.id}/eink-preview")
+        assert response.content == b"cached-png"
+        mock_s3_service.get_object_bytes.assert_called_once_with(f"thumbs/eink/s05/{seed_image.storage_path}.png")
+        mock_s3_service.upload_image.assert_not_called()

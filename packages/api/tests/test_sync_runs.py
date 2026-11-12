@@ -1,10 +1,13 @@
 """Tests for sync run reporting and the run-now flow."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
-from inky_image_display_shared.models import ImmichSyncJob, SyncJobRun
+from inky_image_display_api.services.rotation import wake_due_job_workers
+from inky_image_display_shared.models import CalibreSyncJob, ImmichSyncJob, SyncJobRun
 from inky_image_display_shared.time import utcnow
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import col, select
@@ -79,6 +82,66 @@ class TestSyncRunReporting:
         async with AsyncSession(async_engine) as session:
             result = await session.exec(select(SyncJobRun).where(SyncJobRun.job_id == job.id))
             assert len(result.all()) == 20
+
+    async def test_calibre_report_clears_run_request_on_calibre_job(self, client: TestClient, async_engine) -> None:
+        """Regression: calibre reports used to be looked up in the Immich table."""
+        job = CalibreSyncJob(
+            name="shelves",
+            target_device_profile_id=uuid4(),
+            prompt_preset_id=uuid4(),
+            run_requested_at=utcnow() - timedelta(minutes=1),
+        )
+        async with AsyncSession(async_engine) as session:
+            session.add(job)
+            await session.commit()
+            await session.refresh(job)
+
+        response = client.post("/api/sync-runs", json={**_report(job.id), "job_type": "calibre"})
+        assert response.status_code == 201
+
+        async with AsyncSession(async_engine) as session:
+            refreshed = (await session.exec(select(CalibreSyncJob).where(col(CalibreSyncJob.id) == job.id))).one()
+            assert refreshed.run_requested_at is None
+            assert refreshed.last_run_at is not None
+
+    async def test_aware_timestamps_are_stored_shifted_to_utc(
+        self, client: TestClient, async_engine, seed_profile
+    ) -> None:
+        job = await _seed_job(async_engine, seed_profile)
+        body = {
+            **_report(job.id),
+            "started_at": "2026-05-17T14:00:00+02:00",
+            "finished_at": "2026-05-17T14:05:00+02:00",
+        }
+        assert client.post("/api/sync-runs", json=body).status_code == 201
+        async with AsyncSession(async_engine) as session:
+            run = (await session.exec(select(SyncJobRun).where(SyncJobRun.job_id == job.id))).one()
+            assert run.started_at == datetime(2026, 5, 17, 12, 0)
+            assert run.finished_at == datetime(2026, 5, 17, 12, 5)
+
+    def test_list_limit_is_capped(self, client: TestClient) -> None:
+        assert client.get("/api/sync-runs", params={"limit": 501}).status_code == 422
+        assert client.get("/api/sync-runs", params={"limit": 0}).status_code == 422
+
+
+class TestJobWakes:
+    async def test_due_calibre_job_wakes_calibre_worker(self, async_engine) -> None:
+        async with AsyncSession(async_engine) as session:
+            session.add(
+                CalibreSyncJob(
+                    name="shelves",
+                    target_device_profile_id=uuid4(),
+                    prompt_preset_id=uuid4(),
+                    run_requested_at=utcnow(),
+                )
+            )
+            await session.commit()
+        mqtt = SimpleNamespace(publish_wake=AsyncMock())
+        app = SimpleNamespace(state=SimpleNamespace(engine=async_engine, mqtt=mqtt))
+
+        await wake_due_job_workers(app)  # ty: ignore[invalid-argument-type]
+
+        mqtt.publish_wake.assert_awaited_once_with("calibre")
 
 
 class TestRunNow:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -12,6 +13,7 @@ from inky_image_display_shared.models import Device, Image, PromptBlock, PromptP
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 if TYPE_CHECKING:
+    from inky_image_display_api.config import Settings
     from sqlalchemy.ext.asyncio import AsyncEngine
 
 
@@ -46,7 +48,7 @@ async def _seed_preset(engine: AsyncEngine) -> PromptPreset:
 @pytest.mark.asyncio
 async def test_generate_and_publish_success_path_does_not_touch_expired_attrs(  # noqa: PLR0913, PLR0917
     async_engine: AsyncEngine,
-    mock_settings: MagicMock,
+    settings: Settings,
     mock_s3_service: MagicMock,
     mock_mqtt: MagicMock,
     seed_device: Device,
@@ -59,8 +61,7 @@ async def test_generate_and_publish_success_path_does_not_touch_expired_attrs(  
     ``image.id`` after ``update_display_state``'s commit.
     """
     await _seed_preset(async_engine)
-    mock_settings.gemini_api_key = MagicMock(get_secret_value=MagicMock(return_value="dummy"))
-    mock_settings.default_display_duration = 3600
+    settings.default_display_duration = 3600
     mock_mqtt.is_connected = MagicMock(return_value=True)
 
     task_id = uuid4()
@@ -77,7 +78,7 @@ async def test_generate_and_publish_success_path_does_not_touch_expired_attrs(  
     ):
         await generate_and_publish(
             async_engine,
-            mock_settings,
+            settings,
             mock_s3_service,
             mock_mqtt,
             task_id=task_id,
@@ -86,6 +87,9 @@ async def test_generate_and_publish_success_path_does_not_touch_expired_attrs(  
             preset_id=None,
             orientation="landscape",
             push_immediately=True,
+            gemini_api_key="dummy",
+            tasks=AsyncMock(),
+            process_gate=asyncio.Semaphore(1),
         )
 
     # The background task swallows exceptions and logs them; assert nothing failed.

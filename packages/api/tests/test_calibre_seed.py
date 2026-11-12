@@ -1,48 +1,28 @@
-"""Migration 0028 must create the bookshelf job table and seed its two presets.
+"""Migrations 0028/0032 must create the bookshelf job table and seed its presets.
 
 The prompts are the outcome of a design pass against real panels, so the point
 of these tests is that a fresh database comes up with working presets rather
 than an operator having to retype them — and that re-running the migration on a
 database where someone has since edited a block leaves the edit alone.
+0032 borrows the shelf preset's shared blocks for the bookcase preset, so it
+must skip the preset rather than half-build it when those are gone.
 """
 
 from __future__ import annotations
 
-import importlib.util
-import os
-import tempfile
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-import inky_image_display_api
-import pytest
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from inky_image_display_api.database import create_tables
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from .conftest import alembic_downgrade, alembic_upgrade, load_migration
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from pathlib import Path
     from types import ModuleType
 
-
-@pytest.fixture
-async def seeded_engine(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[AsyncEngine]:
-    """Fresh SQLite DB with all migrations applied — exercises real seeding."""
-    fd, db_path_str = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    db_path = Path(db_path_str)
-    # env.py honours this and would otherwise migrate the shared dev database.
-    monkeypatch.setenv("API_DATABASE_PATH", db_path_str)
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    await create_tables(engine)
-    try:
-        yield engine
-    finally:
-        await engine.dispose()
-        db_path.unlink(missing_ok=True)
+    from sqlalchemy.ext.asyncio import AsyncEngine
 
 
 async def test_job_table_created(seeded_engine: AsyncEngine) -> None:
@@ -97,7 +77,7 @@ async def test_composition_blocks_carry_the_subject_placeholder(seeded_engine: A
 
 
 async def test_seed_is_idempotent(seeded_engine: AsyncEngine) -> None:
-    migration = _load_migration("0028_add_calibre_sync_jobs")
+    migration = load_migration("0028_add_calibre_sync_jobs")
     async with seeded_engine.begin() as conn:
         await conn.run_sync(lambda sync_conn: _seed_only(sync_conn, migration))
     async with seeded_engine.begin() as conn:
@@ -113,7 +93,7 @@ async def test_seed_is_idempotent(seeded_engine: AsyncEngine) -> None:
 
 async def test_operator_edited_block_is_preserved(seeded_engine: AsyncEngine) -> None:
     """A block edited in the UI must survive a re-run untouched."""
-    migration = _load_migration("0028_add_calibre_sync_jobs")
+    migration = load_migration("0028_add_calibre_sync_jobs")
     custom = "MY HAND-TUNED SHELF — keep this."
     async with seeded_engine.begin() as conn:
         await conn.execute(
@@ -128,18 +108,36 @@ async def test_operator_edited_block_is_preserved(seeded_engine: AsyncEngine) ->
     assert text == custom
 
 
-def _load_migration(stem: str) -> ModuleType:
-    """Import a migration module by file stem so its helpers can run in isolation."""
-    api_root = Path(inky_image_display_api.__file__).parent
-    spec = importlib.util.spec_from_file_location(stem, api_root / "_migrations" / "versions" / f"{stem}.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def _seed_only(sync_conn: sa.engine.Connection, migration: ModuleType) -> None:
     """Re-run just the seeding half; ``upgrade()`` would recreate the table."""
     ctx = MigrationContext.configure(sync_conn)
     with Operations.context(ctx):
         migration._seed_prompts(sync_conn)
+
+
+def test_bookcase_preset_skipped_when_shared_blocks_were_deleted(migrated_db: Path) -> None:
+    """0032 must not build a half-wired preset if an operator removed the shared blocks."""
+    # Step back to before 0032 and remove what it would borrow from the shelf preset.
+    alembic_downgrade(migrated_db, "0031")
+    engine = sa.create_engine(f"sqlite:///{migrated_db}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(sa.text("DELETE FROM prompt_presets WHERE name LIKE 'bookshelf%'"))
+            conn.execute(
+                sa.text(
+                    "DELETE FROM prompt_blocks WHERE name IN "
+                    "('bookshelf_painterly', 'bookshelf_palette', 'bookshelf_legibility', "
+                    "'bookcase_rows', 'bookcase_oak_tall')"
+                )
+            )
+        alembic_upgrade(migrated_db, "0032")
+        with engine.connect() as conn:
+            preset = conn.execute(sa.text("SELECT 1 FROM prompt_presets WHERE name = 'bookshelf_bookcase'")).first()
+            blocks = conn.execute(
+                sa.text("SELECT name FROM prompt_blocks WHERE name IN ('bookcase_rows', 'bookcase_oak_tall')")
+            ).fetchall()
+    finally:
+        engine.dispose()
+    assert preset is None
+    # The mode's own blocks are still seeded, so recreating the shared ones is enough to wire a preset by hand.
+    assert sorted(row[0] for row in blocks) == ["bookcase_oak_tall", "bookcase_rows"]

@@ -1,14 +1,34 @@
 """Tests for the persistent generation task store and its REST endpoint."""
 
-import asyncio
-from uuid import uuid4
+from datetime import datetime, timedelta
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from inky_image_display_api.routes import genai_generate
 from inky_image_display_api.services.generation_tasks import GenerationTaskStore
+from inky_image_display_shared.models import GenerationTask
 from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlmodel import col, update
+
+_EPOCH = datetime(2020, 1, 1)
+
+
+async def _create_at(engine: AsyncEngine, store: GenerationTaskStore, task_id: UUID, subject: str, minute: int) -> None:
+    """Create a task, then pin its ``created_at`` so ordering never depends on clock resolution.
+
+    Backdated to a fixed epoch: each new row is briefly "now" (newest), which
+    is also what it is in the sequence, so the store's pruning sees the
+    same order it would in production.
+    """
+    await store.create(task_id, subject)
+    async with engine.begin() as conn:
+        await conn.execute(
+            update(GenerationTask)
+            .where(col(GenerationTask.task_id) == task_id)
+            .values(created_at=_EPOCH + timedelta(minutes=minute))
+        )
 
 
 class TestGenerationTaskStore:
@@ -17,9 +37,8 @@ class TestGenerationTaskStore:
     async def test_create_and_list_newest_first(self, async_engine: AsyncEngine) -> None:
         store = GenerationTaskStore(async_engine)
         first_id, second_id = uuid4(), uuid4()
-        await store.create(first_id, "a fox")
-        await asyncio.sleep(0.002)  # distinct created_at for deterministic order
-        await store.create(second_id, "a heron")
+        await _create_at(async_engine, store, first_id, "a fox", 0)
+        await _create_at(async_engine, store, second_id, "a heron", 1)
         recent = await store.list_recent()
         assert [t.task_id for t in recent] == [second_id, first_id]
         assert recent[0].status == "queued"
@@ -52,11 +71,10 @@ class TestGenerationTaskStore:
     async def test_pruning_keeps_history_bounded(self, async_engine: AsyncEngine) -> None:
         store = GenerationTaskStore(async_engine, max_tasks=3)
         ids = [uuid4() for _ in range(5)]
-        for task_id in ids:
-            await store.create(task_id, "subject")
-            await asyncio.sleep(0.002)
+        for minute, task_id in enumerate(ids):
+            await _create_at(async_engine, store, task_id, "subject", minute)
         recent = await store.list_recent()
-        assert len(recent) == 3
+        assert [t.task_id for t in recent] == ids[:1:-1]
         # Oldest two were pruned; mutation on them is a silent no-op.
         await store.mark_failed(ids[0], "late failure")
         assert all(t.task_id != ids[0] for t in await store.list_recent())
@@ -104,8 +122,7 @@ class TestGenerationTasksEndpoint:
     async def test_limit_caps_results(self, tasks_app: FastAPI) -> None:
         store: GenerationTaskStore = tasks_app.state.generation_tasks
         for index in range(5):
-            await store.create(uuid4(), f"subject {index}")
-            await asyncio.sleep(0.002)
+            await _create_at(tasks_app.state.engine, store, uuid4(), f"subject {index}", index)
         with TestClient(tasks_app) as client:
             response = client.get("/api/genai/tasks", params={"limit": 2})
         assert len(response.json()) == 2

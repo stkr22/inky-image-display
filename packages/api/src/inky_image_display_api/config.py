@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     # only alongside the container memory limit.
     image_process_concurrency: int = Field(default=2, gt=0)
 
+    # Largest accepted manual upload. The upload is read into memory and
+    # decoded, so an unbounded body is a trivial way to exhaust the
+    # container; 50 MB covers full-resolution camera JPEGs and HEICs.
+    max_upload_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
+
     # Optional push notifications for refresh-health transitions (a panel
     # entering or leaving the failed state). The URL is POSTed a plain-text
     # body with a ``Title`` header — the ntfy.sh convention, which also

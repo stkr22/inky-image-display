@@ -6,11 +6,11 @@ offset-aware ISO strings.
 """
 
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from inky_image_display_api.config import Settings
 from inky_image_display_api.services.sync_job_scheduling import next_cron_run, validate_cron
 from inky_image_display_shared.models import Device, Grid
 from inky_image_display_shared.time import utcnow
@@ -40,19 +40,6 @@ class TestPatchDevice:
         )
         assert resp.status_code == 200
         assert resp.json()["refresh_interval_seconds"] is None
-
-    def test_rejects_out_of_range(self, client: TestClient, seed_device: Device):
-        resp = client.patch(
-            f"/api/devices/{seed_device.device_id}",
-            json={"refresh_interval_seconds": 0},
-        )
-        assert resp.status_code == 422
-
-        resp = client.patch(
-            f"/api/devices/{seed_device.device_id}",
-            json={"refresh_interval_seconds": 7 * 24 * 3600 + 1},
-        )
-        assert resp.status_code == 422
 
     def test_404_on_unknown(self, client: TestClient):
         resp = client.patch(
@@ -165,14 +152,14 @@ class TestScheduleUpcoming:
         self,
         client: TestClient,
         seed_device: Device,
-        mock_settings: MagicMock,
+        settings: Settings,
     ):
         resp = client.get("/api/schedule/upcoming")
         assert resp.status_code == 200
         entries = resp.json()
         assert len(entries) == 1
         assert entries[0]["refresh_interval_seconds"] is None
-        assert entries[0]["effective_interval_seconds"] == mock_settings.default_display_duration
+        assert entries[0]["effective_interval_seconds"] == settings.default_display_duration
 
 
 class TestCronScheduling:

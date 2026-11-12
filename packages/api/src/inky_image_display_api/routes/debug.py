@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/debug", tags=["debug"])
 
 def _require_enabled(request: Request) -> None:
     """404 unless the operator switched profiling on for this process."""
-    if not getattr(request.app.state.settings, "profile_heap", False):
+    if not request.app.state.settings.profile_heap:
         raise HTTPException(status_code=404, detail="Not found")
 
 

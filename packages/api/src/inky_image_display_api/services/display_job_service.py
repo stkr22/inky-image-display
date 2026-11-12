@@ -16,9 +16,10 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from inky_image_display_shared.models import DisplayJob, DisplayJobSlot, Grid, Image, ImageGroup
-from sqlmodel import col, or_, select
+from sqlmodel import and_, col, select
 
-from inky_image_display_api.services.sync_job_scheduling import next_cron_run
+from inky_image_display_api.services import sync_job_scheduling
+from inky_image_display_api.services.image_deletion import delete_images
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -66,39 +67,14 @@ async def list_slots(session: AsyncSession, job_id: UUID) -> list[DisplayJobSlot
     return list(result.all())
 
 
+def has_target_clause() -> ColumnElement[bool]:
+    """Match jobs with a target grid; without one there is nothing to render."""
+    return col(DisplayJob.target_grid_id).is_not(None)
+
+
 def due_clause(now: datetime) -> ColumnElement[bool]:
-    """Jobs the worker should run: Run-now flagged, or on-schedule and due.
-
-    Mirrors the sync jobs' predicate; a job without a target grid has
-    nothing to render for, so it never becomes due.
-    """
-    scheduled = (
-        (col(DisplayJob.is_active).is_(True))
-        & (col(DisplayJob.schedule_cron).is_not(None))
-        & (col(DisplayJob.next_run_at) <= now)
-    )
-    return (col(DisplayJob.target_grid_id).is_not(None)) & or_(col(DisplayJob.run_requested_at).is_not(None), scheduled)
-
-
-async def claim_due_jobs(session: AsyncSession, now: datetime) -> list[DisplayJob]:
-    """Hand out due jobs and advance their schedules.
-
-    Advancing ``next_run_at`` at hand-out doubles as a lease, exactly like
-    the sync jobs' claim: only schedule-due jobs advance, along the fixed
-    grid, so Run-now claims and late workers don't shift the cadence. The
-    Run-now flag is cleared by the posted run report, so a worker that
-    dies mid-run leaves the request armed.
-    """
-    result = await session.exec(select(DisplayJob).where(due_clause(now)))
-    jobs = list(result.all())
-    for job in jobs:
-        if job.schedule_cron is not None and job.next_run_at is not None and job.next_run_at <= now:
-            job.next_run_at = next_cron_run(job.schedule_cron, job.schedule_timezone, now)
-            session.add(job)
-    await session.commit()
-    for job in jobs:
-        await session.refresh(job)
-    return jobs
+    """Display jobs the worker should run (the shared predicate plus a target)."""
+    return and_(has_target_clause(), sync_job_scheduling.due_clause(DisplayJob, now))
 
 
 async def prune_generated_groups(session: AsyncSession, s3: S3Service, job_id: UUID, now: datetime) -> None:
@@ -117,14 +93,10 @@ async def prune_generated_groups(session: AsyncSession, s3: S3Service, job_id: U
     groups = list(groups_result.all())
     newest_id = groups[0].id if groups else None
     stale = [g for g in groups if g.created_at < cutoff and g.id not in showing_ids and g.id != newest_id]
+    if stale:
+        images = await session.exec(select(Image).where(col(Image.group_id).in_([g.id for g in stale])))
+        await delete_images(session, s3, list(images.all()))
     for group in stale:
-        images = await session.exec(select(Image).where(col(Image.group_id) == group.id))
-        for image in images.all():
-            try:
-                s3.delete_object(image.storage_path)
-            except Exception:
-                logger.warning("Failed to delete group image object %s", image.storage_path)
-            await session.delete(image)
         await session.delete(group)
     if stale:
         await session.commit()

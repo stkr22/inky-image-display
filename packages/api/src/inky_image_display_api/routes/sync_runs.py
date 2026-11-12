@@ -1,4 +1,4 @@
-"""Run history for sync jobs (Immich and Gemini batch).
+"""Run history for worker jobs (Immich, Gemini batch, Calibre, display).
 
 The workers POST one report per completed job run; the UI reads them to
 show per-job "last run" summaries. One shared resource for both job types
@@ -6,16 +6,25 @@ keeps the worker contract and the UI query identical.
 """
 
 import logging
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Request
-from inky_image_display_shared.models import DisplayJob, GeminiSyncJob, ImmichSyncJob, SyncJobRun
+from fastapi import APIRouter, Query, Request
+from inky_image_display_shared.models import CalibreSyncJob, DisplayJob, GeminiSyncJob, ImmichSyncJob, SyncJobRun
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from inky_image_display_api.schemas import SyncJobRunReport, SyncJobRunResponse
 
-_JOB_MODELS = {"immich": ImmichSyncJob, "gemini": GeminiSyncJob, "display": DisplayJob}
+# Keyed by every ``SyncJobRunReport.job_type`` literal; indexing (no
+# default) makes a missing entry fail loudly instead of silently looking
+# the id up in the wrong table and never clearing Run-now.
+_JOB_MODELS: dict[str, type[ImmichSyncJob | GeminiSyncJob | DisplayJob | CalibreSyncJob]] = {
+    "immich": ImmichSyncJob,
+    "gemini": GeminiSyncJob,
+    "display": DisplayJob,
+    "calibre": CalibreSyncJob,
+}
 
 router = APIRouter(prefix="/api/sync-runs", tags=["sync-runs"])
 logger = logging.getLogger(__name__)
@@ -30,7 +39,7 @@ async def list_sync_runs(
     request: Request,
     job_type: str | None = None,
     job_id: UUID | None = None,
-    limit: int = 100,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[SyncJobRun]:
     """List run reports, newest first, optionally filtered by job."""
     async with AsyncSession(request.app.state.engine) as session:
@@ -39,7 +48,7 @@ async def list_sync_runs(
             query = query.where(SyncJobRun.job_type == job_type)
         if job_id is not None:
             query = query.where(SyncJobRun.job_id == job_id)
-        query = query.order_by(col(SyncJobRun.started_at).desc()).limit(limit)
+        query = query.order_by(col(SyncJobRun.started_at).desc(), col(SyncJobRun.id)).limit(limit)
         result = await session.exec(query)
         return list(result.all())
 
@@ -85,7 +94,7 @@ async def report_sync_run(request: Request, body: SyncJobRunReport) -> SyncJobRu
         run.error = body.error
         session.add(run)
 
-        job_model = _JOB_MODELS.get(body.job_type, ImmichSyncJob)
+        job_model = _JOB_MODELS[body.job_type]
         job_result = await session.exec(select(job_model).where(col(job_model.id) == body.job_id))
         job = job_result.first()
         if job is not None:
