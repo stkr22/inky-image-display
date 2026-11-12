@@ -1,6 +1,6 @@
 """Gemini sync service configuration loaded from environment variables."""
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,7 +12,8 @@ class GeminiConnectionConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="GEMINI_")
 
-    api_key: str = Field(description="API key for the Google Generative AI SDK")
+    # SecretStr keeps the key out of reprs and accidental log lines.
+    api_key: SecretStr = Field(description="API key for the Google Generative AI SDK")
 
 
 class GeminiSyncConfig(BaseSettings):

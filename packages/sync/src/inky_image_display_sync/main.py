@@ -1,8 +1,9 @@
 """CLI entrypoint for the Inky Image Display Sync service.
 
 Defaults to running the Immich sync (back-compat with the original
-single-command invocation) but also exposes a ``gemini`` subcommand for
-AI-generated batches.
+single-command invocation) and exposes one subcommand per job family:
+``immich``, ``gemini`` (AI-generated batches), ``calibre`` (bookshelves from
+an OPDS library) and ``display`` (display-job stories and screens).
 
 Job cadence lives on the job rows in the API's database (cron
 expressions plus Run-now flags). Production runs the ``worker``
@@ -19,7 +20,8 @@ import typer
 from inky_image_display_shared.logging import setup_logging
 
 from inky_image_display_sync import worker as worker_module
-from inky_image_display_sync.calibre import CalibreDisplayAPIClient, CalibreSyncService
+from inky_image_display_sync.calibre import CalibreClient, CalibreDisplayAPIClient, CalibreSyncService
+from inky_image_display_sync.calibre.sync_service import books_per_image
 from inky_image_display_sync.display import DisplayJobAPIClient, DisplayJobSyncService
 from inky_image_display_sync.gemini import GeminiSyncService
 from inky_image_display_sync.gemini.api_client import GeminiDisplayAPIClient
@@ -146,8 +148,12 @@ async def run_gemini_sync(dry_run: bool, all_active: bool = False) -> None:
         await api_client.aclose()
 
 
-async def run_calibre_sync(dry_run: bool, all_active: bool = False) -> None:
-    """Run Calibre bookshelf generation for the selected jobs."""
+async def run_calibre_sync(dry_run: bool, all_active: bool = False, calibre: CalibreClient | None = None) -> None:
+    """Run Calibre bookshelf generation for the selected jobs.
+
+    ``calibre`` lets the long-running worker hand in one client for every
+    cycle so its catalog cache survives between runs.
+    """
     setup_logging()
     logger = logging.getLogger("inky_image_display_sync")
 
@@ -160,17 +166,16 @@ async def run_calibre_sync(dry_run: bool, all_active: bool = False) -> None:
                 return
             logger.info("Dry run mode - would process %d Calibre job(s):", len(jobs))
             for job in jobs:
-                per_image = 1 if job.mode == "hero" else job.books_per_shelf
                 logger.info(
                     "  - %s: mode=%s, %d image(s) x %d book(s)",
                     job.name,
                     job.mode,
                     job.images_per_run,
-                    per_image,
+                    books_per_image(job),
                 )
             return
 
-        service = CalibreSyncService(api_client=api_client, logger=logger)
+        service = CalibreSyncService(api_client=api_client, logger=logger, calibre=calibre)
         await service.sync_jobs(all_active=all_active)
     finally:
         await api_client.aclose()

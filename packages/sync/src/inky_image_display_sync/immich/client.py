@@ -8,8 +8,8 @@ from http import HTTPStatus
 from typing import Any
 
 import httpx2
+from inky_image_display_shared.schemas.responses import SyncJobResponse
 
-from inky_image_display_sync.immich.api_client import SyncJobItem
 from inky_image_display_sync.immich.config import ImmichConnectionConfig
 from inky_image_display_sync.immich.models import (
     AlbumsResponse,
@@ -42,12 +42,12 @@ class SearchFilterCombo:
     tag_ids: list[str] | None
 
 
-class ImmichAuthError(Exception):
-    """Authentication failed."""
+class ImmichError(Exception):
+    """Immich rejected a request in a way worth a readable message.
 
-
-class ImmichNotFoundError(Exception):
-    """Resource not found."""
+    One type on purpose: no caller recovers differently from a bad key than
+    from a missing resource, they only need the message in the run report.
+    """
 
 
 class ImmichClient:
@@ -81,7 +81,7 @@ class ImmichClient:
         """Context manager for HTTP client lifecycle."""
         self._client = httpx2.AsyncClient(
             base_url=self.base_url,
-            headers={"x-api-key": self.api_key},
+            headers={"x-api-key": self.api_key.get_secret_value()},
             timeout=httpx2.Timeout(self.timeout),
             verify=self.verify_ssl,
         )
@@ -104,16 +104,16 @@ class ImmichClient:
         response = await self._client.request(method, path, **kwargs)
 
         if response.status_code == HTTPStatus.UNAUTHORIZED:
-            raise ImmichAuthError("Invalid API key")
+            raise ImmichError("Immich rejected the API key (401)")
         if response.status_code == HTTPStatus.NOT_FOUND:
-            raise ImmichNotFoundError(f"Resource not found: {path}")
+            raise ImmichError(f"Immich resource not found: {path}")
 
         response.raise_for_status()
         return response
 
     async def search_random(
         self,
-        job: SyncJobItem,
+        job: SyncJobResponse,
         count_override: int | None = None,
         *,
         combo: SearchFilterCombo | None = None,
@@ -142,7 +142,7 @@ class ImmichClient:
 
     async def search_smart(
         self,
-        job: SyncJobItem,
+        job: SyncJobResponse,
         count_override: int | None = None,
         enrich_with_people: bool = True,
         *,
@@ -170,7 +170,7 @@ class ImmichClient:
         if not job.query:
             raise ValueError("Smart search requires a query string")
 
-        payload = self._build_smart_payload(job, count_override, combo=combo)
+        payload = self._build_smart_payload(job, job.query, count_override, combo=combo)
         body = payload.model_dump(by_alias=True, exclude_none=True)
         self.logger.debug("Searching smart assets with query '%s' and filters: %s", job.query, body)
 
@@ -205,7 +205,7 @@ class ImmichClient:
 
     def _build_random_payload(
         self,
-        job: SyncJobItem,
+        job: SyncJobResponse,
         count_override: int | None = None,
         *,
         combo: SearchFilterCombo | None = None,
@@ -231,17 +231,19 @@ class ImmichClient:
 
     def _build_smart_payload(
         self,
-        job: SyncJobItem,
+        job: SyncJobResponse,
+        query: str,
         count_override: int | None = None,
         *,
         combo: SearchFilterCombo | None = None,
     ) -> SmartSearchPayload:
-        """Build payload for smart search from job config."""
-        if not job.query:
-            raise ValueError("Smart search requires a query string")
+        """Build payload for smart search from job config.
 
+        ``query`` is passed separately so the caller's emptiness check is the
+        single place that validates it.
+        """
         return SmartSearchPayload(
-            query=job.query,
+            query=query,
             size=count_override or job.count,
             album_ids=combo.album_ids if combo else job.album_ids,
             person_ids=combo.person_ids if combo else job.person_ids,

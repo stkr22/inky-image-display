@@ -22,8 +22,9 @@ the reference image gets past it. Retry first, then fall back.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from io import BytesIO
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -33,27 +34,33 @@ from inky_image_display_shared.ai import (
     spines_match,
     transcribe_spines,
 )
-from inky_image_display_shared.time import utcnow
+from PIL import Image
 
-from inky_image_display_sync.api_client import BookRef, ImageRegisterPayload, SyncRunReportPayload
+from inky_image_display_sync.api_client import BookRef, ImageRegisterPayload
 from inky_image_display_sync.calibre.client import BookFilter, CalibreClient, select_books
 from inky_image_display_sync.calibre.config import CalibreConnectionConfig
 from inky_image_display_sync.gemini.config import GeminiConnectionConfig, GeminiSyncConfig
-from inky_image_display_sync.gemini.sync_service import build_prompt
-from inky_image_display_sync.immich.config import S3WriterConfig
-from inky_image_display_sync.immich.storage import S3StorageClient
+from inky_image_display_sync.gemini.sync_service import PromptLibrary, build_prompt
+from inky_image_display_sync.jobs import expiry, report_run, run_claimed, target_dims
+from inky_image_display_sync.storage import S3StorageClient, S3WriterConfig
 
 if TYPE_CHECKING:
     import logging
+    from datetime import datetime
 
     from inky_image_display_shared.ai import RenderedPrompt
+    from inky_image_display_shared.schemas.responses import CalibreSyncJobResponse
 
-    from inky_image_display_sync.calibre.api_client import CalibreDisplayAPIClient, CalibreSyncJobItem
+    from inky_image_display_sync.calibre.api_client import CalibreDisplayAPIClient
     from inky_image_display_sync.calibre.client import CalibreBook
-    from inky_image_display_sync.gemini.api_client import PromptPresetItem
 
 MODE_HERO = "hero"
 MODE_BOOKCASE = "bookcase"
+
+# Covers come back at full scan resolution (often several MB). Gemini only
+# needs the cover's look as a reference, so anything beyond this just costs
+# upload time and request tokens.
+COVER_MAX_SIDE = 1024
 
 
 @dataclass
@@ -70,7 +77,7 @@ class CalibreSyncResult:
 class CalibreSyncService:
     """Run all due (or all active) Calibre bookshelf jobs."""
 
-    def __init__(  # noqa: PLR0913, PLR0917 — five injectable configs, all defaulted
+    def __init__(  # noqa: PLR0913, PLR0917 — injectable configs, all defaulted
         self,
         api_client: CalibreDisplayAPIClient,
         logger: logging.Logger,
@@ -78,18 +85,24 @@ class CalibreSyncService:
         sync_config: GeminiSyncConfig | None = None,
         s3_config: S3WriterConfig | None = None,
         calibre_config: CalibreConnectionConfig | None = None,
+        calibre: CalibreClient | None = None,
     ) -> None:
-        """Capture dependencies; configs default to environment-driven settings."""
+        """Capture dependencies; configs default to environment-driven settings.
+
+        Pass ``calibre`` to share one client across runs: its catalog cache
+        only pays off if it outlives a single run, which in the worker means
+        outliving this service.
+        """
         self.api_client = api_client
         self.logger = logger
         self.gemini_config = gemini_config or GeminiConnectionConfig()
         self.sync_config = sync_config or GeminiSyncConfig()
         self.storage = S3StorageClient(config=s3_config or S3WriterConfig(), logger=logger)
-        self.calibre = CalibreClient(calibre_config or CalibreConnectionConfig(), logger)
+        self.calibre = calibre or CalibreClient(calibre_config or CalibreConnectionConfig(), logger)
 
     async def sync_jobs(self, all_active: bool = False) -> list[CalibreSyncResult]:
         """Fetch bookshelf jobs and run each one in sequence, reporting each run."""
-        self.storage.ensure_bucket_exists()
+        await self.storage.ensure_bucket_exists()
         if all_active:
             jobs = await self.api_client.get_active_calibre_jobs()
         else:
@@ -98,55 +111,32 @@ class CalibreSyncService:
             self.logger.info("No %s Calibre jobs", "active" if all_active else "due")
             return []
 
-        # Cache blocks so we only fetch them once per run.
-        blocks_by_id = {b.id: b for b in await self.api_client.list_prompt_blocks()}
+        library = PromptLibrary(self.api_client)
+        return await run_claimed(
+            jobs,
+            run_one=lambda job: self._run_job(job, library),
+            on_error=lambda job, exc: CalibreSyncResult(job_name=job.name, failed=1, errors=[str(exc)]),
+            report=self._report_run,
+            logger=self.logger,
+        )
 
-        results: list[CalibreSyncResult] = []
-        for job in jobs:
-            started_at = utcnow()
-            try:
-                preset = await self.api_client.get_prompt_preset(job.prompt_preset_id)
-            except Exception as exc:
-                self.logger.error("Failed to load preset for job %s: %s", job.name, exc)
-                result = CalibreSyncResult(job_name=job.name, failed=1, errors=[str(exc)])
-            else:
-                result = await self._run_job(job, preset, blocks_by_id)
-            results.append(result)
-            self.logger.info(
-                "Calibre job %s: generated=%d failed=%d unverified=%d",
-                job.name,
-                result.generated,
-                result.failed,
-                result.unverified,
-            )
-            await self._report_run(job, result, started_at)
-        return results
-
-    async def _report_run(self, job: CalibreSyncJobItem, result: CalibreSyncResult, started_at: datetime) -> None:
-        """POST the run outcome so the UI can show last-run status per job."""
+    async def _report_run(self, job: CalibreSyncJobResponse, result: CalibreSyncResult, started_at: datetime) -> None:
         detail = f"generated={result.generated} failed={result.failed}"
         if result.unverified:
             detail += f" unverified={result.unverified}"
-        await self.api_client.report_sync_run(
-            SyncRunReportPayload(
-                job_type="calibre",
-                job_id=job.id,
-                job_name=job.name,
-                status="error" if result.errors else "success",
-                started_at=started_at,
-                finished_at=utcnow(),
-                images_added=result.generated,
-                detail=detail,
-                error="; ".join(result.errors[:3]) if result.errors else None,
-            )
+        self.logger.info("Calibre job %s: %s", job.name, detail)
+        await report_run(
+            self.api_client,
+            job_type="calibre",
+            job=job,
+            started_at=started_at,
+            errors=result.errors,
+            detail=detail,
+            images_added=result.generated,
         )
 
-    async def _run_job(
-        self,
-        job: CalibreSyncJobItem,
-        preset: PromptPresetItem,
-        blocks_by_id: dict,
-    ) -> CalibreSyncResult:
+    async def _run_job(self, job: CalibreSyncJobResponse, library: PromptLibrary) -> CalibreSyncResult:
+        preset = await self.api_client.get_prompt_preset(job.prompt_preset_id)
         result = CalibreSyncResult(job_name=job.name)
         try:
             profile = await self.api_client.get_device_profile(job.target_device_profile_id)
@@ -170,7 +160,7 @@ class CalibreSyncService:
         # A hero shows one book, a shelf one row of them, a bookcase several
         # rows. All draw from the same filtered pool, one draw per run so no
         # book repeats within it.
-        per_image = _books_per_image(job)
+        per_image = books_per_image(job)
         wanted = per_image * job.images_per_run
         in_use: set[int] = set()
         if job.avoid_repeats:
@@ -195,15 +185,9 @@ class CalibreSyncService:
         # Heroes and bookcases are portrait (a cover, a tall case); a shelf is
         # a landscape row of spines.
         is_portrait = job.mode in (MODE_HERO, MODE_BOOKCASE)
-        target_width, target_height = (
-            (profile.height, profile.width) if is_portrait else (profile.width, profile.height)
-        )
-        prompt = build_prompt(preset, blocks_by_id, is_portrait)
-        expires_at = (
-            datetime.now() + timedelta(days=job.retention_days)
-            if job.retention_days is not None and job.retention_days > 0
-            else None
-        )
+        target_width, target_height = target_dims(profile, is_portrait)
+        prompt = build_prompt(preset, await library.blocks(), is_portrait)
+        expires_at = expiry(job.retention_days)
 
         for start in range(0, len(picked), per_image):
             books = picked[start : start + per_image]
@@ -232,7 +216,7 @@ class CalibreSyncService:
     async def _generate_one(  # noqa: PLR0913 — one image needs all of its context
         self,
         *,
-        job: CalibreSyncJobItem,
+        job: CalibreSyncJobResponse,
         books: list[CalibreBook],
         prompt: RenderedPrompt,
         model: str,
@@ -261,7 +245,7 @@ class CalibreSyncService:
 
         image_uuid = uuid4()
         storage_path = f"{self.sync_config.storage_prefix}/calibre/{image_uuid}.jpg"
-        self.storage.upload_from_bytes(object_path=storage_path, data=jpeg_bytes, content_type="image/jpeg")
+        await self.storage.upload_from_bytes(object_path=storage_path, data=jpeg_bytes, content_type="image/jpeg")
 
         titles = ", ".join(b.short_title() for b in books)
         await self.api_client.register_image(
@@ -287,7 +271,7 @@ class CalibreSyncService:
     async def _generate_verified(  # noqa: PLR0913 — keyword-only generation context
         self,
         *,
-        job: CalibreSyncJobItem,
+        job: CalibreSyncJobResponse,
         books: list[CalibreBook],
         prompt: RenderedPrompt,
         subject: str,
@@ -307,7 +291,7 @@ class CalibreSyncService:
         for attempt in range(1, job.max_attempts + 1):
             try:
                 last = await generate_image_bytes(
-                    self.gemini_config.api_key,
+                    self.gemini_config.api_key.get_secret_value(),
                     prompt,
                     subject,
                     model=model,
@@ -334,10 +318,10 @@ class CalibreSyncService:
         self.logger.warning("Job %s: keeping unverified image after %d attempts", job.name, job.max_attempts)
         return last, False
 
-    async def _spines_ok(self, job: CalibreSyncJobItem, image: bytes, expected: list[tuple[str, str]]) -> bool:
+    async def _spines_ok(self, job: CalibreSyncJobResponse, image: bytes, expected: list[tuple[str, str]]) -> bool:
         """Read the spines back; a failed check is not a failed generation."""
         try:
-            readings = await transcribe_spines(self.gemini_config.api_key, image)
+            readings = await transcribe_spines(self.gemini_config.api_key.get_secret_value(), image)
         except Exception:
             # Verification is a safety net, not a gate — if the reader is
             # unavailable, keep the image rather than burning every attempt.
@@ -345,12 +329,14 @@ class CalibreSyncService:
             return True
         return spines_match(expected, readings)
 
-    async def _cover_for(self, job: CalibreSyncJobItem, books: list[CalibreBook]) -> bytes | None:
+    async def _cover_for(self, job: CalibreSyncJobResponse, books: list[CalibreBook]) -> bytes | None:
         """Fetch the hero book's cover; shelves are generated from text alone."""
         if job.mode != MODE_HERO:
             return None
         try:
-            return await self.calibre.fetch_cover(books[0].book_id)
+            cover = await self.calibre.fetch_cover(books[0].book_id)
+            # Pillow decoding is CPU-bound; keep it off the event loop.
+            return await asyncio.to_thread(downscale_cover, cover)
         except Exception:
             # A missing cover degrades the hero to a text-only interpretation
             # rather than dropping the book entirely.
@@ -358,7 +344,20 @@ class CalibreSyncService:
             return None
 
 
-def _books_per_image(job: CalibreSyncJobItem) -> int:
+def downscale_cover(data: bytes, max_side: int = COVER_MAX_SIDE) -> bytes:
+    """Shrink a cover to at most ``max_side`` on its longest edge, as JPEG.
+
+    Re-encoded even when already small, so the reference is always a JPEG
+    whatever format the library stored (PNG, WebP, ...).
+    """
+    with Image.open(BytesIO(data)) as image:
+        image.thumbnail((max_side, max_side))
+        out = BytesIO()
+        image.convert("RGB").save(out, format="JPEG", quality=85)
+    return out.getvalue()
+
+
+def books_per_image(job: CalibreSyncJobResponse) -> int:
     """How many books one generated image shows."""
     if job.mode == MODE_HERO:
         return 1
@@ -371,7 +370,7 @@ def _spine_line(book: CalibreBook) -> str:
     return f'- Title "{book.short_title()}" — author "{book.author or "Unknown"}"'
 
 
-def _subject_for(job: CalibreSyncJobItem, books: list[CalibreBook]) -> str:
+def _subject_for(job: CalibreSyncJobResponse, books: list[CalibreBook]) -> str:
     """Render the ``{subject}`` the preset's composition block expects.
 
     A bookcase groups its books per shelf, top first, because the prompt asks
